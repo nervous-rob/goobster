@@ -950,6 +950,22 @@ describe('typed causes from a followed source', () => {
         expect(rows).toEqual([{ outcome: 'failed', reasonCode: code }]);
     });
 
+    test('an address that is gone for good ends what the source was for: a retirement candidate, never a repair', async () => {
+        const feed = await source('release notes');
+        await processes.putContract({ userId: A, kind: 'followed_source', id: feed.id, body: { purpose: 'Tell me about releases' } });
+        sources.fetch = jest.fn(async () => ({ status: 410, text: '', headers: {} }));
+        await db.run('UPDATE followed_sources SET nextCheckAt = NULL WHERE id = @id', { id: feed.id });
+        await sources.poll(await db.get('SELECT * FROM followed_sources WHERE id = @id', { id: feed.id }));
+        const { processes: assessed } = await processes.assess({ userId: A });
+        expect(assessed.find(entry => entry.ref === feed.ref).assessment).toMatchObject({
+            relevance: 'retirement_candidate', reasons: { relevance: 'TARGET_GONE' }
+        });
+        // Checking it again cannot bring the address back, so running it once more is never offered.
+        await failing(feed, 'TARGET_GONE');
+        expect(await incidents.reconcile({ userId: A })).toMatchObject({ opened: 1, repairs: 0 });
+        expect(await db.get('SELECT COUNT(*) AS n FROM assistant_process_repairs WHERE ownerUserId = @owner', { owner: A })).toMatchObject({ n: 0 });
+    });
+
     test('a refused redirect carries where it pointed, and the probe reports it without following or storing anything', async () => {
         const feed = await source('release notes', { url: 'https://example.com/notes' });
         sources.fetch = jest.fn().mockRejectedValue(redirect('/notes/v2#top'));

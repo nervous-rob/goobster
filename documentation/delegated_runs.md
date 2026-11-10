@@ -36,6 +36,7 @@ the responsibility:
 | Commit named files in a repository cloned into the linked project, on a work branch (`commitProjectRepo`) | `repo.commit` on that `repository` and branch |
 | Push that work branch to GitHub, never forced (`pushProjectRepo`) | `repo.push` on that `repository` and branch |
 | Open a pull request from that work branch (`openPullRequest`) | `pr.create` on that `repository` and branch |
+| Apply one typed repair to the failing process the work is about (`repairProcess`, only in a run proposed for a process incident) | `process.repair` on exactly that `process` |
 | Search Goobster's public documentation (`consultDocs`) | nothing |
 | Report its result (`finish`) | nothing |
 | Report the result of a plan step (`reportStepResult`, only in a run that carries out a plan step, where it replaces `finish`) | `plan.step.execute` on that `project` |
@@ -50,7 +51,9 @@ described under [Repository work](#repository-work).
 
 The three repository tools are offered only to a run whose responsibility
 names that operation on a repository of the linked project. A run without
-such a grant never sees them.
+such a grant never sees them. `repairProcess` is offered the same way: only
+to a run that was proposed for a process incident, under a grant that names
+`process.repair`, to an owner who has the pilot's `repair` capability.
 
 ### Your notes stay yours
 
@@ -150,6 +153,41 @@ started the plan. Such a run is told the plan and the one step, ends with
 `reportStepResult`, and the step is marked done only after the files it had
 to produce were checked. It never approves, starts or completes a plan. See
 [delegated_plan_steps.md](delegated_plan_steps.md).
+
+### Repairing a process
+
+A responsibility that grants `process.repair` on a scheduled task or a
+followed source gets a piece of work when that process keeps failing
+([process_stewardship.md](process_stewardship.md#repairing-a-process)). The
+run for it is different from other runs in four ways:
+
+- **What it is told.** Typed state only: what kind of process it is and when
+  it runs, how many runs failed in a row and with which code, when it last
+  worked, its most recent runs, how many processes wait on it, what was
+  already tried, how many attempts are left, the repairs that apply now, and
+  what will count as repaired. The process's name and purpose are your own
+  words and are marked as evidence. Nothing the process fetched or produced
+  is in it. It is also told that a run of failures is why it was given the
+  work and is not a reason to hold back, and that a rerun is only on the list
+  when the cause code does not rule it out.
+- **What it can change.** `repairProcess({ action, diagnosis })`. `action`
+  is `rerun` or `follow_redirect`; `diagnosis` is a sentence or two you will
+  read. Which process is repaired comes from the piece of work, never from
+  the model, and what the repair changes is computed by code. A redirect to
+  another site is not applied: you are asked, and the tool answers
+  `Not applied (NEEDS_APPROVAL)`.
+- **Who says it worked.** Not the run. The tool's answer says what is known
+  so far (worked, failed and undone, or still being checked); the check, the
+  rollback and the later watch are done by the periodic pass with no model.
+  The run is instructed never to call a process fixed unless the tool's
+  answer says the run after the repair worked.
+- **Before it starts.** The incident is read again. If the process
+  recovered, was switched off, is already being repaired, has no attempts
+  left, or repair is no longer available to your account, the work ends
+  before any model call.
+
+A tool call that was interrupted by a restart is not applied twice: the
+repair record carries the call's identity, and the resumed run finds it.
 
 ### Research expeditions
 
@@ -328,8 +366,8 @@ change). See [delegated_knowledge.md](delegated_knowledge.md).
 
 The instructions a run is given carry a version
 (`assistantRunService.promptVersion()`: a number raised on purpose, and a
-fingerprint that changes with any edit to the instructions or a tool's
-definition). The optional [evaluation set](delegated_evaluation.md) runs
+fingerprint that changes with any edit to the instructions, to the
+instructions of a repair run or to a tool's definition). The optional [evaluation set](delegated_evaluation.md) runs
 fixed, fictional responsibilities against a real provider and records what
 the model did, with that version and the model used. It is not part of
 `npm test` or CI.
@@ -345,7 +383,8 @@ a push. The framework is built and no connector is installed; see
 ## Not built yet
 
 An actual outside
-connector (the framework is DA-11d), acting on processes, and work recognized by a model from what was said in a
+connector (the framework is DA-11d), acting on a process other than by the two typed repairs
+([Repairing a process](#repairing-a-process)), and work recognized by a model from what was said in a
 conversation. Requests you address to Goobster in a conversation are built:
 see [delegated_conversation_requests.md](delegated_conversation_requests.md).
 Repository work is built and starts with the installation's owner only;

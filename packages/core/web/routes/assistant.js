@@ -168,7 +168,7 @@ function mountAssistant(app, ctx, h) {
     })));
 
     // --- Deciding a request where it is shown -------------------------------
-    // { option, occurrence, revision, surface: home | inbox | chat }
+    // { option, occurrence, revision, surface: home | inbox | chat | project | processes }
     // `:ref` is an update id, or `inbox-<item id>` for a request that lives
     // on its own Inbox item (a friend request, a request to join). The card
     // on Home, in the Inbox and in chat all post here; the owning domain

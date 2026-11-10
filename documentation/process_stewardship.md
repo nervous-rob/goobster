@@ -1,9 +1,9 @@
 ---
 title: Process stewardship (is recurring work working, and is it still needed)
 kind: reference
-summary: Goobster judges each of your recurring processes - scheduled tasks, project triggers, watches and followed sources - on two separate questions, whether it is working and whether it is still needed, from typed records of what each run did. Repeated failures become one incident per cause, with a recovery period so a flapping process is not announced twice. A process can be paused, archived, restored and cleaned up in separate steps - by you, or by Goobster only where a responsibility you activated names that process. Archiving never deletes, and a cleanup removes only the exact rows it showed you first. Nothing is repaired yet. Covers the states and what puts a process in each, contracts, incidents, retiring a process, what you are told and where, every default number, what is stored and the routes.
-when: Understanding why a process shows as blocked, stalled, degraded or unknown; why Goobster says a process may no longer be needed, or says nothing about one you never open; how many failures open an incident and when it closes; why one outage produced one message; recording a purpose, cadence or dependency for a process; pausing, archiving, restoring or cleaning up a process and knowing what each step keeps; why Goobster paused a process, or asked instead of pausing it; why an archived task cannot be switched on; checking what process stewardship stores about you.
-tags: [assistant, processes, schedules, health, incidents, retirement, archive, cleanup, attention, home, privacy]
+summary: Goobster judges each of your recurring processes - scheduled tasks, project triggers, watches and followed sources - on two separate questions, whether it is working and whether it is still needed, from typed records of what each run did. Repeated failures become one incident per cause, with a recovery period so a flapping process is not announced twice. A process can be paused, archived, restored and cleaned up in separate steps - by you, or by Goobster only where a responsibility you activated names that process. Archiving never deletes, and a cleanup removes only the exact rows it showed you first. A process that keeps failing can be repaired with one of two typed actions - run it once more, or point a followed source at the address it now redirects to - which you approve, or which Goobster applies only under a responsibility that names that process; the repair is checked against what the next run records, undone if it fails, and stops at a small number of attempts. Covers the states and what puts a process in each, contracts, incidents, retiring a process, repair, what you are told and where, every default number, what is stored and the routes.
+when: Understanding why a process shows as blocked, stalled, degraded or unknown; why Goobster says a process may no longer be needed, or says nothing about one you never open; how many failures open an incident and when it closes; why one outage produced one message; recording a purpose, cadence or dependency for a process; pausing, archiving, restoring or cleaning up a process and knowing what each step keeps; why Goobster paused a process, or asked instead of pausing it; why an archived task cannot be switched on; why Goobster offered to run a failing process once more, what approving that does, how a repair is checked and undone, why it stopped trying, or why it asked before following a redirect to another site; checking what process stewardship stores about you.
+tags: [assistant, processes, schedules, health, incidents, retirement, archive, cleanup, repair, attention, home, privacy]
 feature: assistant
 ---
 
@@ -25,16 +25,24 @@ archived, then cleaned up. Each step is a separate decision, each can be
 undone except the last, and none of them deletes the process itself
 ([Retiring a process](#retiring-a-process)).
 
-**Nothing here repairs a process, and nothing here runs a model.** Repair is
-planned (see [What is not here yet](#what-is-not-here-yet)). What a process
-does is still edited where you made it.
+A process that keeps failing can be **repaired**, in one of two fixed ways:
+run it once more, or point a followed source at the address its server now
+redirects to. A repair is checked against what the process itself records
+afterwards, undone if it fails, and tried a small number of times
+([Repairing a process](#repairing-a-process)).
+
+**Judging a process, opening an incident, retiring a process and checking a
+repair never run a model.** A model is involved in one place only: a
+delegated run, under a responsibility that names the process, chooses which
+of the two repairs to apply. What a process does is still edited where you
+made it.
 
 It builds on the process catalog, contracts and typed observations described
 in [delegated_responsibilities.md](delegated_responsibilities.md#processes).
 The design decisions are in
 [ADR 0020](adr/0020-process-assessment-and-incidents.md) (assessment and
 incidents) and [ADR 0022](adr/0022-process-retirement.md) (pause, archive,
-restore and cleanup).
+restore and cleanup) and [ADR 0029](adr/0029-process-repair.md) (repair).
 
 ## Where you see it
 
@@ -46,19 +54,22 @@ restore and cleanup).
   words, the reason for each, and the incidents still open. Each row has the
   actions that apply to it now: *Pause*, *Resume*, *Archive*, *Restore*,
   *Keep it running* and *Clean up…*. A paused process says who paused it and
-  when. Processes that were switched off where you made them, with nothing to
+  when. A process with a repair says where the repair stands, and carries
+  its question when it has one. Processes that were switched off where you made them, with nothing to
   report (a watch that has fired, a task you turned off), are folded behind
   *Show switched off*. Archived processes are behind *Show archived* and are
   not counted with the rest.
 - **What changed and the Inbox.** One message when an incident opens and one
   when it is over; these are informational. One message when Goobster paused
-  or archived a process for you.
+  or archived a process for you, and one, revised as it goes, about a repair.
 - **Needs you.** When a process may no longer be needed and Goobster may not
   pause it, it asks you, once. The request has two buttons on Home and in the
   Inbox, *Pause it* and *Keep it running*
   ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)).
   The same two actions are on the Processes list, and either place answers
-  it.
+  it. A repair that waits for you, and a repair that has used up its
+  attempts, are asked the same way
+  ([Repairing a process](#repairing-a-process)).
 - **Attention.** An open incident, a process that outlived its purpose and
   a review date you set can each be raised once, inside your Attention
   settings and contact budget ([attention.md](attention.md)).
@@ -442,6 +453,176 @@ never treats results you did not open as a reason to pause anything. Requests
 and automatic pauses, like incidents, happen only for people with Attention
 turned on.
 
+## Repairing a process
+
+A repair is an attempt to make a process that keeps failing work again. It
+is deliberately small.
+
+### What a repair can be
+
+There are two repairs, and no others:
+
+| Repair | What it does | For |
+| --- | --- | --- |
+| `rerun` | Runs the process once now, with nothing about it changed. | Scheduled tasks and followed sources |
+| `follow_redirect` | Points a followed source at the address its own server now redirects to. | A followed source failing with `REDIRECT_REFUSED` |
+
+A repair never edits a prompt, a schedule, a script or a contract, never
+touches a credential or a connection, never changes a grant, and never
+switches anything on: a process that is switched off, paused or archived is
+not repaired. The new address of a followed source is read by Goobster from
+the redirect itself. It is never text a model supplied.
+
+`rerun` is not offered when running it again cannot change the answer: when
+the failure code says the other side refuses, the thing is gone, a limit was
+reached or a setting is missing (codes ending in `_REFUSED`, `_DENIED`,
+`_FORBIDDEN`, `_NOT_FOUND`, `_GONE`, `_MISSING`, `_DELETED`, `_TOO_LARGE`,
+`_LIMIT`, `_BUDGET`, `_QUOTA`, `_EXHAUSTED`, `_PAUSED`, `_NOT_CONFIGURED`,
+`_DISABLED`, `_INVALID`, or starting `NO_PROVIDER` or `TARGET_`). For those
+the incident is reported and what to do is yours.
+
+### What can be repaired
+
+A process can be repaired only while all of these hold:
+
+- it is a scheduled task or a followed source;
+- it is switched on;
+- it is the failing process of an **open** incident of its own
+  (`process:<kind>:<id>`), and its newest run failed.
+
+So these are reported and not repaired: project triggers (the fix is in the
+script), watches (they fire on an event and cannot be run on demand), a
+process that has **stopped running** (`SCHEDULE_OVERDUE`, `CADENCE_MISSED`:
+that is the scheduler's problem, not the process's), and processes blocked by
+**one shared cause** (an upstream outage is not fixed by running each of them
+again). A process whose incident is recovering is left to recover.
+
+### Who may repair
+
+**You.** With no grant, Goobster's periodic pass offers the one repair that
+needs no judgement, `rerun`, once per incident, as a request under Needs you:
+"*Name* keeps failing: run it once more?" with *Run it once now* and *Leave
+it*. Nothing is run or changed until you approve. Approving applies the
+repair as your own act; *Leave it* means it is not offered again for that
+incident. The request is on Home, in the Inbox and on the process's row in
+Processes, and answering it in one place answers it everywhere. It is
+withdrawn without a message if the process stops failing that way first.
+
+**Goobster, under a responsibility you activated.** It applies a repair
+itself only when all of these hold:
+
+1. A responsibility of yours is `ACTIVE` and grants `process.repair` on
+   exactly this process (`{ "kind": "process", "ids": ["followed_source:12"] }`).
+   There is no wildcard.
+2. Its `repairAttempts` budget is at least 1 (the default; see
+   [Attempts](#attempts)).
+3. Your Attention boundaries allow Goobster to act on schedules ahead of
+   time (*Compute ahead* for *Schedule & tasks*), as for pausing. The
+   refusal code is `ATTENTION_BOUNDARY`.
+4. The host has not stopped delegated work, and repair is available to your
+   account ([Stop all and the pilot](#stop-all-and-the-pilot)).
+
+Then the open incident becomes a piece of work for that responsibility
+([delegated_responsibilities.md](delegated_responsibilities.md#initiatives)),
+and a delegated run ([delegated_runs.md](delegated_runs.md#repairing-a-process))
+is given the typed record of the failure - states, codes, times, the
+process's name and purpose - and one tool, `repairProcess`, with which it
+picks one of the repairs that apply and writes a short diagnosis. The grant
+is checked again at that call. The run cannot name a different process, a
+different address or a different kind of change: the process comes from the
+incident, and the tool accepts only the action and the diagnosis.
+
+**Another site is always your decision.** When a redirect leads to a
+different host, Goobster does not follow it, whatever it was granted. It
+files the request "*Name* has moved: use its new address?", showing the
+address, with *Use the new address* and *Leave it*. Approving points the
+source at the address you were shown. A redirect within the same host is
+followed under a grant.
+
+### How a repair is checked
+
+Before anything is touched, the repair is recorded: what it changes, what it
+replaces (the rollback plan), the processes it affects (itself and the ones
+that depend on it), which attempt it is and how many are allowed, and what
+will count as proof. Then the run is started: a scheduled task is made due
+now and runs through its normal scheduler; a followed source is checked
+once, under the same one-per-minute limit as your own *Check now*.
+
+**Proof is read from the typed observations the process records after the
+repair. It is never a model's opinion, and never the exit status alone:**
+
+- a run that failed or was blocked fails the repair, with that run's code;
+- a run whose output failed fails the repair;
+- a clean run is required;
+- where the process's contract asks for fresh output (`freshnessSeconds`
+  set, `quietResultOk` not set, and the kind reports output), the output must
+  be fresh: a clean run that produced nothing new is not yet proof;
+- every process that was blocked by this one when the repair was applied must
+  no longer be blocked by it (`DEPENDENTS_STILL_BLOCKED` otherwise).
+
+A repair waits for that proof for **60 minutes**, or where fresh output is
+required for the contract's freshness period, at least an hour and at most a
+day. After that it has failed with `VERIFY_TIMEOUT`.
+
+**Then it is watched.** A repair that was proved once is "Repaired", and
+stays watched until the process's next run on its own schedule. If that run
+works, the repair held. If it fails, the repair failed (`RELAPSED`) and is
+undone like any other failure. If no run comes within 30 days the record is
+closed without a verdict.
+
+### What happens when a repair fails
+
+What it changed is put back, where that is still safe:
+
+| Rollback | Meaning |
+| --- | --- |
+| `none` | Nothing was changed (`rerun`), or the change never landed. |
+| `restored` | The followed source has its previous address again. |
+| `kept` | You changed the address again after the repair, so your choice stands and nothing is put back. |
+
+You are told what was tried, why it failed and what was put back. A source
+pointed at a new address starts from a new baseline: its first check there
+records a starting point and raises nothing.
+
+If the process is switched off before a repair could be proved, the repair
+is closed and its change put back.
+
+### Attempts
+
+Each incident has a small number of repair attempts, counting every repair
+that was applied, yours and Goobster's alike.
+
+- A grant allows `repairAttempts` attempts per incident: **1** when the
+  responsibility does not say, **5** at most. `0` means Goobster never
+  applies a repair under that responsibility and offers `rerun` to you
+  instead.
+- With no grant, one attempt, yours to approve.
+
+When the attempts are used up and the process is still failing, Goobster
+stops and asks you once, under Needs you: "*Name* still fails after *N*
+repair attempts", with *Pause it* and *Leave it running*. *Pause it* is the
+ordinary pause ([Retiring a process](#retiring-a-process)): nothing new
+starts, nothing is deleted, and you can resume it. *Leave it running* leaves
+it failing as it is. Either way nothing more is tried for that incident. The
+question goes away by itself if the process starts working again. A new
+incident, later, has its own attempts.
+
+### Stop all and the pilot
+
+- **Repair is a pilot capability** (`repair`,
+  [delegated_operations.md](delegated_operations.md#the-pilot-gate)). Until
+  the host records the pilot decision, only the installation's owner is
+  offered repairs, has repair work proposed, or can have one applied; a
+  `process.repair` grant cannot be activated by anyone else (`PILOT_ONLY`).
+  Incidents are still reported to everyone.
+- **While the host has stopped delegated work**
+  ([Stop all](delegated_operations.md#stop-all)), Goobster applies no repair,
+  and a repair it had already applied waits exactly where it is: it is not
+  run again, judged or undone until the host resumes. What you approve
+  yourself is your own act and is not held, and requests are still filed.
+- A repair is not started while the whole installation is paused for
+  maintenance (`INSTANCE_PAUSED`).
+
 ## What you are told
 
 | Event | Message | Repeats |
@@ -451,12 +632,24 @@ turned on.
 | A process's purpose is over, it is still on, and Goobster may not pause it | A request under Needs you: "*Name* may no longer be needed" | Once per contract revision and reason. Asked again, as a new request, only after the contract changes. |
 | Goobster paused a process under a responsibility | "Paused *Name*" | Once. |
 | Goobster archived a process it had paused | "Archived *Name*" | Once. |
+| A process keeps failing, running it again could help and no grant covers it | A request under Needs you: "*Name* keeps failing: run it once more?" | Once per incident. |
+| A redirect leads to another site | A request under Needs you: "*Name* has moved: use its new address?" | Once per run that found it; a newer request replaces an older one. |
+| A repair was applied | "Repairing *Name*", in What changed only | Once. Not sent to the Inbox: whoever applied it was just told. |
+| The run after a repair worked | "Repaired *Name*" | Once. |
+| The next scheduled run worked too | "The repair of *Name* held", in What changed only | Once. |
+| A repair failed and attempts remain | "A repair of *Name* did not work" | Once per attempt. |
+| A repair failed and no attempts remain | A request under Needs you: "*Name* still fails after *N* repair attempts" | Once per incident. |
 
 Each message is one canonical update ([delegated_responsibilities.md](delegated_responsibilities.md#updates)),
 filed in your Inbox with no Discord echo, and shown under What changed until
 you review it. An incident message and a request both end with "Nothing was
 changed." because nothing was. A pause or archive message says what was
 changed and how to undo it.
+
+Everything about repairing one process is one update too
+(`process_repair:<kind>:<id>`), revised as the repair moves on, so a repair
+that was proposed, applied and proved is one line under What changed, not
+three.
 
 The request, the pause message and the archive message for one process are
 the same update, revised. A request is closed without a message when its
@@ -511,17 +704,40 @@ Retirement has its own, in
 | Applied cleanup record kept | 180 days | Retention |
 | Unapplied cleanup preview kept | 7 days after it expired | Retention |
 
+Repair has its own, in
+`packages/core/services/assistantProcessRepairService.js`. The plan fixed
+none of them; each is the smallest or slowest choice that still works:
+
+| Number | Default | Used for |
+| --- | --- | --- |
+| Repair attempts per incident | 1 | When a responsibility's `repairAttempts` is not stated, and for a repair you approve with no grant |
+| Most attempts a grant may allow | 5 | A larger `repairAttempts` is treated as 5 |
+| Time to prove a repair | 60 minutes | `VERIFY_TIMEOUT` |
+| Time to prove one that needs fresh output | The contract's freshness period, at least 1 hour, at most 24 hours | `VERIFY_TIMEOUT` |
+| Watching for the next scheduled run | 30 days | Closed as `NOT_OBSERVED` after that |
+| Diagnosis kept | 400 characters | What a run wrote about why |
+| Ended repair kept | 180 days | Retention |
+
 ## What is not here yet
 
-- **Repair** (planned as DA-5c). An incident is reported, not fixed.
+- **More kinds of repair.** A project trigger's script, a watch, a process
+  that has stopped running and a group of processes blocked by one shared
+  cause are reported and not repaired. Nothing rewrites a prompt, a
+  schedule or a script.
+- **Granting repair from the form.** The responsibility form has no control
+  for `process.repair` yet; the grant is written through the API
+  ([delegated_responsibilities.md](delegated_responsibilities.md#portal-api)).
 - **Cleanup by Goobster.** The `cleanup.exact` operation can be granted and
   is not used: only you can clean up a process.
 - **Files and knowledge a process produced.** A process does not declare
   which files or notes it owns, so cleanup never touches a project workspace
   or your knowledge.
-- **Target-ended codes.** No shipped process records `TARGET_MERGED` and its
-  siblings yet. A watch becomes a retirement candidate today through its
-  linked goal being resolved, or by having fired for good.
+- **Target-ended codes for watches.** One target-ended code is recorded
+  today: a followed source whose address answers 410 Gone records
+  `TARGET_GONE`, so with a stated purpose it becomes a retirement candidate
+  (and is never offered a repair). No watch records `TARGET_MERGED` and its
+  siblings yet; a watch becomes a retirement candidate through its linked
+  goal being resolved, or by having fired for good.
 - **Other kinds of recurring work.** Reminders and recurring research are not
   in the process catalog. `services/scheduledWorkRegistry.js` records the
   reason for each kind that is left out
@@ -537,6 +753,7 @@ Retirement has its own, in
 | `assistant_process_incident_members` | The processes in each incident: reference, the process's name when it joined, role (`failing` or `dependent`) and state. |
 | `assistant_process_lifecycle` | One row per process that was paused, archived, cleaned up or kept: its stage, who did it (you or Goobster) and under which responsibility, a reason code, the times, how many runs were under way at the pause, how it stood when archived, what a cleanup removed (counts), and your "keep it running" answer. |
 | `assistant_process_cleanups` | Each cleanup preview: the exact row ids, counts of what is kept, its hash, when it expires and, once applied, what was removed and skipped. |
+| `assistant_process_repairs` | One row per repair, proposed or applied: the process and its name, the incident, which attempt it was, its status, the action, the failure code it answers, the diagnosis a run wrote (400 characters at most), who applied it (you or Goobster) and under which responsibility and piece of work, what it changed and what it replaced (for a followed source, the new and the previous address), what was to count as proof, what was observed, what was put back, the code it stopped with, and your answer when you were asked what to do. |
 
 The four process tables each gained an `archivedAt` column (`automations`,
 `project_triggers`, `followed_sources`, `attention_watches`), and
@@ -558,6 +775,9 @@ paused or archived process is kept as long as the process is. Cleanup
 previews that were never applied are removed 7 days after they expired, and
 applied ones after 180 days.
 
+A repair is removed 180 days after it ended, or when its process is deleted.
+One that still waits for your answer is kept until it is answered.
+
 ## Portal API
 
 All routes act as the signed-in person and are reads unless noted. With the
@@ -565,8 +785,8 @@ feature off the prefix answers `FEATURE_UNAVAILABLE`.
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/app/assistant/processes` | `processes` (each with `assessment`, `incident`, `archived`, `lifecycle` and `controls`), `counts` per state (`notWorking`, `degraded`, `retirementCandidates`, `reviewDue`, `paused`, `archived` and one per execution state; archived processes are counted only in `archived`), and `incidents` that are open or recovering, with their members. |
-| `GET /api/app/assistant/processes/:kind/:id` | One process with its contract, recent observations, `assessment`, `incident`, `lifecycle`, `controls`, the processes that depend on it (`dependents`) and its newest cleanup preview or result (`cleanup`). |
+| `GET /api/app/assistant/processes` | `processes` (each with `assessment`, `incident`, `archived`, `lifecycle`, `controls` and `repair`), `counts` per state (`notWorking`, `degraded`, `retirementCandidates`, `reviewDue`, `paused`, `archived` and one per execution state; archived processes are counted only in `archived`), and `incidents` that are open or recovering, with their members. |
+| `GET /api/app/assistant/processes/:kind/:id` | One process with its contract, recent observations, `assessment`, `incident`, `lifecycle`, `controls`, the processes that depend on it (`dependents`), its newest cleanup preview or result (`cleanup`) and its repairs, newest first (`repairs`). |
 | `PUT /api/app/assistant/processes/:kind/:id/contract` | Writes the contract. `dependsOn` must name your own processes; a process cannot depend on itself. |
 | `POST /api/app/assistant/processes/:kind/:id/actions` | A write. Body `{ "action", "expectedRevision"?, "cleanupId"?, "manifestHash"? }`. `action` is `pause`, `resume`, `archive`, `restore`, `keep`, `preview_cleanup` or `cleanup`. Returns `{ action, changed, process, lifecycle, controls }` and, by action, `started`, `dropped`, `skipped`, `dependents`, `notRestored` or `cleanup`. |
 
@@ -597,6 +817,43 @@ that was already applied changes nothing and answers `changed: false`.
 or `assistant`. `reasonCode` is `PERSON`, `RESTORED`, `RESUMED_ELSEWHERE` or
 `RETIRE_` followed by the reason the purpose is over. `started.policy` is
 `finish` or `abandon`.
+
+`repair` is the newest repair of that process, or null:
+
+```json
+{
+  "id": 9, "status": "verifying", "action": "rerun", "attempt": 1, "allowed": 1,
+  "actor": "person", "proposedBy": "steward", "responsibilityId": null, "incidentId": 3,
+  "diagnosisCode": "RUN_FAILED", "diagnosis": null, "address": null,
+  "verification": { "run": "ok", "output": "not_failed", "withinSeconds": 3600 },
+  "affected": ["automation:5"], "rollback": null, "stopCode": null, "direction": null,
+  "appliedAt": "2026-11-10 03:10:00", "verifiedAt": null, "endedAt": null,
+  "createdAt": "2026-11-10 03:05:00", "revision": 2, "ask": null
+}
+```
+
+`status` is `proposed`, `declined`, `withdrawn`, `verifying`, `observing`
+(proved once, watching the next scheduled run), `succeeded`, `failed` or
+`closed`. `actor` is `person` or `assistant`, null until it is applied.
+`proposedBy` is `steward` (the periodic pass) or `run`. `address` is where a
+followed source was or would be pointed. `rollback` is `none`, `restored` or
+`kept` once it is known. `direction` is `asked`, `pause` or `leave`. `ask`
+is the decision card of a repair that waits for you
+([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)),
+on the list only.
+
+There is no repair route. A repair is approved, declined, or answered with
+*Pause it* or *Leave it running* through
+`POST /api/app/assistant/gates/:ref/decide` like any other request, with
+`surface` `home`, `inbox` or `processes`; Goobster's own repairs are applied
+by delegated runs. A repair stops or is refused with one of these codes:
+`NO_INCIDENT`, `PROCESS_OFF`, `PROCESS_GONE`, `KIND_NOT_REPAIRABLE`,
+`NOT_A_FAILURE` (it has stopped running), `REPAIR_IN_PROGRESS`,
+`AWAITING_PERSON`, `ATTEMPTS_EXHAUSTED`, `NO_REPAIR_KNOWN`,
+`ACTION_NOT_AVAILABLE`, `NEEDS_APPROVAL`, `PILOT_ONLY`, `INSTANCE_PAUSED`,
+`NO_REDIRECT`, `REDIRECT_UNUSABLE`, `PROBE_DEFERRED`, `DUPLICATE_SOURCE`,
+`CHANGED`, `VERIFY_TIMEOUT`, `RELAPSED`, `DEPENDENTS_STILL_BLOCKED`,
+`NOT_OBSERVED`, or the failure code of the run that disproved it.
 
 A cleanup preview:
 
@@ -639,11 +896,15 @@ working) and `degraded` as separate counts, and its `state` can be
 ## Privacy
 
 Incidents and their members are personal data, like the observations and
-contracts they are built from. So are the stewardship records and cleanup
-previews. The transparency report counts them, the account export includes
-them, and `/forget-me` deletes them. This works when the feature is off. These
-rows hold codes, times, counts, row ids and the names you gave your
-processes; they hold no prompt, output, address or error text.
+contracts they are built from. So are the stewardship records, cleanup
+previews and repairs. The transparency report counts them, the account export
+includes them, and `/forget-me` deletes them. This works when the feature is
+off. These rows hold codes, times, counts, row ids and the names you gave
+your processes; they hold no prompt, output or error text. A repair
+additionally holds two things the others do not: the address a followed
+source was pointed at and the one it had before (both already yours, in the
+source itself), and the short diagnosis a delegated run wrote. Neither is
+copied into the work ledger, which records codes only.
 
 An archived process is still your data and is still exported and erased with
 the rest: archiving hides nothing from the privacy commands.
@@ -651,10 +912,12 @@ the rest: archiving hides nothing from the privacy commands.
 ## Turning it off
 
 Process stewardship is part of the `assistant` feature. With the feature off
-nothing is observed, assessed, opened, announced, paused or archived, the
-routes answer `FEATURE_UNAVAILABLE`, and the data is kept. A process that was
+nothing is observed, assessed, opened, announced, paused, archived or
+repaired, the routes answer `FEATURE_UNAVAILABLE`, and the data is kept. A process that was
 paused or archived stays that way: the processes' own tables hold that, so
 turning the feature off does not switch anything back on.
 
 With the feature on and Attention off, the report and your own actions work,
-and Goobster opens nothing, asks nothing and pauses nothing.
+and Goobster opens nothing, asks nothing, pauses nothing and offers no
+repair. A repair that was already applied is still checked and, if it fails,
+undone.

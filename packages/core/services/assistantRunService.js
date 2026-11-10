@@ -343,7 +343,8 @@ class AssistantRunService {
     /**
      * Which instructions and tool definitions a run is given right now: the
      * version above, and a fingerprint that changes with any edit to the
-     * instructions or to a tool's definition, bumped or not.
+     * instructions, to the instructions of a repair run or to a tool's
+     * definition, bumped or not.
      * @returns {{ version: number, fingerprint: string, label: string }}
      */
     promptVersion() {
@@ -354,7 +355,9 @@ class AssistantRunService {
             tools: Object.keys(TOOLS)
         });
         const definitions = Object.values(TOOLS).map(tool => tool.definition);
-        const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ messages, definitions })).digest('hex').slice(0, 12);
+        // A repair run is given its own instructions, and the evaluation set has a case for them.
+        const repair = require('./assistant/processRepairRun').template(Object.keys(TOOLS));
+        const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ messages, definitions, repair })).digest('hex').slice(0, 12);
         return { version: PROMPT_VERSION, fingerprint, label: `v${PROMPT_VERSION}-${fingerprint}` };
     }
 

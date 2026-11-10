@@ -518,13 +518,13 @@ class AssistantProcessRepairService {
      */
     async _propose({ owner, entry, plan, action, patch = {}, proposedBy, responsibilityId = null, initiativeId = null, note = null, now }) {
         const ref = entry.ref;
-        const id = await db.transaction(async () => {
-            await db.run(
+        const id = await db.transaction(async (tx) => {
+            await tx.run(
                 `UPDATE assistant_process_repairs SET status = 'WITHDRAWN', stopCode = 'REPLACED', endedAt = @now, revision = revision + 1, updatedAt = @now
                  WHERE ownerUserId = @owner AND processKind = @kind AND processId = @id AND status = 'PROPOSED'`,
                 { owner, kind: entry.kind, id: String(entry.id), now: utcText(now) }
             );
-            return db.insert(
+            return tx.insert(
                 `INSERT INTO assistant_process_repairs
                     (ownerUserId, processKind, processId, name, incidentId, status, action, diagnosisCode, diagnosisNote, proposedBy,
                      responsibilityId, initiativeId, patchJson, planJson, updatedAt)
@@ -623,13 +623,13 @@ class AssistantProcessRepairService {
         } else {
             let id;
             try {
-                id = await db.transaction(async () => {
-                    await db.run(
+                id = await db.transaction(async (tx) => {
+                    await tx.run(
                         `UPDATE assistant_process_repairs SET status = 'WITHDRAWN', stopCode = 'REPLACED', endedAt = @now, revision = revision + 1, updatedAt = @now
                          WHERE ownerUserId = @owner AND processKind = @kind AND processId = @id AND status = 'PROPOSED'`,
                         { owner, kind: entry.kind, id: String(entry.id), now: utcText(now) }
                     );
-                    return db.insert(
+                    return tx.insert(
                         `INSERT INTO assistant_process_repairs
                             (ownerUserId, processKind, processId, name, incidentId, attempt, status, action, diagnosisCode, diagnosisNote, proposedBy,
                              actorKind, responsibilityId, initiativeId, attemptKey, patchJson, snapshotJson, planJson, appliedAt, updatedAt)

@@ -23,10 +23,11 @@ grant record, its lifecycle and the authority check (DA-1a), the
 initiatives are carried out by the runner DA-3 added
 ([delegated_runs.md](delegated_runs.md)), which also enforces the token,
 search and compute budgets; DA-4a added the assistant steps of a project plan
-([delegated_plan_steps.md](delegated_plan_steps.md)). Process repair and work
-proposed from conversations are still planned (see the
+([delegated_plan_steps.md](delegated_plan_steps.md)); DA-5c added process
+repair ([process_stewardship.md](process_stewardship.md#repairing-a-process)).
+What is still planned is in the
 [product spec](delegated_assistant_spec.md) and the
-[architecture](delegated_assistant_architecture.md)). The decisions behind the
+[architecture](delegated_assistant_architecture.md). The decisions behind the
 shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 [ADR 0017](adr/0017-initiatives-updates-processes.md).
 
@@ -60,7 +61,10 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   ([delegated_operations.md](delegated_operations.md#caps)). `externalOperations`
   caps pushes and pull requests a day (default 2 when unset, never more than
   20; see [delegated_runs.md](delegated_runs.md#repository-work)).
-  `repairAttempts` is recorded for a later increment. The account's usage cap always remains
+  `repairAttempts` is how many repairs Goobster may apply to one incident of
+  a process this responsibility may repair: 1 when unset, never more than 5,
+  and 0 means he asks you instead
+  ([process_stewardship.md](process_stewardship.md#attempts)). The account's usage cap always remains
   the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
   `stopCondition`, and `autoStart` (`true` queues proposed work without
@@ -87,7 +91,7 @@ permission and no wildcard resource.
 | `file.edit` | Edit project files | `project` |
 | `sandbox.run` | Run code in the project sandbox | `project` |
 | `plan.step.execute` | Carry out the assistant steps of the project's plan, only in a plan revision a person approved and started. Never approves, starts or completes a plan. Takes no `paths` | `project` |
-| `process.repair` | Repair a recurring process (not used yet) | `process` |
+| `process.repair` | Repair a failing scheduled task or followed source: run it once more, or follow a redirect on the same site. Limited to the pilot (`PILOT_ONLY`) | `process` |
 | `process.pause` | Pause a process whose purpose is over | `process` |
 | `process.archive` | Archive a process Goobster paused that way, after 7 days | `process` |
 | `cleanup.exact` | Remove an exact, owned set of artifacts (not used yet: only you can clean up a process) | `process` |
@@ -246,6 +250,15 @@ material revision he saw.
   for the plan. See [delegated_plan_steps.md](delegated_plan_steps.md).
   Its proposed and queued work is withdrawn on any look that finds the plan
   has moved on.
+- Another standing source is a process the grant may repair
+  (`process_incident`, for a grant with `process.repair`). It needs no
+  linked source: the grant names each process. A process that is switched
+  on and has an open incident of its own is proposed once per incident and
+  attempt, titled "Repair" and the process's name, including on the first
+  look, and only while a typed repair exists for its failure and attempts
+  are left. Proposed work is withdrawn when the incident recovers, the
+  process is switched off, you were asked instead, or the attempts are used
+  up. See [process_stewardship.md](process_stewardship.md#repairing-a-process).
 - One source is a **stream**: requests you address to Goobster in the
   conversations the grant covers (`conversation_request`, for a grant whose
   scopes name `project_chat` or `parlor`). It has one cursor, the last
@@ -391,8 +404,19 @@ process whose purpose is over only when an active responsibility grants
 `process.pause` on exactly that process and your Attention boundaries allow
 him to act on schedules; otherwise he asks. He archives only what he paused
 that way, under `process.archive`, after 7 days. Archiving never deletes, and
-a cleanup removes only the exact rows it previewed. Nothing is repaired yet.
+a cleanup removes only the exact rows it previewed.
 See [Retiring a process](process_stewardship.md#retiring-a-process).
+
+**Repair.** A scheduled task or followed source that keeps failing can be
+repaired in one of two fixed ways: run it once more, or point a followed
+source at the address it now redirects to. With no grant Goobster offers the
+first to you and changes nothing. He applies a repair himself only through a
+delegated run under an active responsibility that grants `process.repair` on
+exactly that process; the open incident is the piece of work (source kind
+`process_incident`), and it needs no linked source scope because the grant
+names the process. A repair is checked against what the process records
+afterwards, undone if it fails, and stops after `repairAttempts` attempts.
+See [Repairing a process](process_stewardship.md#repairing-a-process).
 
 ## Retention
 
@@ -405,6 +429,7 @@ The assistant's periodic pass applies these windows:
 | Process incidents and their members | 180 days after the incident was resolved. Open and recovering incidents are kept |
 | Process retirement records | As long as the process is paused or archived; 180 days after their last change once it is running again; removed when the process is deleted |
 | Cleanup previews | 7 days after they expired if never applied; 180 days once applied |
+| Process repairs | 180 days after the repair ended, and removed when the process is deleted. One still waiting for your answer is kept |
 | Finished initiatives (`COMPLETED`, `FAILED`, `CANCELLED`, `SUPERSEDED`) | 180 days after their last change |
 | Runs and their operation journals ([delegated_runs.md](delegated_runs.md)) | 180 days after the run finished, and with their initiative |
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
