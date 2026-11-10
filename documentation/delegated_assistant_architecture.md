@@ -697,7 +697,10 @@ explain the limitation. Feature descriptors, packaging dependencies, discovery
 and dispatch gates must be added together when implementing the feature.
 The paired API cannot start a duplicate worker; the standalone API must work
 without Discord. Maintenance pause prevents background mutation, and restore
-does not reactivate grants or pending actions without reconciliation.
+does not reactivate grants or pending actions without reconciliation. Built
+for runs: a restore marks every run that was in flight, and its initiative,
+failed (`INTERRUPTED_BY_RESTORE`) and nothing resumes it
+([delegated_runs.md](delegated_runs.md), ADR 0018 decision 13).
 
 ## 12. Invariants and verification targets
 
@@ -819,7 +822,8 @@ As built, three things differ from the proposal above them:
   update's `occurrence` is still checked.
 - `surface` (`home`, `inbox`, `chat`) is required. `chat` is accepted so the
   DA-7b confirmation card posts to the same route; `decide` is deliberately
-  not a model tool, and a test fails if a file under `utils/tools/` calls it.
+  not a model tool, and a test fails if a chat tool (`utils/tools/`) or a
+  run tool (`services/assistant/runTools/`) calls it.
 
 Mission approval still mints the mission's own human approval receipt
 (section 7) inside the descriptor, bound to the plan revision on the card.
@@ -832,7 +836,8 @@ session to be the person's own (never a shared guild voice channel).
 ### 13.2 Opportunity sources (DA-8)
 
 Builds on: `assistant_source_cursors` and `SOURCES` in
-`assistantInitiativeService` (one cursor per source, proposals idempotent on
+`assistantInitiativeService` (one module per adapter under
+`services/assistant/sources/`; one cursor per source, proposals idempotent on
 `(responsibility, dedupeKey, sourceRevision, attempt)`), `domainEventBus`
 topics as hints only, `followed_sources`, `observatory_jobs`,
 `project_ci_watches` and the corrected `summarizeChecks` verdicts.
@@ -941,7 +946,8 @@ Rules:
 ### 13.5 Extended reach (DA-11)
 
 Every capability below is a new entry in `assistantRunService.TOOLS`
-(ADR 0018) with `needs`, `effect`, and either `atomic` or `reconcile`.
+(ADR 0018; one module per capability under `services/assistant/runTools/`)
+with `needs`, `effect`, and either `atomic` or `reconcile`.
 
 **Repository work.** Through `projectRepoService` and `utils/sealedGit.js`
 only, with the acting person's own connected GitHub token.
