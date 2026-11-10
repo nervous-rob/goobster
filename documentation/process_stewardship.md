@@ -420,6 +420,11 @@ changed (`STALE_GATE`) if you press it again in another.
 4. You have not said *Keep it running* for this purpose and reason.
 5. The grant is checked again immediately before the pause
    ([how authority is checked](delegated_responsibilities.md#how-authority-is-checked)).
+6. The host has not stopped delegated work
+   ([Stop all](delegated_operations.md#stop-all)). While it is stopped
+   Goobster pauses and archives nothing and asks you instead; what you do
+   yourself on the Processes list is not held. After the host resumes, a
+   grant that still covers the process applies on the next pass.
 
 When it pauses, it tells you once under What changed: what ended, which
 responsibility it acted under, how many runs were left to finish, that

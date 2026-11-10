@@ -724,6 +724,30 @@ describe('the assistant, when a purpose is over', () => {
         expect(await db.all('SELECT id FROM work_failures', {})).toEqual([]);
     });
 
+    test('while the host has stopped delegated work a grant pauses nothing: it asks, and acts once the host resumes', async () => {
+        const control = require('../packages/core/services/assistantControlService');
+        const task = await automation('release watch');
+        await finishedPurpose(task);
+        await grant(['process.pause'], [task.ref]);
+        await policies.setBoundary({ userId: A, category: 'schedule', proactiveCompute: true });
+        await control.pauseAll();
+        try {
+            expect(await pass()).toMatchObject({ relevance: 1, paused: 0 });
+            expect((await db.get('SELECT isEnabled FROM automations WHERE id = @id', { id: task.id })).isEnabled).toBe(1);
+            expect(JSON.parse((await updateFor(task)).gateJson).kind).toBe('process_retirement');
+            expect(await db.all('SELECT id FROM work_failures', {})).toEqual([]);
+            // The person's own pause is not delegated work, and is not held.
+            const other = await automation('unrelated watch');
+            expect((await act(other, 'pause')).lifecycle).toMatchObject({ stage: 'paused', actor: 'person' });
+        } finally {
+            await control.resumeAll();
+        }
+        expect(await pass()).toMatchObject({ paused: 1 });
+        expect(await stage(task)).toMatchObject({ stage: 'PAUSED', actorKind: 'assistant' });
+        // The question is replaced by what was done; nothing is left to answer.
+        expect(await updateFor(task)).toMatchObject({ title: 'Paused "release watch"', gateJson: null });
+    });
+
     test('inside its grant it pauses, says so with the way back, and leaves it alone once the person resumes', async () => {
         const task = await automation('release watch');
         const other = await automation('unrelated watch');
