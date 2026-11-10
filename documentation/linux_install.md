@@ -392,9 +392,10 @@ build reports `APPIMAGETOOL_FAILED` naming the missing command. When the tool
 cannot be fetched or does not match its hash the report says `APPIMAGE_SKIPPED` with a reason
 (`NOT_REQUESTED`, `APPDIR_ONLY`, `HOST_ARCH_MISMATCH`, `TOOL_UNAVAILABLE`,
 `TOOL_HASH_MISMATCH`, `APPIMAGETOOL_FAILED`), and `--require-appimage` turns a
-skip into a failure. The runtime URL points at a rolling release, so its pin may
-need refreshing when upstream publishes a new one. Run an AppImage on a machine
-without FUSE with `APPIMAGE_EXTRACT_AND_RUN=1`.
+skip into a failure. The runtime is pinned to upstream's dated release
+(`20251108`), not its rolling `continuous` release, whose files change whenever
+upstream rebuilds it. Run an AppImage on a machine without FUSE with
+`APPIMAGE_EXTRACT_AND_RUN=1`.
 
 The payload contains the manager (`bin/goobster-manager`, `apps/manager`); the
 smoke check's `manager.launches` check proves the launcher starts from the
