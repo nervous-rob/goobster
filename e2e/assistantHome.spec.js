@@ -7,7 +7,9 @@
  * view when the domain resolves it; snooze hides without resolving; a
  * request that can be decided in place is decided from Home or the Inbox by
  * the same card, and a card that changed is refused with the current state;
- * a draft responsibility grants nothing until the person activates it.
+ * until the host records the pilot decision that card is the owner's, and
+ * anyone else answers the request with the Inbox's own buttons; a draft
+ * responsibility grants nothing until the person activates it.
  */
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
@@ -15,18 +17,24 @@ const { login } = require('./helpers');
 const USER = '99000000000000412';
 const NAME = 'Delegator';
 
+// The installation's owner: the one person offered a decision card until
+// the host records the pilot decision (documentation/assistant_home.md).
+const OWNER = '99000000000000414';
+const OWNER_NAME = 'Owner';
+
 const seed = async (page, data = {}) => {
     const seeded = await page.request.post('/e2e/fixtures/assistant-home', { data: { userId: USER, name: NAME, ...data } });
     expect(seeded.ok(), await seeded.text()).toBe(true);
     return seeded.json();
 };
+const seedOwner = (page, data = {}) => seed(page, { userId: OWNER, name: OWNER_NAME, owner: true, ...data });
 
 const FRIEND = '99000000000000413';
 const FRIEND_NAME = 'Ada';
 
-const friendRequest = async (page, step = 'ask') => {
+const friendRequest = async (page, step = 'ask', userId = USER) => {
     const made = await page.request.post('/e2e/fixtures/assistant-home/friend-request', {
-        data: { userId: USER, fromId: FRIEND, fromName: FRIEND_NAME, step }
+        data: { userId, fromId: FRIEND, fromName: FRIEND_NAME, step }
     });
     expect(made.ok(), await made.text()).toBe(true);
 };
@@ -111,10 +119,37 @@ test.describe('assistant-first Home', () => {
         await expect(page.locator('.inbox-row')).toHaveCount(0);
     });
 
-    test('a request is decided on Home, and it is settled in the Inbox too', async ({ page }) => {
-        await seed(page);
+    test('someone who is not the owner is offered no card: Home points to the Inbox, whose own buttons answer it', async ({ page }) => {
+        await seed(page, { seed: false });
         await friendRequest(page);
         await login(page, { userId: USER, name: NAME });
+        const overview = page.getByTestId('assistant-overview');
+        await expect(overview.getByTestId('assistant-status')).toContainText('1 needs you');
+        const asked = overview.getByTestId('assistant-needs-you-item').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(asked).toBeVisible();
+        await expect(asked.getByTestId('gate-decision')).toHaveCount(0);
+        const listed = (await (await page.request.get('/api/app/inbox?view=needs_you')).json()).items.find((item) => item.friend);
+        expect(listed).toMatchObject({ needsAction: true, decision: null });
+        // Naming the card they were never shown decides nothing.
+        const refused = await page.request.post(`/api/app/assistant/gates/inbox-${listed.id}/decide`, {
+            data: { option: 'accept', occurrence: 1, revision: 'x', surface: 'home' }
+        });
+        expect(refused.status()).toBe(403);
+        expect((await refused.json()).error.code).toBe('PILOT_ONLY');
+
+        await asked.getByRole('link', { name: 'In Inbox' }).click();
+        const row = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(row.getByTestId('gate-decision')).toHaveCount(0);
+        await row.getByTestId('inbox-friend-decision').getByRole('button', { name: 'Accept' }).click();
+        await expect(row.getByTestId('inbox-friend-outcome')).toContainText('Accepted');
+        await page.goto('/app/');
+        await expect(page.getByTestId('assistant-needs-you-empty')).toBeVisible();
+    });
+
+    test('a request is decided on Home, and it is settled in the Inbox too', async ({ page }) => {
+        await seedOwner(page);
+        await friendRequest(page, 'ask', OWNER);
+        await login(page, { userId: OWNER, name: OWNER_NAME });
         const overview = page.getByTestId('assistant-overview');
         await expect(overview.getByTestId('assistant-status')).toContainText('2 need you');
         const asked = overview.getByTestId('assistant-needs-you-item').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
@@ -146,15 +181,15 @@ test.describe('assistant-first Home', () => {
     });
 
     test('a card that changed after it was shown is refused with what the request is now', async ({ page }) => {
-        await seed(page, { seed: false });
-        await friendRequest(page);
-        await login(page, { userId: USER, name: NAME });
+        await seedOwner(page, { seed: false });
+        await friendRequest(page, 'ask', OWNER);
+        await login(page, { userId: OWNER, name: OWNER_NAME });
         await page.goto('/app/activity/inbox');
         const row = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
         await expect(row.getByTestId('gate-decision').getByRole('button')).toHaveText(['Accept', 'Decline']);
 
         // They take it back while the card is still on screen.
-        await friendRequest(page, 'withdraw');
+        await friendRequest(page, 'withdraw', OWNER);
         await row.getByRole('button', { name: 'Accept' }).click();
         await expect(page.locator('#toast')).toHaveText('This request was already settled. They withdrew this request.');
         await expect(page.locator('#toast')).toHaveClass(/error/);
@@ -163,7 +198,7 @@ test.describe('assistant-first Home', () => {
         expect(friends.friends).toHaveLength(0);
 
         // They ask again: that is a new card, and the Inbox decides it too.
-        await friendRequest(page);
+        await friendRequest(page, 'ask', OWNER);
         await page.reload();
         await page.getByTestId('inbox-view-needs_you').click();
         // Only the new notice is the request: the earlier one is a record in

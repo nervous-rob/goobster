@@ -802,7 +802,8 @@ As built:
 - Confirmation is in the portal only. A Discord DM gets the draft and is
   told to confirm it there.
 - The tools also call the pilot gate
-  (`assistantAccessService.allows(userId, 'conversation')`, 13.6).
+  (`assistantAccessService.allows(userId, 'conversation')`, 13.6), and so
+  does deciding in place, below.
 
 **Deciding a request in place.** *Implemented for Home, the Inbox (DA-7a)
 and the chat card (DA-7b); the repair-proposal descriptor is planned.* The
@@ -831,6 +832,14 @@ does today. A stale occurrence or revision, a settled request, or a domain
 "already settled" refusal answers 409 `STALE_GATE` with the current card in
 `error.details.current`, and nothing is decided. Home and the Inbox render
 the same card.
+
+Deciding in place is behind the pilot gate on every surface:
+`assistantGateService` asks `assistantAccessService.allows(userId,
+'conversation')` in `card()`, `cardForInboxItem()` and `decide()`. An
+account the gate does not include is offered no card (Home links to the
+request and the Inbox keeps its own buttons and routes, as with the
+feature off) and `decide` answers 403 `PILOT_ONLY` before it looks the
+request up.
 
 As built, three things differ from the proposal above them:
 

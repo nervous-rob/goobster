@@ -750,6 +750,9 @@ async function main() {
             const updates = require('@goobster/core/services/assistantUpdateService');
             const steward = require('@goobster/core/services/assistantStewardService');
             await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Delegator' });
+            // The pilot gate: until the host decides otherwise only the owner is offered a
+            // decision card. `owner` makes this person one; give them an id no other journey uses.
+            if (req.body?.owner === true) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
             for (const [table, column] of [
                 ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
                 ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId']

@@ -166,6 +166,31 @@ its own *Accept* / *Decline* and *Approve* / *Decline* buttons for friend and
 join requests, which call the friends and access-request routes directly, and
 Home links to the Inbox.
 
+### Who is offered a card: the pilot gate
+
+Deciding a request from its card is part of the Delegated assistant's
+conversational increment, so it is behind the pilot gate
+([delegated_operations.md](delegated_operations.md), capability
+`conversation`). Until the host records the pilot decision, only the
+installation's owner (an account with the operator role) is offered a card
+or can decide through one, on Home, in the Inbox and in chat alike.
+
+For everyone else nothing about the request itself changes: it is still
+listed under Needs you and counted, on Home and in the Inbox. What differs
+is where it is answered:
+
+- a friend request keeps the Inbox's own *Accept* / *Decline* buttons, and
+  Home's row links to it (*In Inbox*);
+- a mission plan to approve or start keeps its *Open* link to the project,
+  where it is approved or started as before;
+- a request to join is only ever shown to a host, who is an owner.
+
+The decide route answers 403 `PILOT_ONLY` for an account the gate does not
+include, whatever reference it names, and the card read answers 404. When
+the host opens the pilot to everyone, the same requests carry their cards
+with nothing else to change; closing it again removes them, and a card
+shown earlier then decides nothing.
+
 ### How a card is described
 
 `assistantGateService` holds one registry, `gateDecisions`, with one
@@ -287,6 +312,7 @@ created through the API.
   | Status | `error.code` | When |
   | --- | --- | --- |
   | 400 | `INVALID_DECISION` | A field is missing, or the option is not one the card offers |
+  | 403 | `PILOT_ONLY` | The pilot gate does not include this account (`error.details.capability` is `conversation`). Checked before the request is looked up |
   | 404 | `NOT_FOUND` | No such request for the signed-in person, or they may not decide it |
   | 409 | `NOT_DECIDABLE_HERE` | The request's kind has no decision card; it is decided where it lives |
   | 409 | `STALE_GATE` | The card changed after it was shown. `error.details.current` is the current card (`state: "resolved"` with `outcome` once settled), and nothing was decided |
@@ -314,6 +340,11 @@ None of the GET routes writes anything.
   have no card yet.
 - No option is marked `danger` yet: these buttons replace Inbox buttons
   that did not confirm either.
+- The pilot gate covers deciding in place on every surface, not only the
+  chat card (owner decision 9, read conservatively): DA-7a shipped before
+  the gate existed and was open to every account until DA-7b added the
+  check. An account outside the pilot gets the same fallback as an
+  installation with the feature off.
 
 ## Not built yet
 

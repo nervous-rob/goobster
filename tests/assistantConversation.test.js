@@ -963,16 +963,26 @@ describe('a decision pressed on a chat card', () => {
         expect(await receiptRows()).toEqual([]);
     });
 
-    test('deciding from a conversation is the owner\'s alone until the pilot decision is recorded', async () => {
+    test('deciding from a card is the owner\'s alone until the pilot decision is recorded, in a conversation as on Home and in the Inbox', async () => {
         const { request } = await friends.request({ userId: A, targetId: B });
+        // B is not the owner: the request waits on them with no card to press.
         const [item] = (await inbox.list({ userId: B, view: 'needs_you' })).items;
-        const shown = item.decision;
+        expect(item).toMatchObject({ needsAction: true, decision: null, friend: { actionable: true } });
         const asB = (extra) => caught(gates.decide({
+            userId: B, ref: `inbox-${item.id}`, option: 'accept', occurrence: 1, revision: request.createdAt, ...extra
+        }));
+        for (const extra of [{ surface: 'chat', receipt: 'x' }, { surface: 'home' }, { surface: 'inbox' }]) {
+            expect(await asB(extra)).toMatchObject({ code: 'PILOT_ONLY', status: 403 });
+        }
+        expect(await status(request)).toBe('pending');
+        // Once the host opens the pilot the card is theirs; a conversation still needs its receipt.
+        await access.recordDecision({ scope: 'everyone' });
+        const shown = (await inbox.list({ userId: B, view: 'needs_you' })).items[0].decision;
+        const decideAsB = (extra) => caught(gates.decide({
             userId: B, ref: shown.ref, option: 'accept', occurrence: shown.occurrence, revision: shown.revision, ...extra
         }));
-        expect(await asB({ surface: 'chat', receipt: 'x' })).toMatchObject({ code: 'PILOT_ONLY', status: 403 });
-        expect(await status(request)).toBe('pending');
-        expect(await asB({ surface: 'inbox' })).toBeNull();
+        expect(await decideAsB({ surface: 'chat' })).toMatchObject({ code: 'HUMAN_CONFIRMATION_REQUIRED' });
+        expect(await decideAsB({ surface: 'inbox' })).toBeNull();
         expect(await status(request)).toBe('accepted');
     });
 });
