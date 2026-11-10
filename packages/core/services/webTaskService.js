@@ -245,19 +245,23 @@ class WebTaskService {
      */
     async setAutomationEnabled({ userId, automationId, enabled }) {
         const row = await db.get(
-            'SELECT id, schedule FROM automations WHERE id = @id AND userId = @userId',
+            'SELECT id, schedule, archivedAt FROM automations WHERE id = @id AND userId = @userId',
             { id: Number(automationId), userId }
         );
         if (!row) {
             throw new WebTaskError(404, 'NOT_FOUND', 'No such task.');
         }
         if (enabled) {
+            const archived = () => new WebTaskError(409, 'ARCHIVED',
+                'This task is archived. Restore it from the Assistant\'s Processes list before switching it on.');
+            if (row.archivedAt) throw archived();
             const interval = CronExpressionParser.parse(row.schedule, { tz: 'UTC' });
-            await db.run(
+            const result = await db.run(
                 `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
-                 WHERE id = @id`,
+                 WHERE id = @id AND archivedAt IS NULL`,
                 { id: row.id, nextRun: interval.next().toDate() }
             );
+            if (result.changes === 0) throw archived();
         } else {
             await db.run(
                 `UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP

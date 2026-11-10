@@ -261,6 +261,62 @@ class AttentionWatchService {
         return result.changes > 0;
     }
 
+    /**
+     * Process stewardship (documentation/process_stewardship.md), called by
+     * assistantProcessLifecycleService once it has checked who may act.
+     *
+     * A watch has no off switch of its own, so a pause is a mark the fire
+     * claim refuses: it stays ARMED and its expiry still applies. A turn
+     * that was already running finishes; `started` says whether there was one.
+     * An event that happens while it is paused is not kept for later.
+     * @returns {Promise<{ changed: boolean, started: number }>}
+     */
+    async stewardPause({ id, now }) {
+        const result = await db.run(
+            `UPDATE attention_watches SET pausedAt = @now
+             WHERE id = @id AND status IN ('ARMED', 'FIRING') AND pausedAt IS NULL`,
+            { id: Number(id), now }
+        );
+        const row = await db.get('SELECT status FROM attention_watches WHERE id = @id', { id: Number(id) });
+        return { changed: result.changes > 0, started: row?.status === 'FIRING' ? 1 : 0 };
+    }
+
+    /** Resume a paused watch that is still armed; one that ended while paused cannot be resumed. */
+    async stewardResume({ id }) {
+        const row = await db.get('SELECT status, pausedAt, archivedAt FROM attention_watches WHERE id = @id', { id: Number(id) });
+        if (!row) throw new WatchError('NOT_FOUND', 'No such watch.');
+        if (row.archivedAt) throw new WatchError('ARCHIVED', 'This watch is archived. Restore it first.');
+        if (!['ARMED', 'FIRING'].includes(row.status)) {
+            throw new WatchError('ENDED', 'This watch has ended, so there is nothing to resume. Set up a new one instead.');
+        }
+        const result = await db.run(
+            `UPDATE attention_watches SET pausedAt = NULL
+             WHERE id = @id AND pausedAt IS NOT NULL AND archivedAt IS NULL AND status IN ('ARMED', 'FIRING')`,
+            { id: Number(id) }
+        );
+        return { changed: result.changes > 0 };
+    }
+
+    /** Archive a watch that is paused or has ended: the row and its history stay. */
+    async stewardArchive({ id, now }) {
+        const result = await db.run(
+            `UPDATE attention_watches SET archivedAt = @now, pausedAt = COALESCE(pausedAt, @now)
+             WHERE id = @id AND archivedAt IS NULL
+               AND (pausedAt IS NOT NULL OR status NOT IN ('ARMED', 'FIRING'))`,
+            { id: Number(id), now }
+        );
+        return { changed: result.changes > 0 };
+    }
+
+    /** Restore an archived watch. It stays paused. */
+    async stewardRestore({ id }) {
+        const result = await db.run(
+            'UPDATE attention_watches SET archivedAt = NULL WHERE id = @id AND archivedAt IS NOT NULL',
+            { id: Number(id) }
+        );
+        return { changed: result.changes > 0 };
+    }
+
     /** Disarm watches that outlived their window. */
     async expireStale() {
         const result = await db.run(
@@ -320,7 +376,7 @@ class AttentionWatchService {
             : null;
         const rows = await db.all(
             `SELECT * FROM attention_watches
-             WHERE status = 'ARMED' AND fireCount < maxFires
+             WHERE status = 'ARMED' AND fireCount < maxFires AND pausedAt IS NULL
                AND topic IN (@topic, @namespace, '*')`,
             { topic: event.topic, namespace: namespace || event.topic }
         );
@@ -362,7 +418,7 @@ class AttentionWatchService {
         const claimed = (await db.run(
             `UPDATE attention_watches
              SET status = 'FIRING', lastFiredAt = CURRENT_TIMESTAMP
-             WHERE id = @id AND status = 'ARMED' AND fireCount < maxFires`,
+             WHERE id = @id AND status = 'ARMED' AND fireCount < maxFires AND pausedAt IS NULL`,
             { id: watch.id }
         )).changes > 0;
         if (!claimed) return;

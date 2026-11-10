@@ -560,6 +560,7 @@ class ProjectTriggerService {
             actionAssetId: row.actionAssetId ?? null,
             actionParams: parseActionParams(row.actionParams),
             isEnabled: Boolean(row.isEnabled),
+            archived: Boolean(row.archivedAt),
             lastRun: row.lastRun || null,
             // Dispatch result ("started: job #12, awaiting settlement") vs.
             // how the most recently started stage actually ended.
@@ -758,6 +759,9 @@ class ProjectTriggerService {
         const enabled = isEnabled === undefined
             ? existing.isEnabled
             : (isEnabled === false || isEnabled === 0 ? 0 : 1);
+        const archived = () => new ProjectTriggerError(409, 'TRIGGER_ARCHIVED',
+            `"${existing.name}" is archived. Restore it from the Assistant's Processes list before switching it on.`);
+        if (enabled && existing.archivedAt) throw archived();
 
         let cronSchedule;
         let nextRun = existing.nextRun;
@@ -817,7 +821,8 @@ class ProjectTriggerService {
                  eventTopic = @eventTopic, sourceAssetId = @sourceAssetId,
                  sourceTriggerId = @sourceTriggerId,
                  action = @action, actionAssetId = @actionAssetId,
-                 actionParams = @actionParams, isEnabled = @isEnabled,
+                 actionParams = @actionParams,
+                 isEnabled = CASE WHEN archivedAt IS NOT NULL THEN 0 ELSE @isEnabled END,
                  updatedAt = datetime('now')
              WHERE id = @id`,
             {
@@ -836,6 +841,8 @@ class ProjectTriggerService {
             }
         );
         const row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: existing.id });
+        // Archived between the read and the write: the write left it off.
+        if (enabled && row?.archivedAt) throw archived();
         const updated = this._serialize(row, projectRow.slug);
         require('./eventBusService').publishProjectChange({
             userId, slug: projectRow.slug, reason: 'trigger', projectId: projectRow.id
@@ -858,6 +865,116 @@ class ProjectTriggerService {
             userId, slug: projectRow.slug, reason: 'trigger', projectId: projectRow.id
         });
         return { deleted: true, name: existing.name };
+    }
+
+    /**
+     * Process stewardship (documentation/process_stewardship.md), called by
+     * assistantProcessLifecycleService once it has checked who may act.
+     *
+     * Pause stops future fires in one write and drops deliveries that were
+     * waiting to be retried. A stage it had already started is not
+     * cancelled: it runs to its end, and `started` says how many there were.
+     * @returns {Promise<{ changed: boolean, started: number, dropped: number }>}
+     */
+    async stewardPause({ id }) {
+        const triggerId = Number(id);
+        const result = await db.run(
+            "UPDATE project_triggers SET isEnabled = 0, updatedAt = datetime('now') WHERE id = @id AND isEnabled = 1",
+            { id: triggerId }
+        );
+        const dropped = await this._dropPendingDeliveries(triggerId);
+        return { changed: result.changes > 0, started: await this.startedWork(triggerId), dropped };
+    }
+
+    /** Deliveries waiting for a retry are not owed any more once the trigger is paused. */
+    async _dropPendingDeliveries(triggerId) {
+        const result = await db.run(
+            `UPDATE project_trigger_deliveries
+             SET status = 'SKIPPED', detail = 'paused before it could be retried', nextAttemptAt = NULL,
+                 updatedAt = datetime('now')
+             WHERE triggerId = @id AND status = 'RETRYABLE'`,
+            { id: triggerId }
+        );
+        return result.changes || 0;
+    }
+
+    /** Work this trigger has started that has not ended: a dispatch in flight, or a stage still running. */
+    async startedWork(triggerId) {
+        const dispatching = await db.get(
+            "SELECT COUNT(*) AS n FROM project_trigger_deliveries WHERE triggerId = @id AND status = 'STARTED' AND childJobId IS NULL",
+            { id: Number(triggerId) }
+        );
+        const running = await db.get(
+            "SELECT COUNT(*) AS n FROM observatory_jobs WHERE triggerId = @id AND startedBy = 'trigger' AND status = 'RUNNING'",
+            { id: Number(triggerId) }
+        );
+        return Number(dispatching?.n || 0) + Number(running?.n || 0);
+    }
+
+    /**
+     * Resume a paused trigger. A cron trigger waits for its next scheduled
+     * time. An event trigger does not replay what settled while it was
+     * paused: those events are recorded as skipped, and `skipped` says how
+     * many, so a resume never starts a burst of old work.
+     * @returns {Promise<{ changed: boolean, skipped: number }>}
+     */
+    async stewardResume({ id }) {
+        const row = await db.get('SELECT * FROM project_triggers WHERE id = @id', { id: Number(id) });
+        if (!row) throw new ProjectTriggerError(404, 'NO_SUCH_TRIGGER', 'No such trigger.');
+        if (row.archivedAt) {
+            throw new ProjectTriggerError(409, 'TRIGGER_ARCHIVED', `"${row.name}" is archived. Restore it first.`);
+        }
+        if (row.isEnabled) return { changed: false, skipped: 0 };
+        let nextRun = null;
+        if (row.kind === 'cron') {
+            try {
+                nextRun = validateCron(row.schedule).nextRun;
+            } catch (error) {
+                throw new ProjectTriggerError(409, error.code || 'BAD_SCHEDULE', error.message);
+            }
+        }
+        let skipped = 0;
+        if (row.kind === 'event') {
+            await this._dropPendingDeliveries(row.id);
+            await this._backfillLegacyDeliveries(row);
+            for (const job of await this._undeliveredEventJobs(row)) {
+                if (!matchesEventTrigger(row, job)) continue;
+                const result = await db.run(
+                    `INSERT INTO project_trigger_deliveries
+                        (triggerId, sourceJobId, projectId, status, attempts, detail)
+                     VALUES (@triggerId, @sourceJobId, @projectId, 'SKIPPED', 0, 'settled while the trigger was paused')
+                     ON CONFLICT (triggerId, sourceJobId) DO NOTHING`,
+                    { triggerId: row.id, sourceJobId: job.id, projectId: row.projectId }
+                );
+                skipped += result.changes > 0 ? 1 : 0;
+            }
+        }
+        const result = await db.run(
+            `UPDATE project_triggers SET isEnabled = 1, nextRun = @nextRun, updatedAt = datetime('now')
+             WHERE id = @id AND isEnabled = 0 AND archivedAt IS NULL`,
+            { id: row.id, nextRun }
+        );
+        return { changed: result.changes > 0, skipped };
+    }
+
+    /** Archive a switched-off trigger: the row, its deliveries and the jobs it started stay. */
+    async stewardArchive({ id, now }) {
+        const result = await db.run(
+            `UPDATE project_triggers SET archivedAt = @now, updatedAt = datetime('now')
+             WHERE id = @id AND isEnabled = 0 AND archivedAt IS NULL`,
+            { id: Number(id), now }
+        );
+        return { changed: result.changes > 0 };
+    }
+
+    /** Restore an archived trigger. It stays switched off. */
+    async stewardRestore({ id }) {
+        const result = await db.run(
+            `UPDATE project_triggers SET archivedAt = NULL, isEnabled = 0, updatedAt = datetime('now')
+             WHERE id = @id AND archivedAt IS NOT NULL`,
+            { id: Number(id) }
+        );
+        return { changed: result.changes > 0 };
     }
 
     /**
@@ -968,16 +1085,14 @@ class ProjectTriggerService {
      */
     async claimEventFire(trigger, job) {
         if (!job?.finishedAt || !trigger?.id) return false;
-        const enabled = await db.get(
-            'SELECT isEnabled FROM project_triggers WHERE id = @id',
-            { id: trigger.id }
-        );
-        if (!enabled?.isEnabled) return false;
         const key = { triggerId: trigger.id, sourceJobId: job.id };
+        // The claim and the enabled check are one statement, so a pause that
+        // lands between them cannot be outrun: after it, nothing is claimed.
         const inserted = await db.run(
             `INSERT INTO project_trigger_deliveries
                 (triggerId, sourceJobId, projectId, status, attempts)
-             VALUES (@triggerId, @sourceJobId, @projectId, 'STARTED', 1)
+             SELECT @triggerId, @sourceJobId, @projectId, 'STARTED', 1
+             WHERE EXISTS (SELECT 1 FROM project_triggers t WHERE t.id = @triggerId AND t.isEnabled = 1)
              ON CONFLICT (triggerId, sourceJobId) DO NOTHING`,
             { ...key, projectId: Number(job.projectId) }
         );
@@ -991,7 +1106,8 @@ class ProjectTriggerService {
                  updatedAt = datetime('now')
              WHERE triggerId = @triggerId AND sourceJobId = @sourceJobId
                AND status = 'RETRYABLE'
-               AND (nextAttemptAt IS NULL OR nextAttemptAt <= @now)`,
+               AND (nextAttemptAt IS NULL OR nextAttemptAt <= @now)
+               AND EXISTS (SELECT 1 FROM project_triggers t WHERE t.id = @triggerId AND t.isEnabled = 1)`,
             { ...key, now: utcText() }
         );
         return retried.changes > 0;

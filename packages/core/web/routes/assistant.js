@@ -18,6 +18,7 @@ const initiatives = require('../../services/assistantInitiativeService');
 const updates = require('../../services/assistantUpdateService');
 const processes = require('../../services/assistantProcessService');
 const incidents = require('../../services/assistantIncidentService');
+const lifecycle = require('../../services/assistantProcessLifecycleService');
 
 function mountAssistant(app, ctx, h) {
     const { requireAuth, assistantRoute: route } = h;
@@ -121,9 +122,9 @@ function mountAssistant(app, ctx, h) {
         snoozed: await updates.snooze({ userId: req.webUser.userId, id: req.params.id, until: req.body?.until })
     })));
 
-    // --- Process catalog (read model + contracts) ---------------------------
-    // Reads: each process with how it is doing, and the incidents still open.
-    // Nothing on these routes pauses, repairs or removes a process.
+    // --- Process catalog (read model, contracts, lifecycle) ------------------
+    // Reads: each process with how it is doing, what stewardship has done
+    // with it and what the person may do next, and the incidents still open.
     const processBase = '/api/app/assistant/processes';
     app.get(processBase, requireAuth, route(async (req) => ({
         ...(await processes.list({ userId: req.webUser.userId })),
@@ -143,6 +144,21 @@ function mountAssistant(app, ctx, h) {
 
     app.delete(`${processBase}/:kind/:id/contract`, requireAuth, route(async (req) => processes.deleteContract({
         userId: req.webUser.userId, kind: req.params.kind, id: req.params.id
+    })));
+
+    // { action: pause | resume | archive | restore | keep | preview_cleanup | cleanup,
+    //   expectedRevision? (the lifecycle revision shown; 0 when there is none),
+    //   cleanupId?, manifestHash? (cleanup: the manifest that was previewed) }
+    // The person acting on their own process. Nothing here deletes a
+    // definition; `cleanup` removes only the rows its previewed manifest names.
+    app.post(`${processBase}/:kind/:id/actions`, requireAuth, route(async (req) => lifecycle.act({
+        userId: req.webUser.userId,
+        kind: req.params.kind,
+        id: req.params.id,
+        action: String(req.body?.action || ''),
+        expectedRevision: req.body?.expectedRevision,
+        cleanupId: req.body?.cleanupId ?? null,
+        manifestHash: req.body?.manifestHash ?? null
     })));
 }
 

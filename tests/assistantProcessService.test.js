@@ -36,7 +36,7 @@ afterAll(async () => {
 beforeEach(async () => {
     useState();
     for (const table of [
-        'assistant_process_incident_members', 'assistant_process_incidents',
+        'assistant_process_incident_members', 'assistant_process_incidents', 'assistant_process_lifecycle', 'assistant_process_cleanups',
         'assistant_process_observations', 'assistant_process_contracts', 'project_trigger_deliveries', 'project_triggers',
         'observatory_jobs', 'project_members', 'observatory_projects', 'automations', 'attention_items'
     ]) {
@@ -149,13 +149,36 @@ describe('observations', () => {
         expect(result).toEqual({ outcome: 'skipped', code: 'NO_DISCORD_CLIENT' });
         await service._executeClaimedAutomation(row);
         const rows = await observations();
-        expect(rows).toHaveLength(1);
-        expect(rows[0]).toMatchObject({
+        // One occurrence: the mark that it started, and how it ended.
+        expect(rows.map(item => item.occurrenceKey)).toEqual(['fire:2026-11-09 03:00:00', 'fire:2026-11-09 03:00:00']);
+        expect(rows.find(item => item.phase === 'dispatch')).toMatchObject({ outcome: 'unknown', reasonCode: 'STARTED' });
+        expect(rows.find(item => item.phase === 'outcome')).toMatchObject({
             processKind: 'automation', processId: String(id), ownerUserId: A,
-            occurrenceKey: 'fire:2026-11-09 03:00:00', phase: 'outcome', outcome: 'skipped', reasonCode: 'NO_DISCORD_CLIENT', attempts: 2
+            outcome: 'skipped', reasonCode: 'NO_DISCORD_CLIENT', attempts: 2
         });
         const detail = await processes.get({ userId: A, kind: 'automation', id });
-        expect(detail.observations).toEqual([expect.objectContaining({ outcome: 'skipped', reasonCode: 'NO_DISCORD_CLIENT' })]);
+        expect(detail.observations.filter(item => item.phase === 'outcome'))
+            .toEqual([expect.objectContaining({ outcome: 'skipped', reasonCode: 'NO_DISCORD_CLIENT' })]);
+    });
+
+    test('each scheduled fire taken from the due list is its own occurrence, so repeated failures add up', async () => {
+        const id = await automation();
+        const service = new AutomationService(null);
+        jest.spyOn(service, '_runClaimedAutomation').mockResolvedValue({ outcome: 'failed', code: 'RUN_FAILED' });
+        const fires = ['2026-11-07 03:00:00', '2026-11-08 03:00:00', '2026-11-09 03:00:00'];
+        for (const fire of fires) {
+            // Inbox-delivered, so a process without a Discord client picks it up.
+            await db.run("UPDATE automations SET nextRun = @fire, channelId = 'inbox:' || userId WHERE id = @id", { fire, id });
+            // The row exactly as the scheduler's poll loop reads it.
+            const [due] = await service.getDueAutomations();
+            expect(due.id).toBe(id);
+            await service._executeClaimedAutomation(due);
+        }
+        const outcomes = (await observations()).filter(item => item.phase === 'outcome');
+        expect(outcomes.map(item => item.occurrenceKey)).toEqual(fires.map(fire => `fire:${fire}`));
+        const { assessment } = await processes.get({ userId: A, kind: 'automation', id });
+        expect(assessment.health.failRun).toBe(3);
+        expect(assessment).toMatchObject({ execution: 'blocked', reasons: { execution: 'FAILING_REPEATEDLY' } });
     });
 
     test('a project trigger dispatch records one observation per source job, and its delivery ledger reads as history', async () => {

@@ -899,6 +899,16 @@ class AssistantResponsibilityService {
         return result;
     }
 
+    /**
+     * Would `authorize()` allow this right now? The same decision, without
+     * recording a refusal: for a periodic pass that looks for work a grant
+     * covers. It authorizes nothing; the side effect itself still calls
+     * `authorize()` immediately before it happens.
+     */
+    async wouldAuthorize({ responsibilityId, revision, operation, resource, actorUserId, now = new Date() }) {
+        return this._authorize({ responsibilityId, revision, operation, resource, actorUserId, now });
+    }
+
     async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now }) {
         if (features.enforcedOff(FEATURE_ID)) return unavailableResult(FEATURE_ID);
         const row = await this._row(responsibilityId);

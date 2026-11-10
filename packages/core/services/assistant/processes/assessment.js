@@ -198,6 +198,9 @@ function overdue(described, contract, summary, nowMs, options) {
 
 function judgeExecution({ described, contract, summary, nowMs, options }) {
     const cause = summary.failureCode || null;
+    // Deliberately stopped through stewardship: not running, and not a failure.
+    if (described.archived) return { state: 'unknown', reason: 'ARCHIVED', causeCode: null };
+    if (described.paused) return { state: 'unknown', reason: 'PAUSED', causeCode: null };
     if (!described.enabled) {
         const lastRun = toMs(described.lastRunAt) ?? summary.lastFailureAt;
         if (described.status === 'FAILED' && lastRun !== null && (nowMs - lastRun) / 1000 <= options.terminalFailureWindowSeconds) {
@@ -251,7 +254,9 @@ function judgeRelevance({ described, contract, linkedItem, summary, nowMs, optio
             ? { state: 'retirement_candidate', reason: ended.reason }
             : { state: ended.kind, reason: ended.reason };
     }
-    if (!described.enabled) return { state: 'dormant', reason: 'NOT_RUNNING' };
+    if (!described.enabled) {
+        return { state: 'dormant', reason: described.archived ? 'ARCHIVED' : described.paused ? 'PAUSED' : 'NOT_RUNNING' };
+    }
     if (described.trigger?.kind === 'event') {
         const last = Math.max(toMs(described.lastRunAt) ?? 0, summary.latestAt ?? 0);
         return last > 0 && (nowMs - last) / 1000 <= options.activeWindowSeconds

@@ -355,6 +355,7 @@ const GROUPS = [
             'assistantIncidentService',
             'assistantInitiativeService',
             'assistantProcessAssessment',
+            'assistantProcessLifecycle',
             'assistantProcessService',
             'assistantResponsibilityService',
             'assistantRunService',

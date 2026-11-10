@@ -165,7 +165,10 @@ CREATE TABLE IF NOT EXISTS automations (
     nextRun TEXT,
     metadata TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Set while archived (documentation/process_stewardship.md): the row and
+    -- its history stay, it cannot be switched on until restored.
+    archivedAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_automations_guild ON automations(guildId);
@@ -1897,7 +1900,9 @@ CREATE TABLE IF NOT EXISTS project_triggers (
     -- how the stage itself ended - the two are deliberately separate.
     lastJobOutcome TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Set while archived (documentation/process_stewardship.md)
+    archivedAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(projectId);
@@ -2367,6 +2372,10 @@ CREATE TABLE IF NOT EXISTS attention_watches (
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     -- Mission start-attempt correlation (see observatory_jobs.executionAttemptId)
     executionAttemptId TEXT,
+    -- Process stewardship: a paused watch stays ARMED but cannot be claimed;
+    -- an archived one cannot be resumed until restored.
+    pausedAt TEXT,
+    archivedAt TEXT,
     UNIQUE (userId, label)
 );
 
@@ -3306,6 +3315,8 @@ CREATE TABLE IF NOT EXISTS followed_sources (
     claimUntil TEXT,
     latestEntryId INTEGER,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Set while archived (documentation/process_stewardship.md)
+    archivedAt TEXT,
     CHECK ((projectId IS NOT NULL AND topicNodeId IS NULL) OR (projectId IS NULL AND topicNodeId IS NOT NULL)),
     UNIQUE (userId, projectId, url),
     UNIQUE (userId, topicNodeId, url)
@@ -3806,3 +3817,67 @@ CREATE TABLE IF NOT EXISTS assistant_process_incident_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_process_incident_members_owner ON assistant_process_incident_members(ownerUserId);
+
+-- Process lifecycle (DA-5b, ADR 0020): one row per process that has ever
+-- been paused, archived, cleaned or deliberately kept through stewardship.
+-- The definition stays in its own table; this row is the restore metadata:
+-- who acted and why, what was already running at the pause, the final
+-- outcome at archive and what a cleanup removed. Codes and counts only.
+--   stage: ACTIVE (resumed or kept) | PAUSED | ARCHIVED | CLEANED
+--   actorKind: 'person' or 'assistant' (acting inside responsibilityId)
+--   startedPolicy: 'finish' (already-started work ran to its end) or
+--     'abandon' (it was dropped without storing anything)
+--   keptRevision / keptReason: the contract revision and relevance reason
+--     the person chose to keep the process running under
+CREATE TABLE IF NOT EXISTS assistant_process_lifecycle (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    name TEXT,
+    stage TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (stage IN ('ACTIVE', 'PAUSED', 'ARCHIVED', 'CLEANED')),
+    actorKind TEXT NOT NULL DEFAULT 'person' CHECK (actorKind IN ('person', 'assistant')),
+    responsibilityId INTEGER,
+    reasonCode TEXT,
+    startedCount INTEGER NOT NULL DEFAULT 0,
+    startedPolicy TEXT,
+    pausedAt TEXT,
+    archivedAt TEXT,
+    cleanedAt TEXT,
+    resumedAt TEXT,
+    finalJson TEXT,
+    cleanedJson TEXT,
+    keptRevision INTEGER,
+    keptReason TEXT,
+    keptAt TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (processKind, processId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_lifecycle_owner ON assistant_process_lifecycle(ownerUserId, stage);
+
+-- Cleanup manifests (DA-5b): the exact rows one cleanup may remove, frozen
+-- at preview. manifestJson holds row ids and counts, never content. It is
+-- bound to the lifecycle revision, the contract revision and a hash of the
+-- definition, so a change to any of them makes it INVALIDATED at apply.
+--   status: PREVIEWED | APPLIED | INVALIDATED | EXPIRED
+CREATE TABLE IF NOT EXISTS assistant_process_cleanups (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    name TEXT,
+    status TEXT NOT NULL DEFAULT 'PREVIEWED' CHECK (status IN ('PREVIEWED', 'APPLIED', 'INVALIDATED', 'EXPIRED')),
+    manifestJson TEXT NOT NULL,
+    manifestHash TEXT NOT NULL,
+    lifecycleRevision INTEGER NOT NULL,
+    resultJson TEXT,
+    expiresAt TEXT NOT NULL,
+    appliedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_cleanups_owner ON assistant_process_cleanups(ownerUserId, processKind, processId);

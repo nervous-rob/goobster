@@ -756,6 +756,9 @@ class PrivacyService {
             // Process incidents and the processes named in them.
             counts.processIncidents = forgottenResponsibilities.incidents;
             counts.processIncidentMembers = forgottenResponsibilities.incidentMembers;
+            // What was paused, archived or cleaned up, and cleanup manifests.
+            counts.processLifecycle = forgottenResponsibilities.processLifecycle;
+            counts.processCleanups = forgottenResponsibilities.processCleanups;
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
@@ -1300,6 +1303,8 @@ class PrivacyService {
             assistant_process_observations: responsibilities.processObservations,
             assistant_process_incidents: responsibilities.incidents,
             assistant_process_incident_members: responsibilities.incidentMembers,
+            assistant_process_lifecycle: responsibilities.processLifecycle,
+            assistant_process_cleanups: responsibilities.processCleanups,
             assistant_runs: responsibilities.runs,
             assistant_run_operations: responsibilities.runOperations,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
