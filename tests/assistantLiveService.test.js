@@ -28,6 +28,7 @@ const updates = require('@goobster/core/services/assistantUpdateService');
 const responsibilities = require('@goobster/core/services/assistantResponsibilityService');
 const initiatives = require('@goobster/core/services/assistantInitiativeService');
 const runner = require('@goobster/core/services/assistantRunnerService');
+const lifecycle = require('@goobster/core/services/assistantProcessLifecycleService');
 const access = require('@goobster/core/services/assistantAccessService');
 const instanceState = require('@goobster/core/services/instanceStateService');
 const attention = require('@goobster/core/services/attentionService');
@@ -81,7 +82,8 @@ beforeEach(async () => {
     runner._reset();
     for (const table of [
         'assistant_run_operations', 'assistant_runs', 'assistant_initiatives', 'assistant_source_cursors',
-        'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions', 'assistant_responsibilities',
+        'assistant_update_receipts', 'assistant_updates', 'assistant_process_cleanups', 'assistant_process_lifecycle',
+        'assistant_responsibility_revisions', 'assistant_responsibilities', 'automations',
         'attention_state', 'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations',
         'project_members', 'observatory_projects', 'app_accounts'
     ]) {
@@ -198,6 +200,22 @@ describe('what producers announce', () => {
 
         // Nothing left to withdraw: nothing to say.
         expect(await announced(() => initiatives.reconcileResponsibility(grant.id))).toEqual([]);
+    });
+
+    test('a process paused and resumed is announced, so the Processes report reads again', async () => {
+        await policies.enroll({ userId: OWNER, initiative: 'assist' });
+        const id = Number(await db.insert(
+            `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+             VALUES (@userId, @guild, @channel, 'nightly import', 'do it', '0 3 * * *', '2099-01-01 03:00:00')`,
+            { userId: OWNER, guild: `dm:${OWNER}`, channel: `inbox:${OWNER}` }
+        ));
+        const act = action => lifecycle.act({ userId: OWNER, kind: 'automation', id, action });
+
+        expect(await announced(() => act('pause'))).toEqual([{ userId: OWNER, kinds: ['update'] }]);
+        // Already paused: nothing moved, nothing to say.
+        expect(await announced(() => act('pause'))).toEqual([]);
+        expect(await announced(() => act('resume'))).toContainEqual({ userId: OWNER, kinds: ['update'] });
+        expect(live.hintsFor(['update'])).toContain('assistant-processes');
     });
 
     test('run progress is announced at most once per run every five seconds', async () => {

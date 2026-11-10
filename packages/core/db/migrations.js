@@ -224,6 +224,13 @@ const COLUMN_MIGRATIONS = [
     ['assistant_updates', 'outboundAt', 'outboundAt TEXT'],
     // When the day's digest may go out (minutes from midnight; NULL = 09:00).
     ['attention_policies', 'digestMinute', 'digestMinute INTEGER'],
+    // Process lifecycle (DA-5b): archived definitions stay in their own table,
+    // and a watch (which has no on/off switch of its own) can be paused.
+    ['automations', 'archivedAt', 'archivedAt TEXT'],
+    ['project_triggers', 'archivedAt', 'archivedAt TEXT'],
+    ['followed_sources', 'archivedAt', 'archivedAt TEXT'],
+    ['attention_watches', 'pausedAt', 'pausedAt TEXT'],
+    ['attention_watches', 'archivedAt', 'archivedAt TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

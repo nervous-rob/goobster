@@ -1,9 +1,9 @@
 ---
 title: Process stewardship (is recurring work working, and is it still needed)
 kind: reference
-summary: Goobster judges each of your recurring processes - scheduled tasks, project triggers, watches and followed sources - on two separate questions, whether it is working and whether it is still needed, from typed records of what each run did. Repeated failures become one incident per cause, with a recovery period so a flapping process is not announced twice. This stage only observes and reports - it never pauses, repairs or removes a process. Covers the states and what puts a process in each, contracts, incidents, what you are told and where, every default number, what is stored and the routes.
-when: Understanding why a process shows as blocked, stalled, degraded or unknown; why Goobster says a process may no longer be needed, or says nothing about one you never open; how many failures open an incident and when it closes; why one outage produced one message; recording a purpose, cadence or dependency for a process; checking what process stewardship stores about you.
-tags: [assistant, processes, schedules, health, incidents, attention, home, privacy]
+summary: Goobster judges each of your recurring processes - scheduled tasks, project triggers, watches and followed sources - on two separate questions, whether it is working and whether it is still needed, from typed records of what each run did. Repeated failures become one incident per cause, with a recovery period so a flapping process is not announced twice. A process can be paused, archived, restored and cleaned up in separate steps - by you, or by Goobster only where a responsibility you activated names that process. Archiving never deletes, and a cleanup removes only the exact rows it showed you first. Nothing is repaired yet. Covers the states and what puts a process in each, contracts, incidents, retiring a process, what you are told and where, every default number, what is stored and the routes.
+when: Understanding why a process shows as blocked, stalled, degraded or unknown; why Goobster says a process may no longer be needed, or says nothing about one you never open; how many failures open an incident and when it closes; why one outage produced one message; recording a purpose, cadence or dependency for a process; pausing, archiving, restoring or cleaning up a process and knowing what each step keeps; why Goobster paused a process, or asked instead of pausing it; why an archived task cannot be switched on; checking what process stewardship stores about you.
+tags: [assistant, processes, schedules, health, incidents, retirement, archive, cleanup, attention, home, privacy]
 feature: assistant
 ---
 
@@ -20,15 +20,21 @@ The two answers are separate. A process can work perfectly and no longer be
 needed. A process you depend on can be broken. Neither answer is ever folded
 into one score.
 
-**This stage observes and reports. It does not pause, repair, archive or
-delete anything, and it does not run a model.** Those actions are planned
-(see [What is not here yet](#what-is-not-here-yet)). A process is still
-changed only where you made it.
+A process that is no longer needed can be **retired in steps**: paused, then
+archived, then cleaned up. Each step is a separate decision, each can be
+undone except the last, and none of them deletes the process itself
+([Retiring a process](#retiring-a-process)).
+
+**Nothing here repairs a process, and nothing here runs a model.** Repair is
+planned (see [What is not here yet](#what-is-not-here-yet)). What a process
+does is still edited where you made it.
 
 It builds on the process catalog, contracts and typed observations described
 in [delegated_responsibilities.md](delegated_responsibilities.md#processes).
 The design decisions are in
-[ADR 0020](adr/0020-process-assessment-and-incidents.md).
+[ADR 0020](adr/0020-process-assessment-and-incidents.md) (assessment and
+incidents) and [ADR 0022](adr/0022-process-retirement.md) (pause, archive,
+restore and cleanup).
 
 ## Where you see it
 
@@ -37,13 +43,22 @@ The design decisions are in
   themselves, so they stay after you mark the message about them reviewed.
   The card opens the report below. See [assistant_home.md](assistant_home.md).
 - **Responsibilities page, Processes.** Every process with both answers in
-  words, the reason for each, and the incidents still open. Processes that
-  are switched off with nothing to report (a watch that has fired, a paused
-  task) are folded behind *Show switched off*. It is a report: it has no
-  buttons that change a process.
-- **What changed and the Inbox.** One message when an incident opens, one
-  when it is over, and one when a process may no longer be needed. Each is
-  informational and asks nothing of you.
+  words, the reason for each, and the incidents still open. Each row has the
+  actions that apply to it now: *Pause*, *Resume*, *Archive*, *Restore*,
+  *Keep it running* and *Clean up…*. A paused process says who paused it and
+  when. Processes that were switched off where you made them, with nothing to
+  report (a watch that has fired, a task you turned off), are folded behind
+  *Show switched off*. Archived processes are behind *Show archived* and are
+  not counted with the rest.
+- **What changed and the Inbox.** One message when an incident opens and one
+  when it is over; these are informational. One message when Goobster paused
+  or archived a process for you.
+- **Needs you.** When a process may no longer be needed and Goobster may not
+  pause it, it asks you, once. The request has two buttons on Home and in the
+  Inbox, *Pause it* and *Keep it running*
+  ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)).
+  The same two actions are on the Processes list, and either place answers
+  it.
 - **Attention.** An open incident, a process that outlived its purpose and
   a review date you set can each be raised once, inside your Attention
   settings and contact budget ([attention.md](attention.md)).
@@ -70,6 +85,8 @@ state, and its reason code is returned with it.
 
 | Order | Reason code | State | When |
 | --- | --- | --- | --- |
+| 1 | `ARCHIVED` | `unknown` | The process is archived. It is not judged, counted or part of an incident. |
+| 1 | `PAUSED` | `unknown` | The process was paused through stewardship. |
 | 1 | `ENDED_IN_FAILURE` | `blocked` | The process is off because it ended in failure in the last 7 days (a watch whose turn failed). |
 | 1 | `NOT_RUNNING` | `unknown` | The process is off for any other reason. |
 | 2 | `TARGET_UNREACHABLE` | `unreachable` | 3 failures running, and the newest failure code ends in `NOT_FOUND`, `GONE`, `UNREACHABLE`, `MISSING` or `DELETED`. |
@@ -117,7 +134,7 @@ What the rules mean in practice:
 | `retirement_candidate` | Its purpose is over and it is still switched on. |
 | `satisfied` | Its purpose was met and it is off. |
 | `superseded` | Its purpose went away and it is off. |
-| `dormant` | It is off, and nothing says its purpose is over. |
+| `dormant` | It is off, and nothing says its purpose is over. The reason code says how: `PAUSED`, `ARCHIVED` or `NOT_RUNNING`. |
 | `unknown` | It has no stated purpose. |
 
 **A process with no stated purpose is always `unknown`.** Goobster does not
@@ -250,18 +267,201 @@ turned on**. With Attention off, the report still shows how each process is
 doing, and no incident is opened and nothing is sent. An incident that was
 already open when you turned Attention off still runs to its end, silently.
 
+## Retiring a process
+
+Retirement has four stages. Each transition is its own decision.
+
+```text
+running  ->  paused  ->  archived  ->  cleaned up
+               |             |
+               v             v
+            resumed       restored (comes back paused)
+```
+
+| Step | What it does | What it never does |
+| --- | --- | --- |
+| **Pause** | Stops the process from starting anything new. | Stop work that had already started (see below). Delete anything. |
+| **Resume** | Switches a paused process back on, after checking it still can run. | Replay what happened while it was paused. |
+| **Archive** | Puts a paused or switched-off process away. It cannot be switched on, here or where you made it, until it is restored. | Delete the process, its settings, its purpose, its history or its results. |
+| **Restore** | Brings an archived process back, **paused**. | Switch it on. Resume is a separate step. Bring back what a cleanup removed. |
+| **Clean up** | Removes what the archived process recorded for itself, from an exact list you are shown first. | Remove the process, its purpose, anything you kept, or anything delivered to you. |
+
+A process must be paused or already off before it can be archived, and
+archived before it can be cleaned up. The stages cannot be skipped.
+
+### What pause does to work already under way
+
+Pausing changes the process in the same write that its scheduler uses to
+claim a run, so a run cannot start behind the pause. Work that had already
+started is treated in a fixed way per kind, and the pause tells you how much
+there was:
+
+| Kind | Work already started | What happens to it |
+| --- | --- | --- |
+| Scheduled task | A run that has started and not finished (counted from its own start and finish records, for up to an hour) | It **finishes**, delivers its result and is recorded. |
+| Project trigger | A project job it launched that is still running, or a launch being dispatched | It **finishes**. Events that were waiting to be retried are **dropped** and recorded as skipped. |
+| Watch | A turn in progress | It **finishes**. The watch does not re-arm while paused. |
+| Followed source | A check that is fetching | It is **dropped**: whatever it fetches is not stored. |
+
+A paused watch keeps its expiry. If it expires or reaches its fire limit
+while paused, there is nothing left to resume, and it can only be archived.
+
+### What resume checks
+
+Resume is checked at the moment you press it, not when the process was
+paused:
+
+- You must still have access to the project it belongs to
+  (`RESOURCE_UNAVAILABLE` otherwise).
+- Every process it depends on must be switched on (`DEPENDENCY_BLOCKED`
+  otherwise, naming them).
+- A process that was switched off where you made it, and not paused here, is
+  switched back on there (`NOT_PAUSED_HERE`).
+
+**Events that settled while a project trigger was paused are not replayed.**
+On resume each is recorded as a skipped delivery ("settled while the trigger
+was paused") and the trigger starts with the next event. A scheduled task
+resumes at its next scheduled time; missed times are not made up.
+
+If you switch a paused process back on where you made it, the record here
+follows: it shows as running again and nothing fights the change.
+
+### What archive keeps
+
+Archive keeps the definition row in the table it has always lived in, with
+its settings, its contract, its observations, its Inbox results and, for a
+project trigger, its delivery history and the jobs it started. It also records
+how the process stood when it was archived: its two states, their reason
+codes and the times of its last run, last clean run and last failure. No
+output or text is recorded.
+
+An archived process cannot be switched on from anywhere: the portal,
+`/automation`, the tools Goobster uses in chat and the followed-sources page
+all answer that it is archived and must be restored first. You can still
+delete it where you made it; that is your own delete and is not undone by
+anything here.
+
+Other processes that depend on it are named when you pause or archive it.
+They are not changed.
+
+### What cleanup removes
+
+Cleanup applies only to an archived process, and only what that one process
+derived for itself:
+
+| Removed | For |
+| --- | --- |
+| Its recorded observations (the typed outcome rows) | Every kind |
+| Fetched entries that you did not keep and that no research run was started from | Followed source |
+| The stored copy of the page and its cache markers. The source starts from a fresh baseline if it is ever restored and checked again. | Followed source |
+
+| Never removed | |
+| --- | --- |
+| The process itself and its settings | |
+| Its contract (purpose, cadence, dependencies) | |
+| Results delivered to your Inbox | |
+| Entries you kept, and entries a research run was started from | |
+| A project trigger's delivery history and the project jobs it started | |
+| Anything in a project workspace, your knowledge, or another process | |
+
+It works in two steps, and the second cannot do more than the first showed:
+
+1. **Preview.** Goobster freezes the exact row ids it would remove into a
+   manifest, counts what it will leave, and shows you both. Nothing is
+   removed. The manifest is good for **1 hour**.
+2. **Apply.** You confirm that manifest. Goobster removes exactly the rows it
+   names. Each delete repeats the ownership test, so a row that is no longer
+   yours, was kept since the preview or belongs to a process that was restored
+   is skipped, and the result says how many were skipped.
+
+The apply is refused, and you are asked to preview again, when:
+
+| Code | Why |
+| --- | --- |
+| `MANIFEST_REQUIRED` | No previewed manifest was named. |
+| `MANIFEST_NOT_FOUND` | No preview with that id or hash exists for this process. |
+| `MANIFEST_MISMATCH` | The hash sent is not the one that was previewed. |
+| `MANIFEST_EXPIRED` | More than an hour has passed. |
+| `MANIFEST_STALE` | The process, its contract or its stage changed since the preview (it was restored, renamed, rescheduled or had its purpose edited). |
+| `DEPENDENTS_EXIST` | Another process of yours that is not archived depends on this one. Archive it or remove the dependency first. |
+| `ARCHIVE_FIRST` | The process is not archived. |
+
+One manifest names at most 5,000 rows of each type. When there are more, the
+preview says so and a second cleanup takes the rest. Applying the same
+manifest twice removes nothing the second time.
+
+What a cleanup removed is gone. Restoring the process afterwards brings back
+the definition, paused, and says what was not restored.
+
+### When Goobster does it for you
+
+On its periodic pass, with no model involved, Goobster looks at each process
+whose purpose is over while it is still switched on (a
+`retirement_candidate`). What it does depends on what you have granted.
+
+**With no grant, it asks and changes nothing.** You get one request under
+Needs you: "*Name* may no longer be needed", with *Pause it* and *Keep it
+running*. It is answered when you pause the process, there or on the
+Processes list, or when you choose *Keep it running*. *Keep it running* is
+remembered for that purpose and that reason, so you are not asked again
+unless the contract changes. A request you answer in one tab is refused as
+changed (`STALE_GATE`) if you press it again in another.
+
+**It pauses the process itself only when all of these hold:**
+
+1. A responsibility of yours is `ACTIVE` and grants `process.pause` on
+   exactly this process (`{ "kind": "process", "ids": ["automation:5"] }`).
+   There is no wildcard.
+2. Your Attention boundaries allow Goobster to act on schedules ahead of
+   time: in Settings, *Boundaries by category*, *Compute ahead* is ticked for
+   *Schedule & tasks*. By default it is not, so a grant alone changes
+   nothing until you tick it. The refusal code is `ATTENTION_BOUNDARY`.
+3. No other process of yours that is switched on depends on it.
+4. You have not said *Keep it running* for this purpose and reason.
+5. The grant is checked again immediately before the pause
+   ([how authority is checked](delegated_responsibilities.md#how-authority-is-checked)).
+6. The host has not stopped delegated work
+   ([Stop all](delegated_operations.md#stop-all)). While it is stopped
+   Goobster pauses and archives nothing and asks you instead; what you do
+   yourself on the Processes list is not held. After the host resumes, a
+   grant that still covers the process applies on the next pass.
+
+When it pauses, it tells you once under What changed: what ended, which
+responsibility it acted under, how many runs were left to finish, that
+nothing was deleted, and that you can resume it from Processes. If you resume
+it, that is your answer and it is not paused again for the same reason.
+
+**It archives only what it paused itself as a retirement**, and only when the
+process has stayed paused for **7 days**, its purpose is still over, and a
+responsibility grants `process.archive` on exactly that process (checked
+the same way). A pause grant never archives. A process you paused yourself is
+never archived for you.
+
+**It never** resumes, restores or cleans up a process, never deletes one, and
+never treats results you did not open as a reason to pause anything. Requests
+and automatic pauses, like incidents, happen only for people with Attention
+turned on.
+
 ## What you are told
 
 | Event | Message | Repeats |
 | --- | --- | --- |
 | An incident opens | "*Name* keeps failing", "*Name* has stopped running" or "*N* of your processes are blocked by the same problem" | Revised when another process joins. Not repeated otherwise. |
 | An incident is resolved | The same message, revised: "*Name* is working again" | Once. |
-| A process's purpose is over and it is still on | "*Name* may no longer be needed" | Once per contract revision and reason. |
+| A process's purpose is over, it is still on, and Goobster may not pause it | A request under Needs you: "*Name* may no longer be needed" | Once per contract revision and reason. Asked again, as a new request, only after the contract changes. |
+| Goobster paused a process under a responsibility | "Paused *Name*" | Once. |
+| Goobster archived a process it had paused | "Archived *Name*" | Once. |
 
 Each message is one canonical update ([delegated_responsibilities.md](delegated_responsibilities.md#updates)),
 filed in your Inbox with no Discord echo, and shown under What changed until
-you review it. Every one ends with "Nothing was changed." because nothing
-was.
+you review it. An incident message and a request both end with "Nothing was
+changed." because nothing was. A pause or archive message says what was
+changed and how to undo it.
+
+The request, the pause message and the archive message for one process are
+the same update, revised. A request is closed without a message when its
+reason goes away: you paused or archived the process, said to keep it, or the
+goal it was linked to was reopened.
 
 Two Attention generators read the same records:
 
@@ -298,12 +498,27 @@ constants in `packages/core/services/assistant/processes/assessment.js`
 | Downtime gap | 15 minutes between two passes | Restarting the 24-hour stall count |
 | Resolved incidents kept | 180 days | Retention |
 
+Retirement has its own, in
+`packages/core/services/assistantProcessLifecycleService.js`:
+
+| Number | Default | Used for |
+| --- | --- | --- |
+| Paused before Goobster may archive | 7 days | Only for what it paused itself, with an archive grant |
+| Cleanup preview valid | 1 hour | After that it must be previewed again |
+| Rows per cleanup | 5,000 of each type | More takes another cleanup |
+| A started run counts as running | 1 hour | Counting scheduled-task runs under way at a pause |
+| Stewardship record of a running process kept | 180 days after its last change | Retention |
+| Applied cleanup record kept | 180 days | Retention |
+| Unapplied cleanup preview kept | 7 days after it expired | Retention |
+
 ## What is not here yet
 
-- **Pause, archive, restore and cleanup** of a process by Goobster (planned
-  as DA-5b). The "may no longer be needed" message is information; it carries
-  no proposal and no button.
 - **Repair** (planned as DA-5c). An incident is reported, not fixed.
+- **Cleanup by Goobster.** The `cleanup.exact` operation can be granted and
+  is not used: only you can clean up a process.
+- **Files and knowledge a process produced.** A process does not declare
+  which files or notes it owns, so cleanup never touches a project workspace
+  or your knowledge.
 - **Target-ended codes.** No shipped process records `TARGET_MERGED` and its
   siblings yet. A watch becomes a retirement candidate today through its
   linked goal being resolved, or by having fired for good.
@@ -320,12 +535,28 @@ constants in `packages/core/services/assistant/processes/assessment.js`
 | `assistant_process_contracts` | Your contracts, including `dependsOn`. |
 | `assistant_process_incidents` | One row per incident: its key (`cause:<CODE>` or `process:<kind>:<id>`), occurrence number, status, cause code, criticality, when it opened, started recovering and resolved, and its message. |
 | `assistant_process_incident_members` | The processes in each incident: reference, the process's name when it joined, role (`failing` or `dependent`) and state. |
+| `assistant_process_lifecycle` | One row per process that was paused, archived, cleaned up or kept: its stage, who did it (you or Goobster) and under which responsibility, a reason code, the times, how many runs were under way at the pause, how it stood when archived, what a cleanup removed (counts), and your "keep it running" answer. |
+| `assistant_process_cleanups` | Each cleanup preview: the exact row ids, counts of what is kept, its hash, when it expires and, once applied, what was removed and skipped. |
+
+The four process tables each gained an `archivedAt` column (`automations`,
+`project_triggers`, `followed_sources`, `attention_watches`), and
+`attention_watches` a `pausedAt` column. Whether a process can run is decided
+by its own row: a paused or archived process is switched off there, and
+every write that would switch it back on refuses an archived row. So an
+archived or paused process cannot run even if the stewardship tables were
+lost.
 
 The assessment itself is not stored. It is computed from these records each
 time it is read, so it is never out of date and there is no state to repair.
 
 Resolved incidents and their members are removed 180 days after they were
 resolved. Open and recovering incidents are never pruned.
+
+A stewardship record is removed when its process is deleted, or 180 days
+after its last change once the process is running again. The record of a
+paused or archived process is kept as long as the process is. Cleanup
+previews that were never applied are removed 7 days after they expired, and
+applied ones after 180 days.
 
 ## Portal API
 
@@ -334,9 +565,55 @@ feature off the prefix answers `FEATURE_UNAVAILABLE`.
 
 | Route | Returns |
 | --- | --- |
-| `GET /api/app/assistant/processes` | `processes` (each with `assessment` and `incident`), `counts` per state (`notWorking`, `degraded`, `retirementCandidates`, `reviewDue` and one per execution state), and `incidents` that are open or recovering, with their members. |
-| `GET /api/app/assistant/processes/:kind/:id` | One process with its contract, recent observations, `assessment` and `incident`. |
+| `GET /api/app/assistant/processes` | `processes` (each with `assessment`, `incident`, `archived`, `lifecycle` and `controls`), `counts` per state (`notWorking`, `degraded`, `retirementCandidates`, `reviewDue`, `paused`, `archived` and one per execution state; archived processes are counted only in `archived`), and `incidents` that are open or recovering, with their members. |
+| `GET /api/app/assistant/processes/:kind/:id` | One process with its contract, recent observations, `assessment`, `incident`, `lifecycle`, `controls`, the processes that depend on it (`dependents`) and its newest cleanup preview or result (`cleanup`). |
 | `PUT /api/app/assistant/processes/:kind/:id/contract` | Writes the contract. `dependsOn` must name your own processes; a process cannot depend on itself. |
+| `POST /api/app/assistant/processes/:kind/:id/actions` | A write. Body `{ "action", "expectedRevision"?, "cleanupId"?, "manifestHash"? }`. `action` is `pause`, `resume`, `archive`, `restore`, `keep`, `preview_cleanup` or `cleanup`. Returns `{ action, changed, process, lifecycle, controls }` and, by action, `started`, `dropped`, `skipped`, `dependents`, `notRestored` or `cleanup`. |
+
+`controls` lists the actions that would be accepted now, so a client shows
+only those. `expectedRevision` is the `lifecycle.revision` you were shown
+(0 when `lifecycle` is null); if the process has changed since, the answer is
+`409 REVISION_CONFLICT` with the current revision. Repeating `pause` on a
+paused process, `archive` on an archived one, or `cleanup` with a manifest
+that was already applied changes nothing and answers `changed: false`.
+
+`lifecycle` is null until a process has been paused, archived or kept:
+
+```json
+{
+  "stage": "paused",
+  "revision": 1,
+  "actor": "assistant",
+  "responsibilityId": 4,
+  "reasonCode": "RETIRE_GOAL_RESOLVED",
+  "pausedAt": "2026-11-10 03:10:00",
+  "archivedAt": null, "cleanedAt": null, "resumedAt": null,
+  "started": { "count": 1, "policy": "finish" },
+  "final": null, "cleaned": null, "kept": null
+}
+```
+
+`stage` is `active`, `paused`, `archived` or `cleaned`. `actor` is `person`
+or `assistant`. `reasonCode` is `PERSON`, `RESTORED`, `RESUMED_ELSEWHERE` or
+`RETIRE_` followed by the reason the purpose is over. `started.policy` is
+`finish` or `abandon`.
+
+A cleanup preview:
+
+```json
+{
+  "id": 7, "status": "PREVIEWED", "manifestHash": "9f2c…", "expiresAt": "2026-11-10 04:10:00",
+  "removes": { "observations": 42, "sourceEntries": 0, "sourceCache": false },
+  "keeps": { "definition": true, "contract": true, "inboxResults": 12 },
+  "more": false, "result": null, "appliedAt": null
+}
+```
+
+Refusals use these codes, all `409` unless noted: `ARCHIVED`, `NOT_RUNNING`,
+`PAUSE_FIRST`, `RESTORE_FIRST`, `NOT_ARCHIVED`, `NOT_PAUSED_HERE`, `ENDED`,
+`RESOURCE_UNAVAILABLE`, `DEPENDENCY_BLOCKED`, `NOT_A_CANDIDATE`, `CHANGED`,
+`REVISION_CONFLICT`, the cleanup codes above, `INVALID_ACTION` (400),
+`MANIFEST_REQUIRED` (400), `MANIFEST_NOT_FOUND` (404) and `NOT_FOUND` (404).
 
 `assessment` has this shape:
 
@@ -362,14 +639,22 @@ working) and `degraded` as separate counts, and its `state` can be
 ## Privacy
 
 Incidents and their members are personal data, like the observations and
-contracts they are built from. The transparency report counts them, the
-account export includes them, and `/forget-me` deletes them. This works when
-the feature is off. An incident row holds codes, times and the names you
-gave your processes; it holds no prompt, output, address or error text.
+contracts they are built from. So are the stewardship records and cleanup
+previews. The transparency report counts them, the account export includes
+them, and `/forget-me` deletes them. This works when the feature is off. These
+rows hold codes, times, counts, row ids and the names you gave your
+processes; they hold no prompt, output, address or error text.
+
+An archived process is still your data and is still exported and erased with
+the rest: archiving hides nothing from the privacy commands.
 
 ## Turning it off
 
 Process stewardship is part of the `assistant` feature. With the feature off
-nothing is observed, assessed, opened or announced, and the data is kept.
-With the feature on and Attention off, the report works and nothing is
-opened or sent.
+nothing is observed, assessed, opened, announced, paused or archived, the
+routes answer `FEATURE_UNAVAILABLE`, and the data is kept. A process that was
+paused or archived stays that way: the processes' own tables hold that, so
+turning the feature off does not switch anything back on.
+
+With the feature on and Attention off, the report and your own actions work,
+and Goobster opens nothing, asks nothing and pauses nothing.

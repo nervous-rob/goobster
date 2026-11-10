@@ -41,7 +41,9 @@ How it works:
    `{ kinds, invalidate, at }`. `invalidate` is a list of query names
    (`home`, `assistant-responsibilities`, `assistant-initiatives`, `inbox`
    when an update or a request changed, and `assistant-processes` when an
-   update changed, since it may be a process incident).
+   update changed, since it may be a process incident; a process that is
+   paused, resumed, archived, restored or cleaned up is announced as an
+   `update` too, so the Processes report follows it).
 3. The client reads those again through the ordinary routes, which check
    the session and what it may see on every read. The event is a reason to
    look, never the data.
