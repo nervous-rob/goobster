@@ -175,7 +175,7 @@ describe('a run asks, and changes nothing', () => {
             kind: 'connector_request', state: 'open',
             title: 'Remove it: entry 2 ("old slug traps"), in Test notebook?',
             options: [
-                { id: 'approve', label: 'Remove it', effect: 'The entry is removed from the notebook, as you.', danger: true },
+                { id: 'approve', label: 'Remove it', effect: 'Entry 2 ("old slug traps"). The entry is removed from the notebook, as you.', danger: true },
                 { id: 'decline', label: 'Leave it', danger: false }
             ]
         });

@@ -336,6 +336,12 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                             from another outside resource. </>
                         )}
                     </div>
+                    {writesOut && readKnowledge && (
+                        <div className="hint" role="note" data-testid="responsibility-connector-knowledge-warning">
+                            This responsibility may also read your knowledge. A piece of work that looks at your notes first cannot then write to
+                            the outside service. If writing there is the point, untick “Read your knowledge” above.
+                        </div>
+                    )}
                 </>
             )}
             <fieldset className="field">

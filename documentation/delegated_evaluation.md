@@ -90,8 +90,9 @@ are written into the record.
 
 A run is at most eight model rounds and stops when it reports. In the first
 recorded runs (November 2026, default models) a case used between 4,400 and
-14,800 tokens, almost all of it input, and the eight cases together used
-about 62,000 tokens on OpenAI. That is token usage, not a price. Cases run
+16,600 tokens, almost all of it input, and the ten cases together used
+between 80,000 and 87,000 tokens on OpenAI. The Notion write case was the
+largest in each of them. That is token usage, not a price. Cases run
 one after another; a provider failure stops the remaining cases, and a case
 is never retried.
 

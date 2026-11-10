@@ -676,7 +676,7 @@ describe('in a delegated run', () => {
             kind: 'connector_request', state: 'open', title: 'Move it to the trash: the page "Year one", in Notion?',
             options: [{ id: 'approve', label: 'Move it to the trash', danger: true }, { id: 'decline', label: 'Leave it' }]
         });
-        expect(item.decision.options[0].effect).toContain('restore it from Notion\'s trash');
+        expect(item.decision.options[0].effect).toBe('The page "Year one". It is moved to the trash in Notion, as you. You can restore it from Notion\'s trash for 30 days.');
 
         fake.state.tokensSeen.clear();
         const outcome = await gates.decide({

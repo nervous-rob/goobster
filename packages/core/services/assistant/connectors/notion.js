@@ -431,7 +431,7 @@ module.exports = {
     },
     credential: { provider: 'notion' },
     resource: {
-        describe: 'the id of one Notion page or database (paste its link). It must be shared with your Notion integration.',
+        describe: 'the id of one Notion page or database (paste its link). It must be shared with your Notion integration',
         pattern: /^[0-9a-f]{32}$/,
         canonical
     },

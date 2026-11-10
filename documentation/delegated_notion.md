@@ -98,7 +98,11 @@ What holds for all four:
   read the granted page can write back to it. A run that has read your
   notes, or another Notion resource, cannot write to Notion at all
   (`PRIVATE_CONTEXT`): what it read elsewhere must not end up in the page.
-  So "copy my notes into Notion" cannot be delegated.
+  So "copy my notes into Notion" cannot be delegated. The draft form ticks
+  *Read your knowledge* by default; if the responsibility is there to keep
+  a Notion page up to date, untick it, or a piece of work that looks at
+  your notes first will be refused the write. The form says so while both
+  are ticked.
 - **A refusal from Notion is reported, not worked around.** "Not written
   (CODE)" means nothing changed.
 

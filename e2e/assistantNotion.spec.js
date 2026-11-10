@@ -70,6 +70,10 @@ test.describe('the Notion connector in a responsibility', () => {
         await page.getByTestId('responsibility-connector-write-notion').check();
         await expect(page.getByTestId('responsibility-connector-read-note')).toContainText('except back into that same resource');
         await expect(page.getByTestId('responsibility-connector-asks-notion')).toContainText('Never done for you (archive)');
+        // Reading notes and writing outside do not mix: the form says so while both are ticked.
+        await expect(page.getByTestId('responsibility-connector-knowledge-warning')).toContainText('cannot then write to the outside service');
+        await page.getByLabel('Read your knowledge').uncheck();
+        await expect(page.getByTestId('responsibility-connector-knowledge-warning')).toHaveCount(0);
 
         // A grant names one page or database: a word is not one, a pasted link is.
         await page.getByTestId('responsibility-connector-resource-notion').fill('everything in my workspace');
@@ -102,7 +106,7 @@ test.describe('the Notion connector in a responsibility', () => {
         await expect(asked.getByTestId('gate-decision').getByRole('button')).toHaveText(['Move it to the trash', 'Leave it']);
         await asked.getByRole('button', { name: 'Move it to the trash' }).click();
         // It says what approving does before it is done.
-        await expect(page.getByRole('dialog')).toContainText('You can restore it from Notion\'s trash for 30 days.');
+        await expect(page.getByRole('dialog')).toContainText('The page "Old drafts". It is moved to the trash in Notion, as you. You can restore it from Notion\'s trash for 30 days.');
         expect((await state(page, APPROVING)).childArchived).toBe(false);
         await page.getByRole('dialog').getByRole('button', { name: 'Confirm' }).click();
         await expect(page.locator('#toast')).toHaveText('Moved the page "Old drafts" to the trash.');
