@@ -2,7 +2,7 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, OperatorSchedule, OperatorSchedulesView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
-import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative, AssistantProcessList, ProcessAction, ProcessActionResult } from './types';
+import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative, AssistantProcessList, ProcessAction, ProcessActionResult, KnowledgeOverview } from './types';
 import type { AdminAssistantView, AssistantCapField } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 import type { GateDecisionCard, GateDecisionResult, GateSurface } from './types';
@@ -449,6 +449,13 @@ export const api = {
     initiativeAction: (id: number, action: string, expectedRevision: number) =>
         request<{ initiative: AssistantInitiative }>(`/api/app/assistant/initiatives/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
     /** A person's recurring processes, how each is doing, and the incidents still open. A read. */
+    assistantKnowledge: () => request<KnowledgeOverview>('/api/app/assistant/knowledge'),
+    revertKnowledgeChange: (id: number) =>
+        request<unknown>(`/api/app/assistant/knowledge/changes/${id}/revert`, { method: 'POST' }),
+    restoreKnowledgeNote: (id: number) =>
+        request<unknown>(`/api/app/assistant/knowledge/notes/${id}/restore`, { method: 'POST' }),
+    restoreKnowledgeConnection: (id: number) =>
+        request<unknown>(`/api/app/assistant/knowledge/connections/${id}/restore`, { method: 'POST' }),
     assistantProcesses: () => request<AssistantProcessList>('/api/app/assistant/processes'),
     /** Pause, resume, archive, restore, keep or clean up one process, as the signed-in person. */
     assistantProcessAction: (

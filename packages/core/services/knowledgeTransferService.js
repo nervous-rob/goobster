@@ -110,7 +110,7 @@ class KnowledgeTransferService {
         const coords = personalCoords(userId);
         const node = await db.get(
             `SELECT * FROM kg_nodes
-             WHERE id = @id AND guildId = @guildId AND scopeKey = @scopeKey`,
+             WHERE id = @id AND guildId = @guildId AND scopeKey = @scopeKey AND archivedAt IS NULL`,
             { id: Number(nodeId), ...coords }
         );
         if (!node) throw new KnowledgeTransferError(404, 'NOT_FOUND', 'Note not found.');

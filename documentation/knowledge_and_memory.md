@@ -122,6 +122,14 @@ first projection read of a personal scope (once per process),
 a **Keep** button. Nothing is deleted, rescoped or relabelled for
 navigation reasons.
 
+## Changes a responsibility makes to your notes
+
+A delegated responsibility never changes the words of a note you saved on its
+own: it files a proposal you apply from a card on Home or in the Inbox, and a
+note you edited since is never overwritten. Archiving is reversible, and a
+merge archives instead of deleting. See
+[delegated_knowledge.md](delegated_knowledge.md).
+
 ## Moving a note into shared work
 
 The first journey in the product spec is *ask → save the answer as a note →

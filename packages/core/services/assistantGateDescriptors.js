@@ -288,9 +288,115 @@ const processRetirement = {
     }
 };
 
+// --- Delegated knowledge work (DA-11b, ADR 0027) ------------------------------
+//
+// Both kinds are decided by the person who owns the notes. `apply` here is the
+// person's own click: the run that proposed it has no way to reach this.
+
+const changeSets = () => require('./knowledgeChangeSetService');
+
+const PROPOSAL_OUTCOME = {
+    APPLIED: 'You applied this change. You can revert it from Knowledge changes.',
+    REJECTED: 'You dismissed this suggestion. The note was not changed.',
+    STALE: 'The note changed after this was suggested, so nothing was applied.',
+    REVERTED: 'You applied this change and then reverted it.'
+};
+const RETRACTION_OUTCOME = {
+    APPLIED: 'You marked those notes as disputed. You can revert it from Knowledge changes.',
+    REJECTED: 'You left your notes as they are.',
+    STALE: 'Those notes changed since the review, so nothing was changed.',
+    REVERTED: 'You marked those notes as disputed and then reverted it.'
+};
+
+async function ownChangeSet(gate, viewer, kind) {
+    const row = await changeSets().forPerson(gate.id, viewer.userId);
+    return row && row.kind === kind ? row : null;
+}
+
+const noteProposal = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_OPEN'],
+
+    async describe(gate, viewer) {
+        const row = await ownChangeSet(gate, viewer, 'saved_note_edit');
+        if (!row) return null;
+        const service = changeSets();
+        const shown = service.present(row);
+        const open = row.status === 'PROPOSED';
+        // The note may have moved since the run read it: say so, and offer only to dismiss.
+        const node = open ? await require('./knowledgeGraphService').getPersonalNote({
+            guildId: row.guildId, userId: row.userId, nodeId: row.nodeId
+        }) : null;
+        const moved = open && (!node || node.archivedAt || Number(node.revision) !== Number(row.expectedRevision));
+        const changes = [
+            shown.operations.some(op => op.op === 'amend') ? 'replaces the text' : null,
+            shown.claimStatus ? 'marks the note as disputed' : null
+        ].filter(Boolean).join(' and ');
+        return {
+            state: open ? 'open' : 'resolved',
+            title: `Suggested change to "${shown.label || 'a note'}"`,
+            detail: moved
+                ? 'The note changed after this was suggested, so it cannot be applied. Dismiss it; the next pass may suggest again from what is there now.'
+                : `${shown.rationale ? `${shown.rationale} ` : ''}Applying ${changes || 'this'}; nothing changes until you do.`,
+            diff: shown.diff,
+            outcome: open ? null : (PROPOSAL_OUTCOME[row.status] || 'This request is no longer open.'),
+            revision: `cs:${row.id}:${row.updatedAt}:${node ? node.revision : 'x'}`,
+            options: [
+                ...(moved ? [] : [{ id: 'apply', label: 'Apply change', effect: `Applies the change to your note${changes ? ` (it ${changes})` : ''}. You can revert it afterwards.` }]),
+                { id: 'reject', label: 'Dismiss', effect: 'Leaves the note exactly as it is.' }
+            ]
+        };
+    },
+
+    async decide(gate, viewer, optionId) {
+        const service = changeSets();
+        try {
+            return optionId === 'apply'
+                ? await service.apply({ id: gate.id, userId: viewer.userId })
+                : await service.reject({ id: gate.id, userId: viewer.userId });
+        } catch (error) {
+            if (error?.code === 'NOT_FOUND') throw stale();
+            throw error;
+        }
+    }
+};
+
+const sourceRetraction = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_OPEN'],
+
+    async describe(gate, viewer) {
+        const row = await ownChangeSet(gate, viewer, 'source_retraction');
+        if (!row) return null;
+        const shown = changeSets().present(row);
+        const open = row.status === 'PROPOSED';
+        const notes = shown.impact?.notes || [];
+        const total = notes.length + (shown.impact?.moreNotes || 0);
+        const assumptions = shown.impact?.assumptions || [];
+        const names = notes.slice(0, 4).map(note => `"${note.label}"`).join(', ');
+        return {
+            state: open ? 'open' : 'resolved',
+            title: `A source was withdrawn: ${shown.impact?.source?.label || 'a source'}`,
+            detail: [
+                `${plural(total, 'note')} cite${total === 1 ? 's' : ''} it${names ? `: ${names}${total > 4 ? ', and more' : ''}` : ''}.`,
+                assumptions.length ? `${plural(assumptions.length, 'open project assumption')} rest${assumptions.length === 1 ? 's' : ''} on it.` : '',
+                'The source being gone makes its claims unverifiable, not false. Nothing was deleted.'
+            ].filter(Boolean).join(' '),
+            outcome: open ? null : (RETRACTION_OUTCOME[row.status] || 'This request is no longer open.'),
+            revision: `cs:${row.id}:${row.updatedAt}`,
+            options: [
+                ...(notes.length ? [{ id: 'apply', label: 'Mark as disputed', effect: 'Labels these notes as disputed. Their text stays; you can revert it.' }] : []),
+                { id: 'reject', label: 'Keep as they are', effect: 'Leaves your notes exactly as they are.' }
+            ]
+        };
+    },
+
+    decide: noteProposal.decide
+};
+
 module.exports = {
     project_approve: projectApprove,
     friend_request: friendRequest,
     access_request: accessRequest,
-    process_retirement: processRetirement
+    process_retirement: processRetirement,
+    note_proposal: noteProposal,
+    source_retraction: sourceRetraction
 };

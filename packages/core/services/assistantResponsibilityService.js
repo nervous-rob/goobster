@@ -64,6 +64,7 @@ const OPERATIONS = {
     research: { kinds: ['knowledge', 'web', 'project'], action: 'compute', category: 'research', features: ['expeditions'] },
     'kg.generated.add': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.generated.amend': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
+    'kg.saved.propose': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.saved.amend': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.edge': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.archive': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },

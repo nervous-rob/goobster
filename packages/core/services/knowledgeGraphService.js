@@ -8,6 +8,9 @@ const KnowledgeGraphLegalizer = require('./knowledgeGraphLegalizer');
 const MAX_REVISIONS_PER_NODE = 20;
 
 const {
+    CLAIM_STATUSES,
+    EDGE_EVIDENCE_KINDS,
+    MAX_ARCHIVED_PER_SCOPE,
     MAX_LABEL_LENGTH,
     MAX_CONTENT_LENGTH,
     MAX_RELATION_LENGTH,
@@ -50,6 +53,34 @@ function curationPredicate(view, alias = '') {
         case 'all': return '1 = 1';
         default: return `${col} IN ('saved', 'unclassified')`;
     }
+}
+
+/** The note is not archived (ADR 0027). Every read that lists, counts or draws notes asks this. */
+function liveNode(alias = '') {
+    return `${alias ? `${alias}.` : ''}archivedAt IS NULL`;
+}
+
+/**
+ * What retrieval for a prompt may offer: live, and a claim still presented as
+ * knowledge. Disputed claims come with a label; superseded and retracted ones
+ * are history and never read as current (architecture section 6).
+ */
+function retrievableNode(alias = '') {
+    const col = alias ? `${alias}.` : '';
+    return `${col}archivedAt IS NULL AND ${col}claimStatus IN ('current', 'disputed')`;
+}
+
+/** The edge is live: not retracted, and neither end archived. `s` and `t` are the node aliases. */
+function liveEdge(alias = 'e', source = 's', target = 't') {
+    return `${alias}.retractedAt IS NULL AND ${source}.archivedAt IS NULL AND ${target}.archivedAt IS NULL`;
+}
+
+function utcNow() {
+    return new Date().toISOString().slice(0, 19).replace('T', ' ');
+}
+
+function failure(status, code, message, extra = null) {
+    return Object.assign(new Error(message), { status, code }, extra ? { details: extra } : {});
 }
 
 function normalizeView(view) {
@@ -157,10 +188,22 @@ class KnowledgeGraphService {
         const cleanCuration = normalizeCuration(curation) || curationForSource(cleanSource);
 
         const existing = await db.get(
-            `SELECT id, type, label, content, salience, confidence, source FROM kg_nodes
+            `SELECT id, type, label, content, salience, confidence, source, archivedAt, mergedIntoId FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label`,
             { guildId, scopeKey: sk, label: cleanLabel }
         );
+
+        if (existing?.archivedAt) {
+            // An archived note stays archived and unchanged: a writer that
+            // meets its title again is not a reason to bring it back. A
+            // title that was merged away names the note that kept its meaning.
+            return {
+                id: existing.mergedIntoId ? Number(existing.mergedIntoId) : existing.id,
+                created: false,
+                archived: true,
+                alias: Boolean(existing.mergedIntoId)
+            };
+        }
 
         if (existing) {
             // `source` records who authored the knowledge, so only a
@@ -354,7 +397,7 @@ class KnowledgeGraphService {
                           (${termHits}) AS termHits
                    FROM kg_nodes n
                    LEFT JOIN kg_artifacts a ON a.nodeId = n.id
-                   WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND (${clauses.join(' OR ')})`;
+                   WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND ${retrievableNode('n')} AND (${clauses.join(' OR ')})`;
         if (type && NODE_TYPES.includes(type)) {
             sql += ' AND n.type = @type';
             params.type = type;
@@ -390,7 +433,7 @@ class KnowledgeGraphService {
     async topNodes(guildId, scopeKey = '', limit = 10, excludeTypes = []) {
         const params = { guildId, scopeKey, limit };
         let sql = `SELECT * FROM kg_nodes
-                   WHERE guildId = @guildId AND scopeKey = @scopeKey`;
+                   WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${retrievableNode()}`;
         (Array.isArray(excludeTypes) ? excludeTypes : [])
             .filter(t => NODE_TYPES.includes(t))
             .forEach((t, i) => {
@@ -411,7 +454,10 @@ class KnowledgeGraphService {
         target,
         relation,
         relationKind = null,
-        weight
+        weight,
+        evidenceKind = null,
+        evidenceId = null,
+        originRunId = null
     } = {}) {
         const sk = scopeKey;
         const sourceLabel = normalizeLabel(source);
@@ -426,16 +472,18 @@ class KnowledgeGraphService {
         if (!sourceNode || !targetNode) return null;
         // Re-resolve by label so a prune between the two upserts cannot
         // hand a stale id to the edge insert (FOREIGN KEY constraint failed).
-        const sourceFresh = await this.getNode(guildId, sourceLabel, sk);
-        const targetFresh = await this.getNode(guildId, targetLabel, sk);
-        if (!sourceFresh || !targetFresh) return null;
+        const sourceFresh = await this._liveEndpoint(guildId, sourceLabel, sk);
+        const targetFresh = await this._liveEndpoint(guildId, targetLabel, sk);
+        if (!sourceFresh || !targetFresh || sourceFresh.id === targetFresh.id) return null;
 
         const kind = relationKind && kgConfig.RELATION_KINDS.includes(relationKind) ? relationKind : null;
 
         try {
             await db.run(
-                `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight)
-                 VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight)
+                `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight,
+                                       evidenceKind, evidenceId, originRunId)
+                 VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight,
+                         @evidenceKind, @evidenceId, @originRunId)
                  ON CONFLICT(guildId, sourceId, targetId, relation) DO UPDATE SET
                      weight = @weight,
                      relationKind = COALESCE(@relationKind, kg_edges.relationKind),
@@ -447,7 +495,10 @@ class KnowledgeGraphService {
                     targetId: targetFresh.id,
                     relation: cleanRelation,
                     relationKind: kind,
-                    weight: clamp01(weight, 0.5)
+                    weight: clamp01(weight, 0.5),
+                    evidenceKind: EDGE_EVIDENCE_KINDS.includes(evidenceKind) ? evidenceKind : null,
+                    evidenceId: evidenceId == null ? null : Number(evidenceId),
+                    originRunId: originRunId == null ? null : Number(originRunId)
                 }
             );
         } catch (error) {
@@ -459,9 +510,22 @@ class KnowledgeGraphService {
         const row = await db.get(
             `SELECT id FROM kg_edges
              WHERE guildId = @guildId AND sourceId = @sourceId AND targetId = @targetId AND relation = @relation`,
-            { guildId, sourceId: sourceNode.id, targetId: targetNode.id, relation: cleanRelation }
+            { guildId, sourceId: sourceFresh.id, targetId: targetFresh.id, relation: cleanRelation }
         );
         return row ? { id: row.id } : null;
+    }
+
+    /**
+     * The live note a label stands for: itself, or - when it was merged away -
+     * the note that kept its meaning. An archived note is no endpoint.
+     */
+    async _liveEndpoint(guildId, label, scopeKey) {
+        const node = await this.getNode(guildId, label, scopeKey);
+        if (!node) return null;
+        if (!node.archivedAt) return node;
+        if (!node.mergedIntoId) return null;
+        const keep = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: node.mergedIntoId });
+        return keep && !keep.archivedAt ? keep : null;
     }
 
     async unlink({ guildId, source, target, relation = null, scopeKey = '' } = {}) {
@@ -490,7 +554,7 @@ class KnowledgeGraphService {
                    FROM kg_edges e
                    JOIN kg_nodes s ON s.id = e.sourceId
                    JOIN kg_nodes t ON t.id = e.targetId
-                   WHERE e.guildId = @guildId
+                   WHERE e.guildId = @guildId AND ${liveEdge()}
                      AND (e.sourceId IN (${placeholders}) OR e.targetId IN (${placeholders}))`;
         if (scopeKey !== null) {
             sql += ' AND e.scopeKey = @scopeKey';
@@ -513,7 +577,9 @@ class KnowledgeGraphService {
             for (const edge of edges) {
                 for (const nodeId of [edge.sourceId, edge.targetId]) {
                     if (visited.has(nodeId) || visited.size >= maxNodes) continue;
-                    const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: nodeId });
+                    const node = await db.get(
+                        `SELECT * FROM kg_nodes WHERE id = @id AND ${retrievableNode()}`, { id: nodeId }
+                    );
                     if (node) {
                         visited.set(nodeId, node);
                         next.push(nodeId);
@@ -555,7 +621,9 @@ class KnowledgeGraphService {
             const conf = n.confidence != null ? `, confidence ${Number(n.confidence).toFixed(2)}` : '';
             const fileBit = n.type === 'artifact' && n.originalName ? `, file=${n.originalName}` : '';
             const kindBit = n.type === 'artifact' && n.artifactKind ? `/${n.artifactKind}` : '';
-            return `- [${n.type}${kindBit}] "${n.label}" (salience ${Number(n.salience).toFixed(2)}${conf}${fileBit})${detail}`;
+            // A disputed or superseded claim is offered with its state, never as plain fact.
+            const claim = n.claimStatus && n.claimStatus !== 'current' ? ` [${n.claimStatus}]` : '';
+            return `- [${n.type}${kindBit}] "${n.label}"${claim} (salience ${Number(n.salience).toFixed(2)}${conf}${fileBit})${detail}`;
         });
         for (const edge of edges || []) {
             const kind = edge.relationKind ? ` (${edge.relationKind})` : '';
@@ -608,12 +676,14 @@ ${excerpt}`;
     }
 
     async getStats(guildId, scopeKey = null) {
-        let nodeSql = 'SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @guildId';
-        let edgeSql = 'SELECT COUNT(*) AS c FROM kg_edges WHERE guildId = @guildId';
+        let nodeSql = `SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @guildId AND ${liveNode()}`;
+        let edgeSql = `SELECT COUNT(*) AS c FROM kg_edges e
+                       JOIN kg_nodes s ON s.id = e.sourceId JOIN kg_nodes t ON t.id = e.targetId
+                       WHERE e.guildId = @guildId AND ${liveEdge()}`;
         const params = { guildId };
         if (scopeKey !== null) {
             nodeSql += ' AND scopeKey = @scopeKey';
-            edgeSql += ' AND scopeKey = @scopeKey';
+            edgeSql += ' AND e.scopeKey = @scopeKey';
             params.scopeKey = scopeKey;
         }
         const nodes = (await db.get(nodeSql, params)).c;
@@ -662,13 +732,28 @@ ${excerpt}`;
             `DELETE FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey
                AND curation <> 'saved'
+               AND archivedAt IS NULL
                AND id NOT IN (
                    SELECT id FROM kg_nodes
-                   WHERE guildId = @guildId AND scopeKey = @scopeKey
+                   WHERE guildId = @guildId AND scopeKey = @scopeKey AND archivedAt IS NULL
                    ORDER BY (salience * confidence) DESC, updatedAt DESC, id DESC
                    LIMIT @max
                )`,
             { guildId, scopeKey, max }
+        );
+        // Archived notes do not use the live capacity, but they are bounded
+        // too: the oldest archived ones go first, never one the person saved.
+        await db.run(
+            `DELETE FROM kg_nodes
+             WHERE guildId = @guildId AND scopeKey = @scopeKey
+               AND archivedAt IS NOT NULL AND curation <> 'saved'
+               AND id NOT IN (
+                   SELECT id FROM kg_nodes
+                   WHERE guildId = @guildId AND scopeKey = @scopeKey AND archivedAt IS NOT NULL AND curation <> 'saved'
+                   ORDER BY archivedAt DESC, id DESC
+                   LIMIT @maxArchived
+               )`,
+            { guildId, scopeKey, maxArchived: MAX_ARCHIVED_PER_SCOPE }
         );
     }
 
@@ -679,7 +764,8 @@ ${excerpt}`;
                AND id NOT IN (
                    SELECT id FROM kg_edges
                    WHERE guildId = @guildId AND scopeKey = @scopeKey
-                   ORDER BY weight DESC, updatedAt DESC, id DESC
+                   ORDER BY CASE WHEN retractedAt IS NULL THEN 1 ELSE 0 END DESC,
+                            weight DESC, updatedAt DESC, id DESC
                    LIMIT @max
                )`,
             { guildId, scopeKey, max: MAX_EDGES_PER_SCOPE }
@@ -715,6 +801,7 @@ ${excerpt}`;
              WHERE guildId = @guildId AND scopeKey = @scopeKey
                AND confidence < @threshold
                AND curation <> 'saved'
+               AND archivedAt IS NULL
                AND id NOT IN (SELECT nodeId FROM kg_provenance)
                AND id NOT IN (
                    SELECT sourceId FROM kg_edges
@@ -974,12 +1061,16 @@ ${excerpt}`;
     }
 
     /**
-     * Merge drop node into keep node (edges repointed, drop deleted).
+     * Merge drop node into keep node. The dropped note is archived as an alias
+     * of keep, not deleted (ADR 0027): its text, history and own connections
+     * stay, so `restoreNote` can undo the merge. The connections keep gained
+     * from it are new edges marked with the merge, which an undo retracts.
+     * @param {{ archivedBy?: 'user'|'run'|'reflection' }} [options]
      */
-    async mergeNodes({ guildId, scopeKey = '', keepLabel, dropLabel }) {
+    async mergeNodes({ guildId, scopeKey = '', keepLabel, dropLabel, archivedBy = 'reflection' }) {
         const keep = await this.getNode(guildId, keepLabel, scopeKey);
         const drop = await this.getNode(guildId, dropLabel, scopeKey);
-        if (!keep || !drop || keep.id === drop.id) return false;
+        if (!keep || !drop || keep.id === drop.id || keep.archivedAt || drop.archivedAt) return false;
 
         await db.transaction(async () => {
             const provRows = await db.all(
@@ -1007,7 +1098,7 @@ ${excerpt}`;
 
             const edges = await db.all(
                 `SELECT * FROM kg_edges
-                 WHERE guildId = @guildId AND (sourceId = @dropId OR targetId = @dropId)`,
+                 WHERE guildId = @guildId AND retractedAt IS NULL AND (sourceId = @dropId OR targetId = @dropId)`,
                 { guildId, dropId: drop.id }
             );
             for (const edge of edges) {
@@ -1015,10 +1106,11 @@ ${excerpt}`;
                 const newTarget = edge.targetId === drop.id ? keep.id : edge.targetId;
                 if (newSource === newTarget) continue;
                 await db.run(
-                    `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight)
-                     VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight)
+                    `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight,
+                                           evidenceKind, evidenceId)
+                     VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight, 'merge', @dropId)
                      ON CONFLICT(guildId, sourceId, targetId, relation) DO UPDATE SET
-                         weight = CASE WHEN weight > @weight THEN weight ELSE @weight END,
+                         weight = CASE WHEN kg_edges.weight > @weight THEN kg_edges.weight ELSE @weight END,
                          updatedAt = CURRENT_TIMESTAMP`,
                     {
                         guildId,
@@ -1027,11 +1119,17 @@ ${excerpt}`;
                         targetId: newTarget,
                         relation: edge.relation,
                         relationKind: edge.relationKind,
-                        weight: edge.weight
+                        weight: edge.weight,
+                        dropId: drop.id
                     }
                 );
             }
-            await db.run('DELETE FROM kg_nodes WHERE id = @id', { id: drop.id });
+            await db.run(
+                `UPDATE kg_nodes SET archivedAt = @now, archivedBy = @by, archiveCode = 'merged', mergedIntoId = @keepId,
+                     updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { id: drop.id, keepId: keep.id, now: utcNow(), by: ['user', 'run', 'reflection'].includes(archivedBy) ? archivedBy : 'reflection' }
+            );
             // A deliberate save survives a merge in either direction.
             if (drop.curation === 'saved' && keep.curation !== 'saved') {
                 await db.run(
@@ -1051,7 +1149,7 @@ ${excerpt}`;
         const params = {};
         nodeIds.forEach((id, i) => { params[`n${i}`] = id; });
         const rows = await db.all(
-            `SELECT nodeId, sourceKind, sourceId, createdAt FROM kg_provenance
+            `SELECT nodeId, sourceKind, sourceId, createdAt, retractedAt FROM kg_provenance
              WHERE nodeId IN (${placeholders})
              ORDER BY createdAt DESC`,
             params
@@ -1061,7 +1159,9 @@ ${excerpt}`;
             provenanceMap.get(row.nodeId).push({
                 sourceKind: row.sourceKind,
                 sourceId: row.sourceId,
-                createdAt: row.createdAt
+                createdAt: row.createdAt,
+                // The source was withdrawn: the note keeps the row, the evidence no longer counts.
+                retracted: Boolean(row.retractedAt)
             });
         }
         return provenanceMap;
@@ -1083,7 +1183,7 @@ ${excerpt}`;
         const projection = normalizeView(view);
         const dbNodes = await db.all(
             `SELECT * FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${curationPredicate(projection)}
+             WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${liveNode()} AND ${curationPredicate(projection)}
              ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
             { guildId, scopeKey, limit: cap }
         );
@@ -1225,6 +1325,8 @@ ${excerpt}`;
             curation: node.curation || 'unclassified',
             // Written by a delegated run and not yet edited or saved by the person.
             generated: Boolean(node.generated),
+            claimStatus: node.claimStatus || 'current',
+            archivedAt: node.archivedAt || null,
             tags,
             createdAt: node.createdAt,
             updatedAt: node.updatedAt
@@ -1235,7 +1337,7 @@ ${excerpt}`;
     async _curationCounts({ guildId, scopeKey }) {
         const rows = await db.all(
             `SELECT curation, COUNT(*) AS c FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${liveNode()}
              GROUP BY curation`,
             { guildId, scopeKey }
         );
@@ -1256,7 +1358,7 @@ ${excerpt}`;
         const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
         const rows = await db.all(
             `SELECT source, curation, COUNT(*) AS c FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = @scopeKey
+             WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${liveNode()}
              GROUP BY source, curation
              ORDER BY source, curation`,
             { guildId, scopeKey }
@@ -1424,7 +1526,7 @@ ${excerpt}`;
         const bounded = Math.max(1, Math.min(Number(limit) || 200, maxNodesForScope(scopeKey)));
         const skip = Math.max(0, Number(offset) || 0);
 
-        const scopeClauses = ['n.guildId = @guildId', 'n.scopeKey = @scopeKey', curationPredicate(projection, 'n')];
+        const scopeClauses = ['n.guildId = @guildId', 'n.scopeKey = @scopeKey', liveNode('n'), curationPredicate(projection, 'n')];
         const clauses = [...scopeClauses];
         const params = { guildId, scopeKey, limit: bounded, offset: skip };
         if (typeFilter) {
@@ -1535,6 +1637,7 @@ ${excerpt}`;
         return db.transaction(async () => {
             const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
             if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return null;
+            if (node.archivedAt) throw failure(409, 'ARCHIVED', 'Restore this note before editing it.');
 
             const nextLabel = label !== undefined ? normalizeLabel(label) : node.label;
             if (!nextLabel) {
@@ -1672,6 +1775,365 @@ ${excerpt}`;
         return this._shapeUserNote(fresh, tagMap.get(created.id) || []);
     }
 
+    // --- Archive, connections and claim state (delegated knowledge work, ADR 0027) ---
+
+    /** One of the person's own notes by id, live or archived; null for anyone else's. */
+    async getPersonalNote({ guildId, userId, nodeId } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const id = Number(nodeId);
+        if (!Number.isSafeInteger(id) || id <= 0) return null;
+        const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id });
+        return node && node.guildId === guildId && node.scopeKey === scopeKey ? node : null;
+    }
+
+    /** The person's notes that match a text, for a run that must name an id and a revision. */
+    async findPersonalNotes({ guildId, userId, query = '', limit = 12 } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const q = String(query || '').trim();
+        const params = { guildId, scopeKey, limit: Math.max(1, Math.min(30, Number(limit) || 12)) };
+        let match = '';
+        if (q) {
+            match = `AND (n.label LIKE @q ESCAPE '#' OR n.content LIKE @q ESCAPE '#')`;
+            params.q = `%${q.replace(/[#%_]/g, '#$&')}%`;
+        }
+        return db.all(
+            `SELECT n.id, n.label, n.content, n.curation, n.generated, n.revision, n.claimStatus FROM kg_nodes n
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND ${liveNode('n')} ${match}
+             ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
+            params
+        );
+    }
+
+    /**
+     * Take a note out of retrieval without deleting it. A run may archive only
+     * what the person has not saved; the person may archive anything. The
+     * note, its text and its connections stay, and `restoreNote` undoes it.
+     * @returns {Promise<{ ok: true, id: number, revision: number } | { ok: false, code: string, revision?: number }>}
+     */
+    async archiveNote({ guildId, userId, nodeId, expectedRevision = null, by = 'run' } = {}) {
+        const actor = by === 'user' ? 'user' : 'run';
+        return db.transaction(async () => {
+            const node = await this.getPersonalNote({ guildId, userId, nodeId });
+            if (!node) return { ok: false, code: 'NOT_FOUND' };
+            if (node.archivedAt) return { ok: false, code: 'ALREADY_ARCHIVED' };
+            if (actor === 'run' && node.curation === 'saved') return { ok: false, code: 'SAVED_NOTE' };
+            if (expectedRevision != null && Number(expectedRevision) !== Number(node.revision)) {
+                return { ok: false, code: 'REVISION_CONFLICT', revision: Number(node.revision) };
+            }
+            const changed = await db.run(
+                `UPDATE kg_nodes SET archivedAt = @now, archivedBy = @by, archiveCode = 'archived', mergedIntoId = NULL,
+                     revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id AND revision = @revision AND archivedAt IS NULL`,
+                { id: node.id, revision: node.revision, now: utcNow(), by: actor }
+            );
+            if (!changed.changes) return { ok: false, code: 'REVISION_CONFLICT', revision: Number(node.revision) };
+            return { ok: true, id: Number(node.id), revision: Number(node.revision) + 1 };
+        });
+    }
+
+    /**
+     * Bring an archived note back, with its connections: an archive only
+     * hid them, and an undone merge retracts the connections the merge
+     * created. Refused (never silently) when the scope has no room.
+     */
+    async restoreNote({ guildId, userId, nodeId } = {}) {
+        return db.transaction(async () => {
+            const node = await this.getPersonalNote({ guildId, userId, nodeId });
+            if (!node) return { ok: false, code: 'NOT_FOUND' };
+            if (!node.archivedAt) return { ok: false, code: 'NOT_ARCHIVED' };
+            const live = await db.get(
+                `SELECT COUNT(*) AS n FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${liveNode()}`,
+                { guildId, scopeKey: node.scopeKey }
+            );
+            if (Number(live?.n || 0) >= maxNodesForScope(node.scopeKey)) return { ok: false, code: 'CAPACITY' };
+            await db.run(
+                `UPDATE kg_nodes SET archivedAt = NULL, archivedBy = NULL, archiveCode = NULL, mergedIntoId = NULL,
+                     revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { id: node.id }
+            );
+            let unmerged = 0;
+            if (node.archiveCode === 'merged') {
+                unmerged = (await db.run(
+                    `UPDATE kg_edges SET retractedAt = @now, retractionCode = 'unmerged', revision = revision + 1,
+                         updatedAt = CURRENT_TIMESTAMP
+                     WHERE guildId = @guildId AND evidenceKind = 'merge' AND evidenceId = @id AND retractedAt IS NULL`,
+                    { guildId, id: node.id, now: utcNow() }
+                )).changes;
+            }
+            const connections = await db.get(
+                `SELECT COUNT(*) AS n FROM kg_edges e
+                 JOIN kg_nodes s ON s.id = e.sourceId JOIN kg_nodes t ON t.id = e.targetId
+                 WHERE (e.sourceId = @id OR e.targetId = @id) AND ${liveEdge()}`,
+                { id: node.id }
+            );
+            return {
+                ok: true, id: Number(node.id), revision: Number(node.revision) + 1,
+                wasMerge: node.archiveCode === 'merged', unmerged, connections: Number(connections?.n || 0)
+            };
+        });
+    }
+
+    /** The person's archived notes, newest first, with what each can bring back. */
+    async listArchivedNotes({ guildId, userId, limit = 50 } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const rows = await db.all(
+            `SELECT n.*, k.label AS mergedIntoLabel,
+                    (SELECT COUNT(*) FROM kg_edges e WHERE e.retractedAt IS NULL AND (e.sourceId = n.id OR e.targetId = n.id)) AS connections
+             FROM kg_nodes n LEFT JOIN kg_nodes k ON k.id = n.mergedIntoId
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.archivedAt IS NOT NULL
+             ORDER BY n.archivedAt DESC, n.id DESC LIMIT @limit`,
+            { guildId, scopeKey, limit: Math.max(1, Math.min(200, Number(limit) || 50)) }
+        );
+        return rows.map(row => ({
+            id: Number(row.id),
+            label: row.label,
+            content: row.content,
+            curation: row.curation || 'unclassified',
+            archivedAt: row.archivedAt,
+            archivedBy: row.archivedBy || null,
+            archiveCode: row.archiveCode || 'archived',
+            mergedInto: row.mergedIntoId ? { id: Number(row.mergedIntoId), label: row.mergedIntoLabel || null } : null,
+            connections: Number(row.connections) || 0
+        }));
+    }
+
+    /**
+     * Connect two of the person's live notes on a run's evidence. Both ends
+     * are read at the revision the caller saw. An existing live connection is
+     * left as it is; one a run retracted may be revived; one the person
+     * retracted is theirs and is never brought back by a run.
+     */
+    async linkNotes({
+        guildId, userId, sourceId, targetId, relation, relationKind = null, weight = 0.5,
+        expectedSourceRevision = null, expectedTargetRevision = null,
+        evidenceKind = 'run', evidenceId = null, originRunId = null
+    } = {}) {
+        const cleanRelation = String(relation || '').trim().slice(0, MAX_RELATION_LENGTH);
+        if (!cleanRelation || Number(sourceId) === Number(targetId)) return { ok: false, code: 'BAD_REQUEST' };
+        return db.transaction(async () => {
+            const source = await this.getPersonalNote({ guildId, userId, nodeId: sourceId });
+            const target = await this.getPersonalNote({ guildId, userId, nodeId: targetId });
+            if (!source || !target) return { ok: false, code: 'NOT_FOUND' };
+            if (source.archivedAt || target.archivedAt) return { ok: false, code: 'ARCHIVED' };
+            if ((expectedSourceRevision != null && Number(expectedSourceRevision) !== Number(source.revision))
+                || (expectedTargetRevision != null && Number(expectedTargetRevision) !== Number(target.revision))) {
+                return { ok: false, code: 'REVISION_CONFLICT' };
+            }
+            const kind = relationKind && kgConfig.RELATION_KINDS.includes(relationKind) ? relationKind : null;
+            const evidence = EDGE_EVIDENCE_KINDS.includes(evidenceKind) ? evidenceKind : 'run';
+            const existing = await db.get(
+                `SELECT * FROM kg_edges WHERE guildId = @guildId AND sourceId = @sourceId AND targetId = @targetId AND relation = @relation`,
+                { guildId, sourceId: source.id, targetId: target.id, relation: cleanRelation }
+            );
+            if (existing) {
+                if (!existing.retractedAt) return { ok: true, id: Number(existing.id), revision: Number(existing.revision), existing: true };
+                if (existing.retractionCode === 'user') return { ok: false, code: 'RETRACTED_BY_USER' };
+                await db.run(
+                    `UPDATE kg_edges SET retractedAt = NULL, retractionCode = NULL, revision = revision + 1,
+                         evidenceKind = @evidenceKind, evidenceId = @evidenceId, originRunId = @originRunId,
+                         updatedAt = CURRENT_TIMESTAMP
+                     WHERE id = @id`,
+                    { id: existing.id, evidenceKind: evidence, evidenceId: evidenceId == null ? null : Number(evidenceId), originRunId: originRunId == null ? null : Number(originRunId) }
+                );
+                return { ok: true, id: Number(existing.id), revision: Number(existing.revision) + 1, revived: true };
+            }
+            const id = Number(await db.insert(
+                `INSERT INTO kg_edges (guildId, scopeKey, sourceId, targetId, relation, relationKind, weight,
+                                       evidenceKind, evidenceId, originRunId)
+                 VALUES (@guildId, @scopeKey, @sourceId, @targetId, @relation, @relationKind, @weight,
+                         @evidenceKind, @evidenceId, @originRunId)`,
+                {
+                    guildId, scopeKey: source.scopeKey, sourceId: source.id, targetId: target.id,
+                    relation: cleanRelation, relationKind: kind, weight: clamp01(weight, 0.5),
+                    evidenceKind: evidence, evidenceId: evidenceId == null ? null : Number(evidenceId),
+                    originRunId: originRunId == null ? null : Number(originRunId)
+                }
+            ));
+            return { ok: true, id, revision: 1, created: true };
+        });
+    }
+
+    /** One connection of the person's, by id (live or retracted); null for anyone else's. */
+    async getPersonalEdge({ guildId, userId, edgeId } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        const id = Number(edgeId);
+        if (!Number.isSafeInteger(id) || id <= 0) return null;
+        const edge = await db.get('SELECT * FROM kg_edges WHERE id = @id', { id });
+        return edge && edge.guildId === guildId && edge.scopeKey === scopeKey ? edge : null;
+    }
+
+    /** The person's live connections around their notes, for a run that must name an edge id and revision. */
+    async listPersonalEdges({ guildId, userId, nodeId, limit = 30 } = {}) {
+        const note = await this.getPersonalNote({ guildId, userId, nodeId });
+        if (!note) return [];
+        return db.all(
+            `SELECT e.id, e.relation, e.revision, e.sourceId, e.targetId, s.label AS sourceLabel, t.label AS targetLabel
+             FROM kg_edges e JOIN kg_nodes s ON s.id = e.sourceId JOIN kg_nodes t ON t.id = e.targetId
+             WHERE (e.sourceId = @id OR e.targetId = @id) AND ${liveEdge()}
+             ORDER BY e.weight DESC, e.id DESC LIMIT @limit`,
+            { id: note.id, limit: Math.max(1, Math.min(60, Number(limit) || 30)) }
+        );
+    }
+
+    /** Take a connection out of use, keeping it and why. `restoreEdge` undoes it. */
+    async retractEdge({ guildId, userId, edgeId, expectedRevision = null, by = 'run' } = {}) {
+        const code = by === 'user' ? 'user' : 'run';
+        return db.transaction(async () => {
+            const edge = await this.getPersonalEdge({ guildId, userId, edgeId });
+            if (!edge) return { ok: false, code: 'NOT_FOUND' };
+            if (edge.retractedAt) return { ok: false, code: 'ALREADY_RETRACTED' };
+            if (expectedRevision != null && Number(expectedRevision) !== Number(edge.revision)) {
+                return { ok: false, code: 'REVISION_CONFLICT', revision: Number(edge.revision) };
+            }
+            const changed = await db.run(
+                `UPDATE kg_edges SET retractedAt = @now, retractionCode = @code, revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id AND revision = @revision AND retractedAt IS NULL`,
+                { id: edge.id, revision: edge.revision, now: utcNow(), code }
+            );
+            if (!changed.changes) return { ok: false, code: 'REVISION_CONFLICT', revision: Number(edge.revision) };
+            return { ok: true, id: Number(edge.id), revision: Number(edge.revision) + 1 };
+        });
+    }
+
+    /** Connections a run retracted, newest first, for the person to restore. */
+    async listRetractedEdges({ guildId, userId, limit = 30 } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        return db.all(
+            `SELECT e.id, e.relation, e.retractedAt, e.retractionCode, s.label AS sourceLabel, t.label AS targetLabel
+             FROM kg_edges e JOIN kg_nodes s ON s.id = e.sourceId JOIN kg_nodes t ON t.id = e.targetId
+             WHERE e.guildId = @guildId AND e.scopeKey = @scopeKey AND e.retractedAt IS NOT NULL AND e.retractionCode = 'run'
+               AND s.archivedAt IS NULL AND t.archivedAt IS NULL
+             ORDER BY e.retractedAt DESC, e.id DESC LIMIT @limit`,
+            { guildId, scopeKey, limit: Math.max(1, Math.min(100, Number(limit) || 30)) }
+        );
+    }
+
+    /** Put a retracted connection back; refused while either end is archived. */
+    async restoreEdge({ guildId, userId, edgeId } = {}) {
+        return db.transaction(async () => {
+            const edge = await this.getPersonalEdge({ guildId, userId, edgeId });
+            if (!edge) return { ok: false, code: 'NOT_FOUND' };
+            if (!edge.retractedAt) return { ok: false, code: 'NOT_RETRACTED' };
+            await db.run(
+                `UPDATE kg_edges SET retractedAt = NULL, retractionCode = NULL, revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+                 WHERE id = @id`,
+                { id: edge.id }
+            );
+            return { ok: true, id: Number(edge.id), revision: Number(edge.revision) + 1 };
+        });
+    }
+
+    /**
+     * Change a note's text and/or claim state at the revision the caller read,
+     * optionally restoring the writer fields a person's apply had changed.
+     * Always inside the caller's transaction so a change set and the note
+     * move together. `snapshot` restores a prior state exactly (a revert).
+     * @returns {Promise<{ ok: true, revision: number, before: Object } | { ok: false, code: string, revision?: number }>}
+     */
+    async applyNoteChange({
+        guildId, userId, nodeId, expectedRevision, content, claimStatus, asPerson = false, snapshot = null
+    } = {}) {
+        const node = await this.getPersonalNote({ guildId, userId, nodeId });
+        if (!node) return { ok: false, code: 'NOT_FOUND' };
+        if (node.archivedAt) return { ok: false, code: 'ARCHIVED' };
+        if (!Number.isSafeInteger(Number(expectedRevision)) || Number(expectedRevision) !== Number(node.revision)) {
+            return { ok: false, code: 'REVISION_CONFLICT', revision: Number(node.revision) };
+        }
+        const before = {
+            content: node.content, source: node.source, curation: node.curation,
+            generated: node.generated ? 1 : 0, claimStatus: node.claimStatus || 'current'
+        };
+        const next = { ...before };
+        if (snapshot) {
+            Object.assign(next, {
+                content: snapshot.content ?? null,
+                source: kgConfig.NODE_SOURCES.includes(snapshot.source) ? snapshot.source : before.source,
+                curation: normalizeCuration(snapshot.curation) || before.curation,
+                generated: snapshot.generated ? 1 : 0,
+                claimStatus: CLAIM_STATUSES.includes(snapshot.claimStatus) ? snapshot.claimStatus : 'current'
+            });
+        } else {
+            if (content !== undefined) next.content = content ? String(content).trim().slice(0, MAX_CONTENT_LENGTH) : null;
+            if (claimStatus !== undefined) {
+                if (!CLAIM_STATUSES.includes(claimStatus)) return { ok: false, code: 'BAD_REQUEST' };
+                next.claimStatus = claimStatus;
+            }
+            if (asPerson && content !== undefined) Object.assign(next, { source: 'user', curation: 'saved', generated: 0 });
+        }
+        const changed = await db.run(
+            `UPDATE kg_nodes SET content = @content, source = @source, curation = @curation, generated = @generated,
+                 claimStatus = @claimStatus, revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id AND revision = @revision AND archivedAt IS NULL`,
+            { id: node.id, revision: node.revision, ...next }
+        );
+        if (!changed.changes) return { ok: false, code: 'REVISION_CONFLICT', revision: Number(node.revision) };
+        const textMoved = next.content !== before.content;
+        await this._recordRevision(
+            node.id, next.source,
+            snapshot ? 'conflict_resolution' : textMoved ? (asPerson ? 'human_edit' : 'update') : 'conflict_resolution'
+        );
+        return { ok: true, revision: Number(node.revision) + 1, before };
+    }
+
+    /** A source's rows on the person's notes: which notes cite it, and whether the cite is already withdrawn. */
+    async notesCitingSource({ guildId, userId, sourceKind, sourceId, limit = 50 } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        return db.all(
+            `SELECT n.id, n.label, n.revision, n.curation, n.claimStatus, p.retractedAt
+             FROM kg_provenance p JOIN kg_nodes n ON n.id = p.nodeId
+             WHERE p.sourceKind = @sourceKind AND p.sourceId = @sourceId
+               AND n.guildId = @guildId AND n.scopeKey = @scopeKey AND ${liveNode('n')}
+             ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
+            { guildId, scopeKey, sourceKind, sourceId: Number(sourceId), limit: Math.max(1, Math.min(200, Number(limit) || 50)) }
+        );
+    }
+
+    /** Mark a source withdrawn on every note that cites it; the rows stay as the record. */
+    async withdrawSource({ guildId, userId, sourceKind, sourceId } = {}) {
+        const scopeKey = resolveScopeKey({ subjectType: 'USER', subjectId: userId });
+        return (await db.run(
+            `UPDATE kg_provenance SET retractedAt = @now
+             WHERE sourceKind = @sourceKind AND sourceId = @sourceId AND retractedAt IS NULL
+               AND nodeId IN (SELECT id FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey)`,
+            { guildId, scopeKey, sourceKind, sourceId: Number(sourceId), now: utcNow() }
+        )).changes;
+    }
+
+    /**
+     * A run confirms a note a run wrote earlier: its id joins the note's
+     * evidence and its confidence rises a little, once. It adds no note.
+     * A run's own earlier finding cannot corroborate itself: a confirmation
+     * from the responsibility that wrote the note, or from the same run
+     * again, counts for nothing. The person's own notes are never touched.
+     * @returns {Promise<{ ok: true, confidence: number, sources: number } | { ok: false, code: string }>}
+     */
+    async confirmGeneratedNote({ guildId, userId, nodeId, runId, responsibilityId } = {}) {
+        return db.transaction(async () => {
+            const node = await this.getPersonalNote({ guildId, userId, nodeId });
+            if (!node) return { ok: false, code: 'NOT_FOUND' };
+            if (node.archivedAt) return { ok: false, code: 'ARCHIVED' };
+            if (!node.generated || node.curation === 'saved') return { ok: false, code: 'NOT_GENERATED' };
+            const prior = await db.all(
+                `SELECT p.sourceId, r.responsibilityId FROM kg_provenance p
+                 LEFT JOIN assistant_runs r ON r.id = p.sourceId
+                 WHERE p.nodeId = @nodeId AND p.sourceKind = 'tool' AND p.retractedAt IS NULL`,
+                { nodeId: node.id }
+            );
+            if (prior.some(row => Number(row.sourceId) === Number(runId))) return { ok: false, code: 'ALREADY_COUNTED' };
+            if (prior.some(row => row.responsibilityId != null && Number(row.responsibilityId) === Number(responsibilityId))) {
+                return { ok: false, code: 'SELF_CORROBORATION' };
+            }
+            await this.addProvenance({ nodeId: node.id, sourceKind: 'tool', sourceId: Number(runId) });
+            const confidence = Math.min(0.9, (Number(node.confidence) || 0.5) + 0.05);
+            await db.run(
+                'UPDATE kg_nodes SET confidence = @confidence, updatedAt = CURRENT_TIMESTAMP WHERE id = @id',
+                { id: node.id, confidence }
+            );
+            return { ok: true, confidence, sources: prior.length + 1 };
+        });
+    }
+
     // --- Generated notes (delegated runs, ADR 0018) ------------------------
 
     /** The person's generated notes a run may still amend, newest first. */
@@ -1680,6 +2142,7 @@ ${excerpt}`;
         return db.all(
             `SELECT id, label, type, content, revision, updatedAt FROM kg_nodes
              WHERE guildId = @guildId AND scopeKey = @scopeKey AND generated = 1 AND curation <> 'saved'
+               AND ${retrievableNode()}
              ORDER BY updatedAt DESC, id DESC LIMIT @limit`,
             { guildId, scopeKey, limit: Math.max(1, Math.min(200, Number(limit) || 50)) }
         );
@@ -1700,7 +2163,8 @@ ${excerpt}`;
         if (!guildId || !userId || !cleanLabel || !cleanContent) return { ok: false, code: 'BAD_REQUEST' };
         if (await this.getNode(guildId, cleanLabel, scopeKey)) return { ok: false, code: 'EXISTS' };
         const count = await db.get(
-            'SELECT COUNT(*) AS n FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey', { guildId, scopeKey }
+            `SELECT COUNT(*) AS n FROM kg_nodes WHERE guildId = @guildId AND scopeKey = @scopeKey AND ${liveNode()}`,
+            { guildId, scopeKey }
         );
         if (Number(count?.n || 0) >= maxNodesForScope(scopeKey)) return { ok: false, code: 'CAPACITY' };
         const id = Number(await db.insert(
@@ -1728,10 +2192,11 @@ ${excerpt}`;
         if (!cleanContent || !Number.isSafeInteger(Number(expectedRevision))) return { ok: false, code: 'BAD_REQUEST' };
         const node = await db.get('SELECT * FROM kg_nodes WHERE id = @id', { id: Number(nodeId) });
         if (!node || node.guildId !== guildId || node.scopeKey !== scopeKey) return { ok: false, code: 'NOT_FOUND' };
+        if (node.archivedAt) return { ok: false, code: 'ARCHIVED' };
         if (!node.generated || node.curation === 'saved') return { ok: false, code: 'NOT_GENERATED' };
         const changed = await db.run(
             `UPDATE kg_nodes SET content = @content, revision = revision + 1, updatedAt = CURRENT_TIMESTAMP
-             WHERE id = @id AND generated = 1 AND curation <> 'saved' AND revision = @revision`,
+             WHERE id = @id AND generated = 1 AND curation <> 'saved' AND revision = @revision AND archivedAt IS NULL`,
             { id: node.id, content: cleanContent, revision: Number(expectedRevision) }
         );
         if (!changed.changes) return { ok: false, code: 'REVISION_CONFLICT', revision: Number(node.revision) };
@@ -1748,7 +2213,7 @@ ${excerpt}`;
         return await db.all(
             `SELECT n.id, n.label, n.content, n.updatedAt, n.source AS nodeSource
              FROM kg_nodes n
-             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'fact'
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.type = 'fact' AND ${retrievableNode('n')}
              ORDER BY n.updatedAt DESC, n.id DESC LIMIT @limit`,
             { guildId, scopeKey, limit }
         );
