@@ -1,5 +1,5 @@
 /**
- * Pausing, archiving, restoring and cleaning up processes (DA-5b, ADR 0021).
+ * Pausing, archiving, restoring and cleaning up processes (DA-5b, ADR 0022).
  *
  * `assistantProcessService` describes and judges a process; this service is
  * the only part of process stewardship that changes one. Retirement goes

@@ -9,7 +9,7 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes), 8
 (assessment, incidents and retirement; repair is planned) and 9 are
-implemented as recorded in ADR 0016, 0017, 0018, 0019 and 0021; the rest, and
+implemented as recorded in ADR 0016, 0017, 0018, 0019 and 0022; the rest, and
 all of section 13 except "Deciding a request in place" (13.1), is planned.**
 Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
@@ -419,7 +419,7 @@ moment of the change, and otherwise files a `process_retirement` request that
 is decided in place. Cleanup is the person's only, from a frozen manifest of
 exact row ids. See
 [process_stewardship.md](process_stewardship.md#retiring-a-process) and
-[ADR 0021](adr/0021-process-retirement.md). Still planned: repair, cleanup
+[ADR 0022](adr/0022-process-retirement.md). Still planned: repair, cleanup
 under `cleanup.exact`, declared owned artifacts beyond a process's own
 records, and permanent deletion (which no grant reaches today).
 

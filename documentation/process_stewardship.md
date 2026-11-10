@@ -33,7 +33,7 @@ It builds on the process catalog, contracts and typed observations described
 in [delegated_responsibilities.md](delegated_responsibilities.md#processes).
 The design decisions are in
 [ADR 0019](adr/0019-process-assessment-and-incidents.md) (assessment and
-incidents) and [ADR 0021](adr/0021-process-retirement.md) (pause, archive,
+incidents) and [ADR 0022](adr/0022-process-retirement.md) (pause, archive,
 restore and cleanup).
 
 ## Where you see it

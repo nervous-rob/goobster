@@ -1,4 +1,4 @@
-# ADR 0021: A process is retired in separate, reversible stages; archive never deletes and cleanup removes only a previewed manifest
+# ADR 0022: A process is retired in separate, reversible stages; archive never deletes and cleanup removes only a previewed manifest
 
 ## Status
 
