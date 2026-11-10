@@ -4,6 +4,7 @@ import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative, AssistantProcessList, ProcessAction, ProcessActionResult } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
+import type { GateDecisionCard, GateDecisionResult, GateSurface } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -442,6 +443,11 @@ export const api = {
         request<{ acknowledged: number }>('/api/app/assistant/updates/acknowledge', { method: 'POST', body: { items } }),
     snoozeUpdate: (id: number, until: string) =>
         request<{ snoozed: unknown }>(`/api/app/assistant/updates/${id}/snooze`, { method: 'POST', body: { until } }),
+    /** Decide a request from the card that was shown; a changed card answers 409 STALE_GATE. */
+    decideGate: (card: Pick<GateDecisionCard, 'ref' | 'occurrence' | 'revision'>, option: string, surface: GateSurface) =>
+        request<GateDecisionResult>(`/api/app/assistant/gates/${encodeURIComponent(card.ref)}/decide`, {
+            method: 'POST', body: { option, occurrence: card.occurrence, revision: card.revision, surface }
+        }),
     inboxAsk: (id: number, inProject = false) => request<{ kind: 'chat' | 'project'; conversationId: number; path: string; suggestedQuestion: string }>(
         `/api/app/inbox/${id}/ask`, { method: 'POST', body: { inProject } }),
     conversationContext: (kind: 'chat' | 'project', id: number) => request<{ contexts: Array<{ id: number; itemId: number; title: string; unavailable: boolean }> }>(

@@ -199,6 +199,8 @@ class AssistantHomeService {
                 read: item.read,
                 createdAt: item.createdAt,
                 update: item.update,
+                // The same decision card the Inbox item carries, or null.
+                decision: item.decision || null,
                 request: item.access ? 'access_request' : item.friend ? 'friend_request' : item.update?.gate?.kind || null
             }))
         };
