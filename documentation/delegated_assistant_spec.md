@@ -15,8 +15,11 @@ in the [implementation plan's status table](delegated_assistant_implementation.m
 the shipped behaviour guides are
 [delegated_responsibilities.md](delegated_responsibilities.md),
 [assistant_home.md](assistant_home.md), [delegated_runs.md](delegated_runs.md)
-and, for the plan steps of section 7,
-[delegated_plan_steps.md](delegated_plan_steps.md).
+and, for section 7, [delegated_plan_steps.md](delegated_plan_steps.md) (plan
+steps) and
+[delegated_conversation_requests.md](delegated_conversation_requests.md)
+(requests made in conversation and changes of direction; journey B for
+explicit requests, and the project board of journey G).
 
 Updated: **2026-11-10**. Code baseline: `c3b773ee` (2026-10-27).
 Recheck implementation seams against current main before starting each increment.
@@ -653,9 +656,9 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; two items are available** (answering a request on Home
-and in the Inbox, and repository work, both marked below); nothing else here
-is. Increments DA-7 through
+**Status: planned; three items are available** (answering a request on Home
+and in the Inbox, repository work, and "For the host" at the end of this
+section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -722,8 +725,15 @@ DA-12. The technical contracts are in
 
 ### For the host
 
+**Available** (Host → Delegated work;
+[delegated_operations.md](delegated_operations.md)):
+
 - A view of delegated work across the installation without any private
   text, with caps and a stop-all control.
+- Everything in this section that is not available yet starts with the
+  host's own account only when it arrives. The host opens it to everyone by
+  recording the pilot decision on the same page, and can close it again.
+  Answering a request on Home and in the Inbox is already open to everyone.
 
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same

@@ -20,7 +20,8 @@
  * The build is deterministic where the toolchain allows: the file list is sorted bytewise, file
  * dates are not stored (SetDateSave off), the icon and the version resource derive from the
  * manifest, and nothing records the build time, so the same payload, host and makensis give the
- * same bytes. The service host (WinSW) is pinned by URL and SHA-256 in scripts/bootstrap-pins.json;
+ * same bytes. The service host (WinSW) is pinned by SHA-256 in scripts/bootstrap-pins.json and
+ * fetched from Goobster's mirror release first, upstream second (documentation/bootstrap_tools.md);
  * when it cannot be fetched or does not match, or makensis is missing, the report says
  * INSTALLER_SKIPPED with the reason and nothing unpinned is ever embedded. --require-installer
  * turns a skip into a failure (CI).
@@ -35,6 +36,7 @@ const crypto = require('node:crypto');
 const childProcess = require('node:child_process');
 const stage = require('./lib/bootstrapStage');
 const { download } = require('./lib/download');
+const bootstrapTools = require('./lib/bootstrapTools');
 const { signingState, PINS_FILE } = require('./package-bootstrap');
 
 const REPO = path.resolve(__dirname, '..');
@@ -232,23 +234,15 @@ function renderHeader({ version, payloadDigest, build, signed, label, outFile, i
 }
 
 // ------------------------------------------------------------- the tools
-async function fetchPinned({ pin, destination, doDownload = download }) {
-    if (fs.existsSync(destination) && sha256File(destination) === pin.sha256) return { ok: true, cached: true };
-    try {
-        await doDownload(pin.url, destination);
-    } catch (error) {
-        fs.rmSync(destination, { force: true });
-        return { ok: false, reason: 'WINSW_UNAVAILABLE', detail: error && error.message ? String(error.message).slice(0, 160) : 'download failed' };
-    }
-    if (sha256File(destination) !== pin.sha256) {
-        fs.rmSync(destination, { force: true });
-        return { ok: false, reason: 'WINSW_HASH_MISMATCH', detail: `the download of ${path.basename(pin.url)} does not match its pinned SHA-256` };
-    }
-    return { ok: true, cached: false };
+/** The pinned service host: the cached copy, Goobster's mirror, then upstream. Kept only when it matches its SHA-256. */
+async function fetchPinned({ pins = null, pin, destination, doDownload = download }) {
+    const got = await bootstrapTools.fetchPinned({ pins, pin, destination, doDownload });
+    if (!got.ok) return { ok: false, reason: got.reason === 'HASH_MISMATCH' ? 'WINSW_HASH_MISMATCH' : 'WINSW_UNAVAILABLE', detail: got.detail };
+    return { ok: true, cached: got.cached, source: got.source };
 }
 
 /** The service host the installer carries: a local file checked against the pin, else the pinned download. */
-async function resolveHost({ options, pin, toolsDir, doDownload }) {
+async function resolveHost({ options, pins = null, pin, toolsDir, doDownload }) {
     if (options.winswFile) {
         const file = path.resolve(options.winswFile);
         if (!fs.existsSync(file)) return { ok: false, reason: 'WINSW_UNAVAILABLE', detail: '--winsw-file does not name a readable file' };
@@ -257,7 +251,7 @@ async function resolveHost({ options, pin, toolsDir, doDownload }) {
     }
     fs.mkdirSync(toolsDir, { recursive: true });
     const file = path.join(toolsDir, `winsw-${pin.version}-${pin.file}`);
-    const got = await fetchPinned({ pin, destination: file, doDownload });
+    const got = await fetchPinned({ pins, pin, destination: file, doDownload });
     return got.ok ? { ok: true, file } : got;
 }
 
@@ -314,7 +308,8 @@ async function build(options, { env = process.env, log = () => {}, run = childPr
     const exeFile = path.join(outDir, exeName);
     const reportFile = path.join(outDir, `bootstrap-report-${target}.json`);
 
-    const pin = (pins || JSON.parse(fs.readFileSync(PINS_FILE, 'utf8'))).winsw;
+    const allPins = pins || bootstrapTools.readPins(PINS_FILE);
+    const pin = allPins.winsw;
     if (!pin || !pin.sha256 || !pin.url) throw new Error('scripts/bootstrap-pins.json has no winsw pin');
 
     const skipped = [];
@@ -328,7 +323,7 @@ async function build(options, { env = process.env, log = () => {}, run = childPr
 
     const makensis = findMakensis({ options, env });
     const toolsDir = options.toolsDir ? path.resolve(options.toolsDir) : path.join(os.tmpdir(), 'goobster-bootstrap-tools');
-    const host = await resolveHost({ options, pin, toolsDir, doDownload });
+    const host = await resolveHost({ options, pins: allPins, pin, toolsDir, doDownload });
     if (!makensis) skip('MAKENSIS_UNAVAILABLE', 'makensis was not found (install NSIS, or pass --makensis)');
     else if (!host.ok) skip(host.reason, host.detail);
     else {

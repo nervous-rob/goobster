@@ -40,15 +40,20 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 - **Operations.** A list of `{ operation, resource }` entries, described in the
   next section. Anything not listed is unavailable.
 - **Scopes.** Which sources the work may read (`personal_chat`, `knowledge`,
-  `project`) and who sees its results (`private` or `project`). A project
-  source or audience needs `projectId`. A purpose never grants access to a
+  `project`, `project_chat`, `parlor`) and who sees its results (`private`
+  or `project`). A project source or audience needs `projectId`.
+  `project_chat` and `parlor` say where it takes requests you address to
+  Goobster ([delegated_conversation_requests.md](delegated_conversation_requests.md));
+  `personal_chat` is reserved and not read yet. A purpose never grants access to a
   source the person could not otherwise reach.
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and
   `externalOperations`. `concurrentInitiatives` caps how many initiatives can
   be running at once. `modelTokens`, `searches` and `computeSeconds` are
   daily caps on the responsibility's [runs](delegated_runs.md), with
-  conservative defaults when unset. `externalOperations`
+  conservative defaults when unset; the host sets those defaults, and a
+  number above the host's is treated as the host's
+  ([delegated_operations.md](delegated_operations.md#caps)). `externalOperations`
   caps pushes and pull requests a day (default 2 when unset, never more than
   20; see [delegated_runs.md](delegated_runs.md#repository-work)).
   `repairAttempts` is recorded for a later increment. The account's usage cap always remains
@@ -173,9 +178,20 @@ these hold at that moment:
    boundary of `confirm` means a human confirms each action, so it is refused
    as `CONFIRMATION_REQUIRED`.
 
-Refusal codes: `FEATURE_UNAVAILABLE`, `RESPONSIBILITY_NOT_FOUND`,
+Two installation-wide checks sit around those. Before any of them, if the
+host has [stopped all delegated work](delegated_operations.md#stop-all) the
+answer is `ASSISTANT_PAUSED`. After step 5, an operation that is still in
+the pilot (`repo.commit`, `repo.push`, `pr.create`, `kg.saved.amend`,
+`kg.edge`, `kg.archive`, `external.write`) is refused as `PILOT_ONLY` unless
+the responsibility's owner is the installation's owner or the host has
+recorded the [pilot decision](delegated_operations.md#the-pilot-gate);
+activating or resuming a responsibility that grants one is refused the same
+way.
+
+Refusal codes: `FEATURE_UNAVAILABLE`, `ASSISTANT_PAUSED`,
+`RESPONSIBILITY_NOT_FOUND`,
 `RESPONSIBILITY_INACTIVE`, `RESPONSIBILITY_REVOKED`, `RESPONSIBILITY_EXPIRED`,
-`REVISION_CONFLICT`, `ACTOR_MISMATCH`, `OPERATION_OUT_OF_SCOPE`,
+`REVISION_CONFLICT`, `ACTOR_MISMATCH`, `OPERATION_OUT_OF_SCOPE`, `PILOT_ONLY`,
 `RESOURCE_UNAVAILABLE`, `ATTENTION_NOT_ENROLLED`, `ATTENTION_BOUNDARY` and
 `CONFIRMATION_REQUIRED`. An urgent finding changes how Goobster tells you, never
 what he may do. Inside a piece of work, a refusal is also noted in the
@@ -216,6 +232,16 @@ material revision he saw.
   first look too, once per approved plan revision and retry. Its title is
   "Plan step ready: " and the step's title, which the project's people wrote
   for the plan. See [delegated_plan_steps.md](delegated_plan_steps.md).
+  Its proposed and queued work is withdrawn on any look that finds the plan
+  has moved on.
+- One source is a **stream**: requests you address to Goobster in the
+  conversations the grant covers (`conversation_request`, for a grant whose
+  scopes name `project_chat` or `parlor`). It has one cursor, the last
+  message examined. The first look proposes nothing; after that each request
+  of yours is one proposal, titled "Asked in" and the conversation's name,
+  and a change of direction supersedes your unfinished work from that
+  conversation (`SUPERSEDED`, `STEERED`). See
+  [delegated_conversation_requests.md](delegated_conversation_requests.md).
 
 **Statuses.** `CANDIDATE`, `QUEUED`, `RUNNING`, `WAITING`, `REVIEW`, then one
 of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
@@ -227,7 +253,7 @@ of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
 - `queue` approves a candidate or waiting attempt under the grant as it is now.
 - `cancel` stops an open attempt.
 - `retry` opens a new attempt of a failed or cancelled one (or a superseded
-  plan-step attempt), unless another attempt at it is already open
+  plan-step or conversation-request attempt), unless another attempt at it is already open
   (`ALREADY_OPEN`).
 - `accept` and `reject` close an attempt that is in `REVIEW`.
 

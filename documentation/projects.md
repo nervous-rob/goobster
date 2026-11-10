@@ -158,7 +158,12 @@ stored — they are derived from disk + assets. Portal:
 approve a draft mission, answer multiple-choice human steps, unblock
 failed steps, complete a review, and setup findings. Portal Observatory
 list shows a **Needs you** board (filterable); tool action `needs-you`
-returns the same cards. Human steps may carry
+returns the same cards. With the delegated assistant installed the board is
+a read over the same requests Home and the Inbox show: a plan approval can
+be decided on the card, a request addressed to a project's owner is shown to
+its members as waiting on the owner, and ready assistant steps that wait on
+you have their own column
+([assistant_home.md](assistant_home.md#project-boards)). Human steps may carry
 `actionParams.choices` (portal radios / `selectedId` on complete). This
 stays on Missions + Observatory — not a new room.
 
@@ -1010,7 +1015,9 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
 - **Now** (Overview, `GET /api/app/projects/:slug/now`) gathers what is
   happening and what needs a person in one read: running runs, the latest
   settled run when it failed (with its stderr tail, Ask Goobster why and
-  Run again), needs-you items for this project, each clone's branch, sync,
+  Run again), needs-you items for this project (the same board, filtered to
+  the project, with the decision buttons where a request has them), each
+  clone's branch, sync,
   any merge or rebase stopped on conflicts, CI and open pull request (a few
   seconds at most per clone, best effort), whether `GOOBSTER.md` exists,
   and the last thing Goobster said in the project's conversations. Each

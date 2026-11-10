@@ -456,7 +456,11 @@ reports, but does not enforce, the same on Windows).
 
 The service host (WinSW) is **pinned by URL and SHA-256** in
 `scripts/bootstrap-pins.json`; `--tools-dir` caches it, `--winsw-file` supplies a
-local copy that must match the pin. Nothing unpinned is ever embedded. When
+local copy that must match the pin. Nothing unpinned is ever embedded. The build
+downloads it from Goobster's own copy (the `bootstrap-tools` release) and falls
+back to the upstream URL, checking the hash either way; how a newer WinSW is
+taken, and the constant in `windowsServiceXml.js` that changes with it, is in
+`documentation/bootstrap_tools.md`. When
 `makensis` or the host is not available the report says `INSTALLER_SKIPPED`
 with a reason (`MAKENSIS_UNAVAILABLE`, `WINSW_UNAVAILABLE`, `WINSW_HASH_MISMATCH`,
 `MAKENSIS_FAILED`), and `--require-installer` turns a skip into a failure.
@@ -467,7 +471,9 @@ Authenticode signing is wired and off: `--signtool <signtool.exe>
 
 ## What CI proves
 
-`.github/workflows/windows-bootstrap.yml` builds the payload and the installer
+`.github/workflows/windows-bootstrap.yml` (on pull requests that touch the
+installer, and weekly on `main` so a pinned tool that stops resolving is found
+early) builds the payload and the installer
 on `windows-2022`, checks the version resource carries the unsigned-build
 notice, that the `.exe` is not Authenticode-signed and that the report names the
 pinned host, then runs `scripts/windows-bootstrap-proof.ps1` as an

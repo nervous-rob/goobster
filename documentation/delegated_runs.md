@@ -179,6 +179,11 @@ The expedition's tokens count once, against the same daily budget.
   continue. Revoking cancels it.
 - Turning Attention off, or the host turning the feature off, stops it the
   same way.
+- The host can **stop all delegated work** on the installation. Running work
+  halts at its next step and shows *waiting* ("The host has stopped all
+  delegated work for now"); queued work stays queued; nothing is cancelled.
+  When the host resumes, halted work goes back to the queue and continues
+  from its journal ([delegated_operations.md](delegated_operations.md#stop-all)).
 
 ## Budgets and limits
 
@@ -192,6 +197,13 @@ The expedition's tokens count once, against the same daily budget.
 | Research expeditions | 1 per piece of work |
 | Steps in one run | 8 tool rounds, 10 minutes |
 | Running at once | 1 per person, 2 on the installation |
+
+The three daily defaults and the two "running at once" numbers are the
+host's [caps](delegated_operations.md#caps): the values above apply until
+the host sets others in Host → Delegated work. A responsibility's own budget
+can be lower than the host's number, never higher: a higher one is treated
+as the host's. `GET /api/app/assistant/access` returns the numbers in force
+(`budgetDefaults`).
 
 An unset budget means the default, never unlimited. When a budget is used
 up the work shows *waiting* with the reason and continues after the day
@@ -215,6 +227,7 @@ allows none.
 | waiting, no provider | No AI provider answered. It retries in an hour. |
 | failed (`PROVIDER_ERROR`, `NO_RESULT`) | *Try again* starts a new attempt. |
 | waiting (`CHILD_PENDING`) | Its research expedition is still working. |
+| waiting (`ASSISTANT_PAUSED`) | The host stopped all delegated work. It continues when they resume it. |
 | needs review (`OPERATION_UNCERTAIN`) | After an interruption, a file write, sandbox run, push or pull request may or may not have happened and the run could not tell. Check the project (for a push or pull request, the repository on GitHub), then *Try again* or dismiss. |
 | failed (`INTERRUPTED_BY_RESTORE`) | The installation was restored from a backup while the run was working. It is not resumed. A step in progress may or may not have happened: check, then *Try again* starts a new attempt. |
 
@@ -257,9 +270,12 @@ failure record in the work ledger (`assistant_run`, code only). That covers
 a run in flight, a run waiting to resume after a restart, and work a runner
 had claimed but not yet opened. Nothing requeues it: the lease is cleared,
 and only your own *Try again* starts a new attempt with a new journal. Work
-that was queued, proposed or waiting (on a budget, an expedition or you) was
-not in flight and is left as it was; it continues once the host resumes the
-paused installation ([backup_and_restore.md](backup_and_restore.md)).
+that was queued, proposed or waiting (on a budget, an expedition, the host's
+stop or you) was not in flight and is left as it was; it continues once the
+host resumes the paused installation
+([backup_and_restore.md](backup_and_restore.md)) and, for work the host's
+stop-all had halted, delegated work
+([delegated_operations.md](delegated_operations.md)).
 
 ## What is stored
 
@@ -291,8 +307,13 @@ end of [ADR 0015](adr/0015-project-repositories.md).
 
 Editing notes you saved, connecting or archiving notes (DA-11b), findings
 shared with a project's members (DA-11c), outside connectors (DA-11d),
-acting on processes, and work proposed from what was said in a conversation
-(DA-4b). For repositories: pulling, merging or rebasing a work branch,
+acting on processes, and work recognized by a model from what was said in a
+conversation. Requests you address to Goobster in a conversation are built:
+see [delegated_conversation_requests.md](delegated_conversation_requests.md).
+Repository work is built and starts with the installation's owner only;
+saved-note edits and outside connectors will start the same way
+([the pilot gate](delegated_operations.md#the-pilot-gate)). For
+repositories, not built: pulling, merging or rebasing a work branch,
 watching a pull request's checks, a cap on pushes and pull requests set by
 the host, and reporting a push when the run stops before it files its
 result (the step is in the work item's journal and the integration audit).

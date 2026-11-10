@@ -27,6 +27,8 @@ const { features } = require('../features/featureState');
 const { unavailableResult } = require('../features/gate');
 const attentionPolicyService = require('./attentionPolicyService');
 const workFailureService = require('./workFailureService');
+const control = require('./assistantControlService');
+const pilotAccess = require('./assistantAccessService');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
 
 const FEATURE_ID = 'assistant';
@@ -100,7 +102,12 @@ const PROCESS_KINDS = {
     followed_source: { table: SCHEDULED_WORK.followed_source.table, owner: 'userId', feature: null }
 };
 
-const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project'];
+/**
+ * `project_chat` and `parlor` (ADR 0021) let a responsibility take requests
+ * the person addresses to Goobster in the linked project's conversations
+ * and in their own Parlor discussions. `personal_chat` is reserved (DA-8).
+ */
+const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project', 'project_chat', 'parlor'];
 const AUDIENCES = ['private', 'project'];
 const BUDGET_KEYS = ['modelTokens', 'searches', 'computeSeconds', 'concurrentInitiatives', 'repairAttempts', 'externalOperations'];
 const INTERRUPTIONS = ['immediate', 'digest', 'home'];
@@ -513,7 +520,8 @@ class AssistantResponsibilityService {
             if (!plan || Number(plan.projectId) !== Number(record.projectId)) throw bad('planId is not a plan of that project.', 'INVALID_LINK');
         }
         const scopes = parseJson(record.scopesJson, {});
-        if ((scopes.audience === 'project' || (scopes.sources || []).includes('project')) && !record.projectId) {
+        const sources = scopes.sources || [];
+        if ((scopes.audience === 'project' || sources.includes('project') || sources.includes('project_chat')) && !record.projectId) {
             throw bad('A project source or audience needs projectId.', 'INVALID_LINK');
         }
     }
@@ -587,6 +595,12 @@ class AssistantResponsibilityService {
                 if (features.enforcedOff(featureId)) {
                     throw new AssistantResponsibilityError('FEATURE_UNAVAILABLE', `"${entry.operation}" needs a feature that is not available.`, 409, { feature: featureId });
                 }
+            }
+            const gate = await pilotAccess.allowsOperation(row.ownerUserId, entry.operation);
+            if (!gate.ok) {
+                throw new AssistantResponsibilityError(gate.code,
+                    `"${entry.operation}" is limited to the installation's owner until the pilot decision is recorded.`, 409,
+                    { operation: entry.operation, capability: gate.capability });
             }
             const access = await this._resourceAccess(acting, entry.resource);
             if (access !== true) {
@@ -912,6 +926,8 @@ class AssistantResponsibilityService {
 
     async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now }) {
         if (features.enforcedOff(FEATURE_ID)) return unavailableResult(FEATURE_ID);
+        // The host's stop-all: nothing delegated is dispatched while it is on.
+        if (await control.isPaused()) return { ok: false, code: control.PAUSED_CODE };
         const row = await this._row(responsibilityId);
         if (!row) return { ok: false, code: 'RESPONSIBILITY_NOT_FOUND' };
 
@@ -942,9 +958,13 @@ class AssistantResponsibilityService {
         const matching = grants.find(entry => this._grantMatches(entry, operation, resource, target));
         if (!matching) return { ok: false, code: 'OPERATION_OUT_OF_SCOPE' };
 
-        const access = await this._resourceAccess(row.actingUserId, matching.resource, target);
-        if (typeof access === 'string') return unavailableResult(access);
-        if (access !== true) return { ok: false, code: 'RESOURCE_UNAVAILABLE' };
+        // Capabilities still in the pilot are the owner's alone, whatever the grant says.
+        const gate = await pilotAccess.allowsOperation(row.ownerUserId, operation);
+        if (!gate.ok) return { ok: false, code: gate.code, capability: gate.capability };
+
+        const reachable = await this._resourceAccess(row.actingUserId, matching.resource, target);
+        if (typeof reachable === 'string') return unavailableResult(reachable);
+        if (reachable !== true) return { ok: false, code: 'RESOURCE_UNAVAILABLE' };
 
         const policy = await attentionPolicyService.get(row.ownerUserId);
         if (!policy || !policy.enabled) return { ok: false, code: 'ATTENTION_NOT_ENROLLED' };

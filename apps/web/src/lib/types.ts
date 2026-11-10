@@ -254,6 +254,42 @@ export type OperatorSchedulesView = {
 };
 
 /** GET /api/app/admin/audit - one operator action. */
+/** The five numbers the host sets for delegated work (documentation/delegated_operations.md). */
+export type AssistantCaps = {
+    installationRuns: number; runsPerAccount: number;
+    defaultModelTokens: number; defaultSearches: number; defaultComputeSeconds: number;
+};
+export type AssistantCapField = keyof AssistantCaps;
+export type AssistantCodeCount = { code: string; count: number };
+/** `GET /api/app/admin/assistant`: counts, states, spend and codes; never anyone's text. */
+export type AdminAssistantView = { available: false } | {
+    available: true;
+    asOf: string; windowDays: number;
+    paused: { since: string } | null;
+    caps: AssistantCaps; defaults: AssistantCaps; hostSet: AssistantCapField[];
+    bounds: Record<AssistantCapField, { min: number; max: number }>;
+    responsibilities: { byStatus: Record<string, number> };
+    work: {
+        byStatus: Record<string, number>; running: number;
+        oldestQueuedSeconds: number | null; oldestWaitingSeconds: number | null; waitingByCode: AssistantCodeCount[];
+    };
+    runs: {
+        perDay: Array<{ day: string; runs: number; tokens: number; searches: number; computeSeconds: number }>;
+        failures: AssistantCodeCount[]; refusals: AssistantCodeCount[];
+    };
+    accounts: Array<{
+        id: string; activeResponsibilities: number; queued: number; running: number; waiting: number;
+        runsToday: number; tokensToday: number;
+    }>;
+    accountsOmitted: number;
+    pilot: {
+        decision: { scope: 'owner' | 'everyone'; decidedAt: string | null };
+        capabilities: Array<{ name: string; increment: string }>;
+        gatedOperations: string[];
+    };
+    changed?: boolean; requeued?: number;
+};
+
 export type OperatorAuditEntry = {
     id: number;
     action: string;
@@ -369,7 +405,7 @@ export type GateDecisionCard = {
     ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
     occurrence: number; revision: string; options: GateDecisionOption[];
 };
-export type GateSurface = 'home' | 'inbox' | 'chat';
+export type GateSurface = 'home' | 'inbox' | 'chat' | 'project';
 export type GateDecisionResult = {
     decided: { ref: string; kind: string; option: string; message: string };
     current: GateDecisionCard | null;
@@ -401,6 +437,8 @@ export type AssistantBriefItem = {
 export type AssistantHome = {
     schemaVersion: number; asOf: string;
     availability: 'ready' | 'paused' | 'none_delegated' | 'attention_off' | 'unavailable' | 'unknown';
+    /** The host has stopped all delegated work; null when it could not be read. */
+    hostPaused?: boolean | null;
     freshness: { state: 'current' | 'stale' | 'unknown'; lastPassAt: string | null };
     responsibilities: { counts: { active: number; paused: number; needsReview: number; draft: number } | null; items: AssistantHomeResponsibility[] };
     counts: { unseen: number | null; needsAction: number | null; running: number | null };
@@ -419,6 +457,8 @@ export type ResponsibilityOperation = { operation: string; resource: { kind: str
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
     projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
+    /** `sources` names where it listens for requests: `project_chat`, `parlor` (delegated_conversation_requests.md). */
+    scopes?: { sources?: string[]; audience?: string };
     budgets: Record<string, number>; rules?: { autoStart?: boolean; interruption?: string; stopCondition?: string }; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
 };
 export type AssistantRun = {
@@ -431,7 +471,44 @@ export type AssistantInitiative = {
     createdAt: string; updatedAt: string; run: AssistantRun | null;
     /** Set when this work carries out an agent step of a project plan (ADR 0019). */
     planStep?: { id: number; planRevision: number } | null;
+    /**
+     * Set when the person asked for this in a conversation. The excerpt and
+     * link are read under their current access: `available` is false once
+     * the message or the conversation is out of their reach.
+     */
+    origin?: AssistantInitiativeOrigin | null;
+    /** What replaced a superseded attempt: `parlor:<conversation>:<message>` or `plan:<plan id>`. */
+    supersededBy?: string | null;
 };
+export type AssistantInitiativeOrigin = {
+    kind: 'parlor_message'; surface: 'project' | 'parlor'; conversationId: number; messageId: number;
+    available: boolean; conversationTitle: string | null; excerpt: string | null; link: string | null;
+};
+
+/**
+ * One card of a project's Needs-you board (documentation/assistant_home.md,
+ * "Project boards"). `mine` is false for a request addressed to the
+ * project's owner; `gate` and `decision` are the same reference and card
+ * Home and the Inbox carry, present once the request is in the Inbox.
+ */
+export type ProjectBoardCard = {
+    id: string;
+    column: 'approve' | 'answer' | 'unblock' | 'review' | 'assistant' | 'setup' | string;
+    title: string;
+    detail?: string | null;
+    projectSlug?: string;
+    projectName?: string;
+    ownerId?: string;
+    choices?: Array<{ id: string; label: string }>;
+    mine?: boolean;
+    waitingOn?: 'owner' | null;
+    gate?: { ref: string; inboxItemId: number | null; unseen: boolean; snoozedUntil: string | null } | null;
+    decision?: GateDecisionCard | null;
+    /** Assistant plan steps only. */
+    state?: 'proposed' | 'waiting' | 'undelegated';
+    initiativeId?: number | null;
+};
+export type ProjectBoard = { cards: ProjectBoardCard[]; text: string; canonical?: boolean };
 export type ResponsibilityVocabulary = {
     statuses: string[]; actions: string[];
     operations: Array<{ id: string; resourceKinds: string[]; action: string }>;

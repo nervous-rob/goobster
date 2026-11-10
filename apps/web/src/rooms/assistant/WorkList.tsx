@@ -1,3 +1,4 @@
+import { Link } from '@tanstack/react-router';
 import type { AssistantInitiative } from '../../lib/types';
 
 /** The proposed, running and finished work under one responsibility. */
@@ -30,7 +31,13 @@ const STOP_TEXT: Record<string, string> = {
     PLAN_BLOCKED: 'The plan is blocked. It tries again once the plan is running.',
     RESOURCE_UNAVAILABLE: 'You no longer have access to the project, so this was stopped.',
     PRIVATE_CONTEXT: 'It read your private knowledge, so it was not allowed to write into a shared project.',
-    INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.'
+    STEERED: 'You changed direction in that conversation, so this was stopped. Nothing it had already done was undone.',
+    SOURCE_GONE: 'The message that asked for this is gone or no longer yours to read, so it was not started.',
+    SOURCE_NOT_COVERED: 'The responsibility no longer takes requests from that conversation, so it was not started.',
+    OPEN_LIMIT: 'This responsibility already had as many open requests from conversations as it takes at once. Try again when some are finished.',
+    NO_STEP: 'The plan step no longer exists or is no longer for Goobster.',
+    INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.',
+    ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.'
 };
 
 export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[]; busy: boolean; onAct: (item: AssistantInitiative, action: string) => void }) {
@@ -41,14 +48,27 @@ export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[];
                 const run = item.run;
                 const note = item.status === 'WAITING' || item.status === 'FAILED' || item.status === 'REVIEW'
                     ? (STOP_TEXT[item.stopCode || ''] || (item.waitReason === 'responsibility' ? 'Waiting for the responsibility to be active again.' : null))
-                    : (item.status === 'SUPERSEDED' || item.status === 'CANCELLED') && item.planStep
+                    : (item.status === 'SUPERSEDED' || item.status === 'CANCELLED') && (item.planStep || item.origin)
                         ? (STOP_TEXT[item.stopCode || ''] || null)
                         : null;
+                const origin = item.origin;
                 return (
                     <li key={item.id} className="assistant-work-item" data-testid="initiative-row">
                         <div className="assistant-row-main">
                             <span className="badge" data-testid="initiative-status">{WORK_STATUS[item.status] || item.status.toLowerCase()}</span>{' '}
                             {item.title}
+                            {origin && (
+                                <div className="assistant-origin" data-testid="initiative-origin">
+                                    {origin.available && origin.excerpt
+                                        ? <blockquote>{origin.excerpt}</blockquote>
+                                        : <div className="hint">The message that asked for this is no longer available to you.</div>}
+                                    {origin.available && origin.link && (
+                                        <Link to={origin.link as never} className="assistant-origin-link" data-testid="initiative-origin-link">
+                                            Open the conversation{origin.conversationTitle ? `: ${origin.conversationTitle}` : ''} →
+                                        </Link>
+                                    )}
+                                </div>
+                            )}
                             {run?.resultTitle && (
                                 <div className="assistant-result" data-testid="initiative-result">
                                     <strong>{run.resultTitle}</strong>
@@ -71,7 +91,7 @@ export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[];
                             {['QUEUED', 'RUNNING', 'WAITING'].includes(item.status) && (
                                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'cancel')}>Cancel</button>
                             )}
-                            {(['FAILED', 'CANCELLED'].includes(item.status) || (item.status === 'SUPERSEDED' && item.planStep)) && (
+                            {(['FAILED', 'CANCELLED'].includes(item.status) || (item.status === 'SUPERSEDED' && (item.planStep || item.origin))) && (
                                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'retry')}>Try again</button>
                             )}
                         </div>
