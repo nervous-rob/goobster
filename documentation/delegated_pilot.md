@@ -62,6 +62,10 @@ responsibility (`NOT_EMPTY`) or with the `assistant`, `projects` or
 It exits 0 when every check passed, 1 when a check failed and 2 when it could
 not run. A failed check is printed with what was found.
 
+It needs a checkout of the repository. The Notion step uses the stand-in
+under `tests/helpers/`; where that file is missing the step is skipped, and
+the record lists it under `skip` and in `notCovered`.
+
 | Journey | What it proves |
 | --- | --- |
 | A. A source change improves knowledge and project state | History before activation and items you did not keep propose nothing. A kept item becomes one piece of work; the run adds a generated note, suggests a change to a saved note without making it, and writes one project file. The suggestion waits under Needs you, reading it does not answer it, applying it changes the note once, and a second press is refused as changed. |
