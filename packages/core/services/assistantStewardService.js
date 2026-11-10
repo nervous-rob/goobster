@@ -22,12 +22,16 @@
  * so the Home projection can say when its picture was last refreshed, and
  * since when passes have followed each other without a gap.
  * Every six hours it also applies retention: process observations 90 days,
- * terminal initiatives, settled updates and resolved incidents 180 days.
+ * terminal initiatives, settled updates and resolved incidents 180 days, the daily
+ * proposal counters 14 days and the chat-message labels 30 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
- * reconcile for the owner they name. Nothing here runs a model, a search
- * or a sandbox, and nothing here starts work: initiatives wait for their
- * owner (or the DA-3 runner) to be queued and claimed.
+ * reconcile for the owner they name. The only model call here is the narrow
+ * label DA-8 gives a personal-chat message (messageClassification.js, charged
+ * to the responsibility's own budget, off while the host's stop-all is on).
+ * Nothing here runs a search or a sandbox, and nothing here starts work:
+ * initiatives wait for their owner (or the DA-3 runner) to be queued and
+ * claimed.
  */
 
 const db = require('../db');
@@ -91,6 +95,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
                 updates: await updates.prune({ days: RETENTION_DAYS.updates, now }),
+                proposalCounters: await require('./assistant/proposalCaps').prune({ now }),
+                messageLabels: await require('./assistant/messageClassification').prune({ now }),
                 knowledgeChanges: await require('./knowledgeChangeSetService').prune({ now })
             };
         }

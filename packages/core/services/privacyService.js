@@ -749,6 +749,9 @@ class PrivacyService {
             // receipts, and their process contracts and observations.
             counts.initiatives = forgottenResponsibilities.initiatives;
             counts.sourceCursors = forgottenResponsibilities.cursors;
+            // The daily proposal counters and the chat-message labels (no text) behind them.
+            counts.assistantProposalCounters = forgottenResponsibilities.proposalCounters;
+            counts.assistantMessageLabels = forgottenResponsibilities.messageLabels;
             counts.assistantUpdates = forgottenResponsibilities.updates;
             counts.assistantUpdateReceipts = forgottenResponsibilities.receipts;
             counts.processContracts = forgottenResponsibilities.processContracts;
@@ -1303,6 +1306,8 @@ class PrivacyService {
             assistant_process_incident_members: responsibilities.incidentMembers,
             assistant_runs: responsibilities.runs,
             assistant_run_operations: responsibilities.runOperations,
+            assistant_proposal_counters: responsibilities.proposalCounters,
+            assistant_message_labels: responsibilities.messageLabels,
             kg_change_sets: responsibilities.knowledgeChanges,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(

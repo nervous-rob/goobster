@@ -180,7 +180,7 @@ class AssistantInitiativeService {
      * sourceRevision, attempt 1); an older open attempt at the same
      * opportunity is superseded. Must run inside a transaction.
      */
-    async _propose(responsibility, source, sourceKind, { status = null, stopCode = null } = {}) {
+    async _propose(responsibility, source, sourceKind, { status = null, stopCode = null, cap = null, now = new Date() } = {}) {
         const dedupeKey = `${sourceKind}:${source.sourceId}`;
         const existing = await db.get(
             `SELECT * FROM assistant_initiatives
@@ -188,6 +188,12 @@ class AssistantInitiativeService {
             { rid: responsibility.id, dedupeKey, revision: source.revision }
         );
         if (existing) return { initiative: existing, created: false };
+        // A day's allowance of self-noticed work (ADR 0026). The slot is taken
+        // inside the caller's transaction, so a rollback gives it back, and
+        // what is over the cap is folded into the cursor, not queued.
+        if (cap != null && !(await require('./assistant/proposalCaps').take({ responsibility, sourceKind, cap, now })).ok) {
+            return { initiative: null, created: false, capped: true };
+        }
         await db.run(
             `UPDATE assistant_initiatives
              SET status = 'SUPERSEDED', stopCode = 'NEWER_SOURCE_REVISION', leaseToken = NULL, leaseExpiresAt = NULL,
@@ -234,15 +240,25 @@ class AssistantInitiativeService {
 
     /**
      * Compare one responsibility's linked sources with their cursors.
-     * @returns {Promise<{ baselined: number, proposed: number[], superseded: number, steered: string[] }>}
-     *   `steered` lists the references of the changes of direction applied.
+     * @returns {Promise<{ baselined: number, proposed: number[], superseded: number, steered: string[], capped: number }>}
+     *   `steered` lists the references of the changes of direction applied;
+     *   `capped` counts changes folded into a cursor because the day's cap was spent.
      */
     async reconcileResponsibility(responsibilityId, { now = new Date() } = {}) {
-        const outcome = { baselined: 0, proposed: [], superseded: 0, steered: [] };
+        const outcome = { baselined: 0, proposed: [], superseded: 0, steered: [], capped: 0 };
         const responsibility = await db.get('SELECT * FROM assistant_responsibilities WHERE id = @id', { id: Number(responsibilityId) });
         if (!responsibility || !(await this._grantLive(responsibility, now))) return outcome;
         for (const [sourceKind, adapter] of Object.entries(SOURCES)) {
             if (adapter.feature && features.enforcedOff(adapter.feature)) continue;
+            if (adapter.capability) {
+                // A gated capability (ADR 0026): closed to this person, it notices nothing and
+                // what it proposed before waits no longer; the host's stop-all holds it still.
+                if (!(await require('./assistantAccessService').allows(responsibility.ownerUserId, adapter.capability))) {
+                    outcome.superseded += await this._supersedeStale(await this._open(responsibility, sourceKind, 'PILOT_ONLY'));
+                    continue;
+                }
+                if (await require('./assistantControlService').isPaused()) continue;
+            }
             if (typeof adapter.stale === 'function') {
                 outcome.superseded += await this._supersedeStale(await adapter.stale(responsibility));
             }
@@ -250,7 +266,12 @@ class AssistantInitiativeService {
                 await this._reconcileStream(responsibility, sourceKind, adapter, outcome, now);
                 continue;
             }
-            const sources = await adapter.read(responsibility);
+            const held = await db.all(
+                'SELECT * FROM assistant_source_cursors WHERE responsibilityId = @rid AND sourceKind = @kind',
+                { rid: responsibility.id, kind: sourceKind }
+            );
+            const cursors = new Map(held.map(row => [row.sourceId, row]));
+            const sources = await adapter.read(responsibility, { cursors, now });
             for (const source of sources) {
                 await db.transaction(async () => {
                     const cursor = await db.get(
@@ -258,34 +279,52 @@ class AssistantInitiativeService {
                          WHERE responsibilityId = @rid AND sourceKind = @kind AND sourceId = @sourceId`,
                         { rid: responsibility.id, kind: sourceKind, sourceId: source.sourceId }
                     );
+                    // `cursorRevision` is what the cursor remembers when that is more than the
+                    // revision a proposal is deduplicated on (a verdict also remembers the last
+                    // settled state). `observe` records a change that is not an opportunity.
+                    const remembered = source.cursorRevision ?? source.revision;
                     if (!cursor) {
                         await db.run(
                             `INSERT INTO assistant_source_cursors
                                 (responsibilityId, sourceKind, sourceId, sourceRevision, baselineRevision)
                              VALUES (@rid, @kind, @sourceId, @revision, @authority)`,
-                            { rid: responsibility.id, kind: sourceKind, sourceId: source.sourceId, revision: source.revision, authority: responsibility.authorityRevision }
+                            { rid: responsibility.id, kind: sourceKind, sourceId: source.sourceId, revision: remembered, authority: responsibility.authorityRevision }
                         );
-                        if (!adapter.standing) {
+                        if (!adapter.standing || source.observe) {
                             outcome.baselined += 1;
                             return;
                         }
                         // Waiting work, not history: proposed on first sight.
-                        const first = await this._propose(responsibility, source, sourceKind);
+                        const first = await this._propose(responsibility, source, sourceKind, { cap: adapter.dailyCap?.(source) ?? null, now });
                         if (first.created) outcome.proposed.push(Number(first.initiative.id));
+                        if (first.capped) outcome.capped += 1;
                         return;
                     }
-                    if (cursor.sourceRevision === source.revision) return;
-                    const { initiative, created } = await this._propose(responsibility, source, sourceKind);
+                    if (cursor.sourceRevision === remembered) return;
+                    const { initiative, created, capped } = source.observe
+                        ? { initiative: null, created: false, capped: false }
+                        : await this._propose(responsibility, source, sourceKind, { cap: adapter.dailyCap?.(source) ?? null, now });
                     await db.run(
                         `UPDATE assistant_source_cursors SET sourceRevision = @revision, updatedAt = @now
                          WHERE id = @id AND sourceRevision = @previous`,
-                        { id: cursor.id, revision: source.revision, previous: cursor.sourceRevision, now: utcText() }
+                        { id: cursor.id, revision: remembered, previous: cursor.sourceRevision, now: utcText() }
                     );
                     if (created) outcome.proposed.push(Number(initiative.id));
+                    if (capped) outcome.capped += 1;
                 });
             }
         }
         return outcome;
+    }
+
+    /** Every proposed or queued attempt of one kind, as `stale` entries with one code. */
+    async _open(responsibility, sourceKind, code) {
+        const rows = await db.all(
+            `SELECT id FROM assistant_initiatives
+             WHERE responsibilityId = @rid AND sourceKind = @kind AND status IN ('CANDIDATE', 'QUEUED', 'WAITING')`,
+            { rid: responsibility.id, kind: sourceKind }
+        );
+        return rows.map(row => ({ id: Number(row.id), code }));
     }
 
     /**
@@ -344,9 +383,10 @@ class AssistantInitiativeService {
                     const applied = await steering.apply({ responsibility, event });
                     if (applied) steered.push(applied.ref);
                 }
-                if (!event.request) continue;
-                const proposed = await this._proposeRequest(responsibility, event, sourceKind, adapter);
+                if (!event.request && !event.propose) continue;
+                const proposed = await this._proposeRequest(responsibility, event, sourceKind, adapter, now);
                 if (proposed?.created) outcome.proposed.push(Number(proposed.initiative.id));
+                if (proposed?.capped) outcome.capped += 1;
             }
             if (source.revision !== cursor.sourceRevision) {
                 await db.run(
@@ -370,7 +410,7 @@ class AssistantInitiativeService {
      * Past the open limit the request is recorded as not started, so it
      * stays visible and can be tried again, and the log keeps moving.
      */
-    async _proposeRequest(responsibility, event, sourceKind, adapter) {
+    async _proposeRequest(responsibility, event, sourceKind, adapter, now = new Date()) {
         const mine = await db.get(
             `SELECT id FROM assistant_initiatives
              WHERE responsibilityId = @rid AND dedupeKey = @key LIMIT 1`,
@@ -383,16 +423,7 @@ class AssistantInitiativeService {
             { owner: responsibility.ownerUserId, kind: sourceKind, sourceId: event.sourceId, rid: responsibility.id }
         );
         if (elsewhere) return null;
-        const same = await db.get(
-            `SELECT id FROM assistant_initiatives
-             WHERE ownerUserId = @owner AND sourceKind = @kind AND sourceId LIKE @conversation AND sourceRevision = @revision
-               AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') LIMIT 1`,
-            {
-                owner: responsibility.ownerUserId, kind: sourceKind,
-                conversation: `parlor:${Number(event.conversationId)}:%`, revision: event.revision
-            }
-        );
-        if (same) return null;
+        if (typeof adapter.alreadyWork === 'function' && await adapter.alreadyWork(responsibility, event)) return null;
         const open = await db.get(
             `SELECT COUNT(*) AS n FROM assistant_initiatives
              WHERE responsibilityId = @rid AND sourceKind = @kind AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING')`,
@@ -401,7 +432,40 @@ class AssistantInitiativeService {
         if (Number(open?.n || 0) >= adapter.OPEN_LIMIT) {
             return this._propose(responsibility, event, sourceKind, { status: 'CANCELLED', stopCode: 'OPEN_LIMIT' });
         }
-        return this._propose(responsibility, event, sourceKind);
+        return this._propose(responsibility, event, sourceKind, { cap: adapter.dailyCap?.(event) ?? null, now });
+    }
+
+    /**
+     * What delegating would do with each wider source the responsibility
+     * names (ADR 0026): the cutoff, how many records already there will be
+     * treated as history and not acted on, a few examples, and today's
+     * proposal counts against the cap. Owner only; nothing is read that the
+     * adapter itself would not read, and no model is called.
+     * @returns {Promise<{ cutoff: string, locked: boolean, sources: Object[], today: Object[] }>}
+     */
+    async sourcesOverview({ userId, id, now = new Date() }) {
+        await this._responsibilities().get({ userId, id });
+        const responsibility = await db.get(
+            'SELECT * FROM assistant_responsibilities WHERE id = @id AND ownerUserId = @userId', { id: Number(id), userId: String(userId) }
+        );
+        if (!responsibility) throw notFound();
+        const wanted = (() => { try { return JSON.parse(responsibility.scopesJson || '{}').sources || []; } catch { return []; } })();
+        const open = await require('./assistantAccessService').allows(userId, 'sources');
+        const rows = [];
+        for (const [sourceKind, adapter] of Object.entries(SOURCES)) {
+            const scopes = adapter.SCOPES || [adapter.SCOPE || sourceKind];
+            const named = scopes.filter(scope => wanted.includes(scope));
+            if (!named.length || typeof adapter.lookback !== 'function') continue;
+            const locked = Boolean(adapter.capability) && !open;
+            const found = locked ? { sources: 0, ignored: 0, examples: [] } : await adapter.lookback(responsibility, { now });
+            rows.push({ sourceKind, scopes: named, locked, ...found });
+        }
+        return {
+            cutoff: utcText(now),
+            locked: rows.some(row => row.locked),
+            sources: rows,
+            today: await require('./assistant/proposalCaps').today({ responsibilityId: responsibility.id, now })
+        };
     }
 
     /** A bounded pass over active grants (all, or one owner's). */
@@ -418,13 +482,15 @@ class AssistantInitiativeService {
         let baselined = 0;
         let proposed = 0;
         let superseded = 0;
+        let capped = 0;
         for (const { id } of rows) {
             const result = await this.reconcileResponsibility(id, { now });
             baselined += result.baselined;
             proposed += result.proposed.length;
             superseded += result.superseded;
+            capped += result.capped;
         }
-        return { scanned: rows.length, baselined, proposed, superseded };
+        return { scanned: rows.length, baselined, proposed, superseded, capped };
     }
 
     /**
@@ -778,6 +844,12 @@ class AssistantInitiativeService {
         const result = await db.run(
             `DELETE FROM assistant_initiatives
              WHERE status IN ('COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED') AND updatedAt < @cutoff`,
+            { cutoff }
+        );
+        // An item nobody has touched for a long while no longer needs its cursor (a changed
+        // item would simply be seen as new, which the adapter's own window prevents).
+        await db.run(
+            `DELETE FROM assistant_source_cursors WHERE sourceKind = 'followed_source' AND updatedAt < @cutoff`,
             { cutoff }
         );
         return result.changes || 0;

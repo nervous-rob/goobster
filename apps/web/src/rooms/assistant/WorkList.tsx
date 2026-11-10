@@ -32,13 +32,41 @@ const STOP_TEXT: Record<string, string> = {
     RESOURCE_UNAVAILABLE: 'You no longer have access to the project, so this was stopped.',
     PRIVATE_CONTEXT: 'It read your private knowledge, so it was not allowed to write into a shared project.',
     STEERED: 'You changed direction in that conversation, so this was stopped. Nothing it had already done was undone.',
-    SOURCE_GONE: 'The message that asked for this is gone or no longer yours to read, so it was not started.',
-    SOURCE_NOT_COVERED: 'The responsibility no longer takes requests from that conversation, so it was not started.',
+    SOURCE_GONE: 'What this came from is gone, was un-kept, or is no longer yours to read, so it was not started.',
+    SOURCE_NOT_COVERED: 'The responsibility no longer covers where this came from, so it was not started.',
+    SOURCE_MOVED: 'The branch has a newer commit since this was proposed. It is proposed again if that one settles red.',
+    PILOT_ONLY: 'Noticing work from these sources is limited to the installation\'s owner for now, so this was not started.',
     OPEN_LIMIT: 'This responsibility already had as many open requests from conversations as it takes at once. Try again when some are finished.',
     NO_STEP: 'The plan step no longer exists or is no longer for Goobster.',
     INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.',
     ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.'
 };
+
+function originSummary(origin: NonNullable<AssistantInitiative['origin']>) {
+    switch (origin.kind) {
+        case 'parlor_message':
+        case 'chat_message':
+            return origin.excerpt ? <blockquote>{origin.excerpt}</blockquote> : <div className="hint">The message is no longer available to you.</div>;
+        case 'followed_source_entry':
+            return <div className="hint">{origin.entryTitle ? `"${origin.entryTitle}"` : 'An item you kept'}{origin.sourceLabel ? ` from ${origin.sourceLabel}` : ''}</div>;
+        case 'ci_verdict':
+            return <div className="hint">{origin.repo} {origin.branch}: {origin.state} at {origin.sha}{origin.moved ? ' (the branch has moved on)' : ''}</div>;
+        default:
+            return <div className="hint">{origin.language} run #{origin.jobId}: {String(origin.status || '').toLowerCase().replace('_', ' ')}</div>;
+    }
+}
+
+function originLink(origin: NonNullable<AssistantInitiative['origin']>): string | null {
+    const link = (origin as { link?: string | null }).link;
+    return link && link.startsWith('/') ? link : null;
+}
+
+function originLinkText(origin: NonNullable<AssistantInitiative['origin']>): string {
+    if (origin.kind === 'parlor_message' || origin.kind === 'chat_message') {
+        return `Open the conversation${origin.conversationTitle ? `: ${origin.conversationTitle}` : ''}`;
+    }
+    return origin.kind === 'ci_verdict' ? 'Open the code view' : 'Open the project';
+}
 
 export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[]; busy: boolean; onAct: (item: AssistantInitiative, action: string) => void }) {
     if (!items.length) return null;
@@ -59,12 +87,12 @@ export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[];
                             {item.title}
                             {origin && (
                                 <div className="assistant-origin" data-testid="initiative-origin">
-                                    {origin.available && origin.excerpt
-                                        ? <blockquote>{origin.excerpt}</blockquote>
-                                        : <div className="hint">The message that asked for this is no longer available to you.</div>}
-                                    {origin.available && origin.link && (
-                                        <Link to={origin.link as never} className="assistant-origin-link" data-testid="initiative-origin-link">
-                                            Open the conversation{origin.conversationTitle ? `: ${origin.conversationTitle}` : ''} →
+                                    {!origin.available
+                                        ? <div className="hint">What this came from is no longer available to you.</div>
+                                        : originSummary(origin)}
+                                    {origin.available && originLink(origin) && (
+                                        <Link to={originLink(origin) as never} className="assistant-origin-link" data-testid="initiative-origin-link">
+                                            {originLinkText(origin)} →
                                         </Link>
                                     )}
                                 </div>
