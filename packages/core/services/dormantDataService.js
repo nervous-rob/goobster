@@ -101,7 +101,24 @@ async function forgetProjectMissions(userId) {
     const missions = (await db.run(
         'DELETE FROM project_missions WHERE userId = @userId', { userId }
     )).changes;
-    return { missions, decisions };
+    // What the person's delegated assistant left on plans they do not own
+    // (ADR 0019): the evidence links of its runs go with the runs, and the
+    // steps it carried out lose the link to the person, the run and the
+    // grant. A step it still held goes back to READY.
+    const delegatedEvidence = (await db.run(
+        "DELETE FROM project_mission_evidence WHERE userId = @userId AND kind = 'agent_run'", { userId }
+    )).changes;
+    const delegatedSteps = (await db.run(
+        `UPDATE project_mission_steps
+         SET status = CASE WHEN status IN ('STARTING', 'RUNNING') THEN 'READY' ELSE status END,
+             startedAt = CASE WHEN status IN ('STARTING', 'RUNNING') THEN NULL ELSE startedAt END,
+             authorizationKind = CASE WHEN status IN ('STARTING', 'RUNNING') THEN NULL ELSE authorizationKind END,
+             executionAttemptId = NULL, startedByUserId = NULL, agentRunId = NULL,
+             grantResponsibilityId = NULL, grantRevision = NULL, updatedAt = datetime('now')
+         WHERE authorizationKind = 'delegated' AND startedByUserId = @userId`,
+        { userId }
+    )).changes;
+    return { missions, decisions, delegatedSteps, delegatedEvidence };
 }
 
 /**

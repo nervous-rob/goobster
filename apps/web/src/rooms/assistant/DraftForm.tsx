@@ -19,6 +19,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [editFiles, setEditFiles] = useState(false);
     const [paths, setPaths] = useState('');
     const [runCode, setRunCode] = useState(false);
+    const [planSteps, setPlanSteps] = useState(false);
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
     const [deepResearch, setDeepResearch] = useState(false);
@@ -46,6 +47,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             list.push({ operation: 'read', resource: { kind: 'project', ids: [projectId] } });
             if (editFiles) list.push({ operation: 'file.edit', resource: { kind: 'project', ids: [projectId], ...(prefixes.length ? { paths: prefixes } : {}) } });
             if (runCode && canSandbox) list.push({ operation: 'sandbox.run', resource: { kind: 'project', ids: [projectId] } });
+            if (planSteps) list.push({ operation: 'plan.step.execute', resource: { kind: 'project', ids: [projectId] } });
         }
         return list;
     }
@@ -117,6 +119,16 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                 </label>
                             )}
                             {canSandbox && <label><input type="checkbox" checked={runCode} onChange={(e) => setRunCode(e.target.checked)} /> Run code in the sandbox</label>}
+                            <label>
+                                <input type="checkbox" checked={planSteps} data-testid="responsibility-plan-steps"
+                                    onChange={(e) => { setPlanSteps(e.target.checked); if (e.target.checked) setEditFiles(true); }} />{' '}
+                                Carry out the assistant steps of its approved plan
+                            </label>
+                            {planSteps && (
+                                <div className="hint">
+                                    Only steps of a plan a person approved and started. It never approves, starts or completes a plan, and each step&apos;s files are checked before the step is marked done. It needs to edit files to write them.
+                                </div>
+                            )}
                         </>
                     )}
                 </fieldset>

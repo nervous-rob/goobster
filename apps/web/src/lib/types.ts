@@ -424,6 +424,8 @@ export type AssistantInitiative = {
     id: number; responsibilityId: number; title: string; reason: string | null; status: string; waitReason: string | null;
     outcome: string | null; stopCode: string | null; revision: number; attempt: number; recheckAfter: string | null;
     createdAt: string; updatedAt: string; run: AssistantRun | null;
+    /** Set when this work carries out an agent step of a project plan (ADR 0019). */
+    planStep?: { id: number; planRevision: number } | null;
 };
 export type ResponsibilityVocabulary = {
     statuses: string[]; actions: string[];

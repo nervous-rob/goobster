@@ -61,6 +61,7 @@ module.exports = {
     writeProjectFile: {
         effect: 'write',
         component: 'projects',
+        publishes: 'project',
         available: linked,
         definition: {
             name: 'writeProjectFile',

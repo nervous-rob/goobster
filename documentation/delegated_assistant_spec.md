@@ -10,9 +10,15 @@ tags: [planning, assistant, initiative, responsibilities, home, knowledge, proje
 **Status: planned; no feature implementation is claimed.** This is the product
 contract for the next delegated-assistant work. Existing Attention, Knowledge,
 Projects, Research, Inbox, and Home behavior remains governed by its shipped
-documentation until an increment explicitly lands.
+documentation until an increment explicitly lands. What has landed is recorded
+in the [implementation plan's status table](delegated_assistant_implementation.md#delivery-sequence);
+the shipped behaviour guides are
+[delegated_responsibilities.md](delegated_responsibilities.md),
+[assistant_home.md](assistant_home.md), [delegated_runs.md](delegated_runs.md)
+and, for the plan steps of section 7,
+[delegated_plan_steps.md](delegated_plan_steps.md).
 
-Updated: **2026-11-08**. Code baseline: `c3b773ee` (2026-10-27).
+Updated: **2026-11-10**. Code baseline: `c3b773ee` (2026-10-27).
 Recheck implementation seams against current main before starting each increment.
 
 Read with [the architecture](delegated_assistant_architecture.md) and
@@ -454,6 +460,13 @@ its evidence prompts a dependent-claim review, not an unexamined cascade of
 deletions. Ordinary undo cannot resurrect privacy-erased personal data.
 
 ## 7. Carrying project work forward
+
+**Shipped in DA-4a:** delegated execution of the assistant steps of an
+approved, started Plan, with its own authorization record, verification
+before a step is done, and an explicit actor and payer
+([delegated_plan_steps.md](delegated_plan_steps.md)). Initiatives that
+originate from conversations, and the handoff back to the originating
+conversation, are still planned.
 
 Ordinary Chat, Parlor, and project conversations can originate an initiative.
 It retains the original human statements and routes to an existing project,

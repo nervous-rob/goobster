@@ -12,6 +12,7 @@ const knowledgeOn = ({ features }) => !features.enforcedOff('knowledge');
 module.exports = {
     listGeneratedNotes: {
         effect: 'read',
+        source: 'private',
         available: knowledgeOn,
         definition: {
             name: 'listGeneratedNotes',
