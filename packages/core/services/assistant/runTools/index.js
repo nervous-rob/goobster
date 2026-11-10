@@ -15,8 +15,16 @@
  *    database that commits in the same transaction as its journal row, so
  *    "in flight" means "did not happen".
  *  - `run(args, ctx)`: does it and returns the text the model sees.
- *  - optional `available({ project, features })`: false keeps the tool off
- *    this run's offer (no linked project, a feature switched off).
+ *  - optional `available({ project, features, planStep })`: false keeps the
+ *    tool off this run's offer (no linked project, a feature switched off,
+ *    not a plan-step run).
+ *  - optional `source: 'private'` (the tool returns the person's private
+ *    knowledge) and `publishes: 'project'` (what the tool writes can be
+ *    read by the project's audience). A run that has read private
+ *    knowledge may not publish into a project other people read, and a
+ *    plan-step run in such a project is not offered the private tools.
+ *  - optional `final: true`: the tool ends the run with its report; a
+ *    resumed run records the report again from its journal.
  *  - optional `budget` ('searches' | 'computeSeconds'), `component` (the
  *    Home component a successful write is reported under),
  *    `reconcile(args, ctx)` (after a crash: did this write happen?) and
@@ -35,7 +43,8 @@ const TOOLS = {
     ...require('./startResearch'),
     ...require('./generatedNotes'),
     ...require('./consultDocs'),
-    ...require('./finish')
+    ...require('./finish'),
+    ...require('./planStep')
 };
 
 module.exports = TOOLS;

@@ -174,21 +174,25 @@ const TABLE_REBUILDS = [
             )`
     },
     {
+        // One spec for both changes to this table's CHECKs: the STARTING
+        // status and the `agent` step kind (ADR 0019). Every column listed
+        // exists by now (COLUMN_MIGRATIONS runs first).
         table: 'project_mission_steps',
-        reason: 'the STARTING step status',
-        isCurrent: ddl => ddl.includes("'STARTING'"),
+        reason: 'the STARTING step status and the agent step kind',
+        isCurrent: ddl => ddl.includes("'STARTING'") && ddl.includes("'agent'"),
         columns: [
             'id', 'missionId', 'userId', 'kind', 'title', 'description', 'status',
             'dependsOnJson', 'requiresApproval', 'expeditionId', 'jobId', 'watchId',
             'actionParamsJson', 'executionAttemptId', 'startedByUserId', 'planRevision', 'sortOrder',
-            'createdAt', 'updatedAt', 'startedAt', 'finishedAt'
+            'createdAt', 'updatedAt', 'startedAt', 'finishedAt', 'repoName', 'branch', 'requireGreenCi',
+            'agentRunId', 'authorizationKind', 'grantResponsibilityId', 'grantRevision', 'retryCount'
         ],
         ddl: name => `
             CREATE TABLE ${name} (
                 id INTEGER PRIMARY KEY,
                 missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
                 userId TEXT NOT NULL,
-                kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human')),
+                kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human', 'agent')),
                 title TEXT NOT NULL,
                 description TEXT,
                 status TEXT NOT NULL DEFAULT 'PENDING'
@@ -206,7 +210,38 @@ const TABLE_REBUILDS = [
                 createdAt TEXT NOT NULL DEFAULT (datetime('now')),
                 updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
                 startedAt TEXT,
-                finishedAt TEXT
+                finishedAt TEXT,
+                repoName TEXT,
+                branch TEXT,
+                requireGreenCi INTEGER NOT NULL DEFAULT 0 CHECK (requireGreenCi IN (0, 1)),
+                agentRunId INTEGER,
+                authorizationKind TEXT,
+                grantResponsibilityId INTEGER,
+                grantRevision INTEGER,
+                retryCount INTEGER NOT NULL DEFAULT 0
+            )`
+    },
+    {
+        table: 'project_mission_evidence',
+        reason: 'the agent_run evidence kind',
+        isCurrent: ddl => ddl.includes("'agent_run'"),
+        columns: [
+            'id', 'missionId', 'userId', 'criterionId', 'kind', 'refId', 'label', 'polarity',
+            'provenanceJson', 'createdAt'
+        ],
+        ddl: name => `
+            CREATE TABLE ${name} (
+                id INTEGER PRIMARY KEY,
+                missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+                userId TEXT NOT NULL,
+                criterionId TEXT,
+                kind TEXT NOT NULL CHECK (kind IN ('claim', 'note', 'job', 'artifact', 'agent_run')),
+                refId INTEGER NOT NULL,
+                label TEXT,
+                polarity TEXT NOT NULL DEFAULT 'for'
+                    CHECK (polarity IN ('for', 'against', 'neutral')),
+                provenanceJson TEXT,
+                createdAt TEXT NOT NULL DEFAULT (datetime('now'))
             )`
     },
     {

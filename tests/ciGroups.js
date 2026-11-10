@@ -353,6 +353,7 @@ const GROUPS = [
             'approvalExecutor',
             'assistantHomeService',
             'assistantInitiativeService',
+            'assistantPlanStep',
             'assistantProcessService',
             'assistantResponsibilityService',
             'assistantRunService',
