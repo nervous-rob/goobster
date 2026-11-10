@@ -46,7 +46,9 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   (`PILOT_ONLY`); see [delegated_project_findings.md](delegated_project_findings.md).
   `project_chat` and `parlor` say where it takes requests you address to
   Goobster ([delegated_conversation_requests.md](delegated_conversation_requests.md));
-  `personal_chat` is reserved and not read yet. A purpose never grants access to a
+  `personal_chat`, `followed_source`, `job_failure` and `ci_verdict` (DA-8) say
+  which wider sources it notices work from, and are pilot capabilities
+  ([delegated_opportunity_sources.md](delegated_opportunity_sources.md)). A purpose never grants access to a
   source the person could not otherwise reach.
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and

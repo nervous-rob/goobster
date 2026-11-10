@@ -3537,8 +3537,10 @@ CREATE TABLE IF NOT EXISTS assistant_source_cursors (
     id INTEGER PRIMARY KEY,
     responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
     -- attention_item | project_plan | project_plan_step | conversation_request
-    -- (conversation_request keeps one row per responsibility: sourceId
-    -- 'messages', sourceRevision the last parlor_messages.id examined)
+    -- | chat_request | job_failure | followed_source | ci_verdict
+    -- (a stream - conversation_request, chat_request, job_failure - keeps one
+    -- row per responsibility: sourceId 'messages' or 'jobs', sourceRevision
+    -- the last parlor_messages / messages / observatory_jobs id examined)
     sourceKind TEXT NOT NULL,
     sourceId TEXT NOT NULL,
     -- Opaque fingerprint of the source's material state at the last scan
@@ -3846,3 +3848,39 @@ CREATE TABLE IF NOT EXISTS assistant_process_incident_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_process_incident_members_owner ON assistant_process_incident_members(ownerUserId);
+
+-- Daily proposal counters (DA-8, ADR 0026): how many opportunities one
+-- adapter has proposed for one responsibility on one UTC day, and how many
+-- further changes it folded into the newest revision instead. The cap is
+-- taken with a conditional UPDATE, so a restart or a second process cannot
+-- exceed it. Numbers only; no source text. Kept 14 days.
+CREATE TABLE IF NOT EXISTS assistant_proposal_counters (
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    ownerUserId TEXT NOT NULL,
+    -- followed_source | ci_verdict | job_failure | chat_request
+    sourceKind TEXT NOT NULL,
+    day TEXT NOT NULL,
+    proposed INTEGER NOT NULL DEFAULT 0,
+    coalesced INTEGER NOT NULL DEFAULT 0,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (responsibilityId, sourceKind, day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_proposal_counters_owner ON assistant_proposal_counters(ownerUserId, day);
+
+-- What the classifier decided about one personal-chat message under one
+-- responsibility revision (DA-8, ADR 0026): a label, never the message. It
+-- exists so a pass that stops half way, or a restart, does not pay for the
+-- same message twice. Kept 30 days.
+CREATE TABLE IF NOT EXISTS assistant_message_labels (
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    responsibilityRevision INTEGER NOT NULL,
+    ownerUserId TEXT NOT NULL,
+    messageId INTEGER NOT NULL,
+    -- request | commitment | mention | none
+    label TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (responsibilityId, responsibilityRevision, messageId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_message_labels_owner ON assistant_message_labels(ownerUserId, createdAt);
