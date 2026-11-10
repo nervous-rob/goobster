@@ -337,6 +337,8 @@ it.
 - an optional `attentionItemId` or `projectId`
 - `reviewAt`
 - `stopCondition`
+- `dependsOn`: up to 8 references to your own processes that this one
+  cannot work without
 
 Replacing a contract needs its `expectedRevision`.
 
@@ -353,10 +355,21 @@ observation with:
   `UNCLASSIFIED`.
 
 Reporting the same occurrence again updates it and counts the attempt.
-Scheduled tasks record their outcome, and project triggers record their
-dispatch. A trigger's own delivery ledger (`project_trigger_deliveries`) is
-shown alongside as history. Whether a process is healthy or still relevant is
-reported as `unknown` until process stewardship arrives.
+Every cataloged kind records observations: scheduled tasks their outcome,
+project triggers their dispatch and how the job they started settled,
+watches each fire, and followed sources each day of checks. A trigger's own
+delivery ledger (`project_trigger_deliveries`) is shown alongside as history.
+
+**Assessment and incidents.** From these records each process is judged on
+two separate questions: whether it is working (`healthy`, `degraded`,
+`blocked`, `stalled`, `unreachable` or `unknown`) and whether it is still
+needed (`active`, `awaiting_event`, `satisfied`, `superseded`, `dormant`,
+`retirement_candidate` or `unknown`). A process with no stated purpose is
+always `unknown` on the second. Repeated failures become one incident per
+cause, announced once and closed after a recovery period. This only observes
+and reports: no process is paused, repaired or removed. The rules, the
+defaults and what you are told are in
+[process_stewardship.md](process_stewardship.md).
 
 ## Retention
 
@@ -366,6 +379,7 @@ The assistant's periodic pass applies these windows:
 | --- | --- |
 | Process observations | 90 days, and removed at once when their process is deleted |
 | Process contracts | Until removed, or their process is deleted |
+| Process incidents and their members | 180 days after the incident was resolved. Open and recovering incidents are kept |
 | Finished initiatives (`COMPLETED`, `FAILED`, `CANCELLED`, `SUPERSEDED`) | 180 days after their last change |
 | Runs and their operation journals ([delegated_runs.md](delegated_runs.md)) | 180 days after the run finished, and with their initiative |
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
@@ -391,8 +405,8 @@ All routes act as the signed-in person. Another person's responsibility answers
 | `POST /api/app/assistant/updates/acknowledge` | `{ items: [{ id, revision }] }`, up to 100 items. Each result is `acknowledged`, `older_revision` or `not_found`. |
 | `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
 | `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface }`: decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
-| `GET /api/app/assistant/processes` | Your recurring processes and whether each has a contract. |
-| `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations and existing delivery history. |
+| `GET /api/app/assistant/processes` | Your recurring processes, each with whether it has a contract, its assessment and the incident it is part of; counts per state; and the incidents still open. |
+| `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations, existing delivery history, assessment and incident. |
 | `PUT /api/app/assistant/processes/:kind/:id/contract` | Create or replace its contract (`expectedRevision` to replace). |
 | `DELETE /api/app/assistant/processes/:kind/:id/contract` | Remove its contract. |
 
@@ -403,8 +417,8 @@ revision. An action that the current status does not allow answers 409
 ## Privacy
 
 Responsibilities, their revision history, source cursors, initiatives,
-personal updates, update receipts, process contracts and process observations
-are personal data:
+personal updates, update receipts, process contracts, process observations and
+process incidents are personal data:
 
 - The transparency report (`/what-do-you-know-about-me`, Settings → Privacy)
   counts them.
