@@ -229,6 +229,8 @@ const eventGates = {
     shardError: 'core',
     'domainEventBus:attention': 'core',
     'domainEventBus:watches': 'core',
+    // The portal stream's per-person watch on `assistant.changed` (live Home).
+    'domainEventBus:assistant-live': 'assistant',
     'eventBusService:settings-cache': 'core'
 };
 

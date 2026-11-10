@@ -158,8 +158,14 @@ records the pilot decision, only the owner has them.**
   longer do. Your stop-all holds an approval back the same way
   (`HOST_STOPPED`): nothing is sent to the outside service while delegated
   work is stopped.
-  Everything else delegated runs can do today (reading,
-  generated notes, project files, sandbox runs, research) is not gated.
+  Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
+  too: for anyone but the owner, activating or resuming a responsibility
+  whose updates go in a digest or contact them is refused with `PILOT_ONLY`,
+  nothing is sent out for one that is already active, the digest time is
+  not offered in Settings, and the portal is not told of changes while it
+  is open.
+  Everything else delegated runs can do today (reading, generated notes,
+  project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated

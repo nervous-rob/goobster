@@ -460,6 +460,9 @@ export type AssistantBriefItem = {
     inboxItemId: number | null; happenedAt: string;
 };
 /** The `assistant` block of GET /api/app/home. A null count is unknown, not zero. */
+/** How a responsibility's updates may reach its owner (documentation/delegated_delivery.md). */
+export type Interruption = 'home' | 'digest' | 'immediate';
+
 export type AssistantHome = {
     schemaVersion: number; asOf: string;
     availability: 'ready' | 'paused' | 'none_delegated' | 'attention_off' | 'unavailable' | 'unknown';
@@ -474,7 +477,10 @@ export type AssistantHome = {
     partial: string[];
 };
 
-/** `GET /api/app/assistant/access`: which capabilities still in the pilot this person has. */
+/**
+ * `GET /api/app/assistant/access`: which capabilities still in the pilot this
+ * person has (`delivery` is the digest, contacts and live updates).
+ */
 export type AssistantAccess = {
     hostPaused: boolean; budgetDefaults: Record<string, number>;
     pilot: string; capabilities: Record<string, boolean>; gatedOperations: string[];
@@ -1395,6 +1401,8 @@ export type SettingSection<TValues = Record<string, unknown>, TEffective = Recor
     personalAi?: PersonalAiSettings;
     categories?: string[];
     initiativeLevels?: string[];
+    /** Initiative section: the digest time used when the person chose none (minutes from midnight). */
+    digestDefaultMinute?: number;
 };
 
 export type UserSettingsResponse = {
@@ -1478,6 +1486,8 @@ export type UserSettingsResponse = {
             contactCooldownMinutes: number;
             quietStartMinute: number | null;
             quietEndMinute: number | null;
+            /** When the day's digest of delegated work may go out; null = the default (09:00). */
+            digestMinute: number | null;
             boundaries: Record<string, { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean }>;
             notifyInApp: boolean;
             notifyMentionBanners: boolean;

@@ -327,6 +327,7 @@ describe('events and interactions', () => {
             'messageReactionAdd:issue-capture': ['packages/core/utils/chat/reactions.js', '📋'],
             'domainEventBus:attention': ['packages/core/services/personalHeartbeatService.js', "domainEventBus.subscribe('*'"],
             'domainEventBus:watches': ['packages/core/services/attentionWatchService.js', "domainEventBus.subscribe('*'"],
+            'domainEventBus:assistant-live': ['packages/core/services/assistantLiveService.js', 'domainEventBus.subscribe(TOPIC'],
             'eventBusService:settings-cache': ['packages/core/services/eventBusService.js', "emitter.on('event'"]
         };
         const claimed = Object.keys(eventGates).filter((key) => /^[A-Za-z]+:/.test(key));

@@ -281,8 +281,10 @@ what a responsibility is and how each action is checked.
   assistant steps of its approved plan), where it takes requests you address
   to Goobster (that project's conversations, your discussions; see
   [delegated_conversation_requests.md](delegated_conversation_requests.md)),
-  when it ends, and whether proposed work starts automatically. A draft
-  grants nothing.
+  when it ends, whether proposed work starts automatically, and how its
+  updates reach you (kept on Home, one digest a day, or a contact when it
+  needs your decision; see [delegated_delivery.md](delegated_delivery.md)).
+  A draft grants nothing.
 - **Repository work.** When the chosen project has a repository cloned into
   it, the form also offers: commit there, push to GitHub, and open pull
   requests, on the branches you name (`goobster/*` to start with), with how
@@ -304,6 +306,11 @@ their result. See [delegated_runs.md](delegated_runs.md). Work you asked for
 in a conversation quotes your message and links back to the conversation;
 if you changed direction there, the withdrawn work stays listed with *Try
 again*.
+
+Home and this page change while they are open: a finding, a request, a
+piece of work or a run that changes sends the portal a reason to read
+again, never the content
+([delegated_delivery.md](delegated_delivery.md#live-updates)).
 
 Grants the form cannot express yet (processes, the other budgets, more
 than one repository) can be created through the API.
@@ -434,5 +441,8 @@ producer's responsibility
   the other request kinds (review, unblock, answer, repair, responsibility
   review): those still link to where the request is decided.
 - Signals for the Conversations card beyond updates filed against it.
-- Live push of overview changes: Home refetches when opened and after an
+- Live changes for every account: the overview changes while it is open
+  for accounts with the delivery capability
+  ([delegated_delivery.md](delegated_delivery.md)); until the pilot decision
+  is recorded, other accounts' Home refetches when opened and after an
   action taken on it.

@@ -1459,6 +1459,83 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Delivery and interruption (assistantDelivery.spec.js,
+    // documentation/delegated_delivery.md). `step` is one of:
+    //   pilot    record or clear the pilot decision (scope: everyone | null)
+    //   finding  one more finding under the person's newest responsibility
+    //   pause    the system side of a status change: pause that responsibility
+    //   drop     cut every open portal event stream (a network drop)
+    //   sweep    one delivery pass at `hour`:00 UTC tomorrow, with a Discord
+    //            gateway that accepts every DM, so a digest can go out
+    //   reset    forget the person's digests and contacts
+    const eventStreams = new Set();
+    app.use('/api/app/events', (_req, res, next) => {
+        eventStreams.add(res);
+        res.on('close', () => eventStreams.delete(res));
+        next();
+    });
+    app.post('/e2e/fixtures/assistant-delivery', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const step = String(req.body?.step || '');
+            const newest = () => db.get(
+                'SELECT * FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id DESC LIMIT 1', { userId }
+            );
+            if (step === 'pilot') {
+                const access = require('@goobster/core/services/assistantAccessService');
+                if (req.body?.scope) await access.recordDecision({ scope: String(req.body.scope) });
+                else await require('@goobster/core/services/instanceStateService').remove(access.KEY_PILOT);
+                return res.json({ ok: true, decision: await access.decision() });
+            }
+            if (step === 'drop') {
+                const open = eventStreams.size;
+                for (const stream of [...eventStreams]) stream.destroy();
+                return res.json({ ok: true, dropped: open });
+            }
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            if (step === 'reset') {
+                await db.run('DELETE FROM assistant_digests WHERE userId = @userId', { userId });
+                await db.run('DELETE FROM attention_contacts WHERE userId = @userId', { userId });
+                return res.json({ ok: true });
+            }
+            if (step === 'finding') {
+                const responsibility = await newest();
+                const title = String(req.body?.title || 'A new finding');
+                const { update } = await require('@goobster/core/services/assistantUpdateService').publish({
+                    audience: { userId }, identityKey: `e2e:delivery:${title}`, kind: 'finding', title,
+                    summary: 'Found while you were looking at the page.', components: ['research'],
+                    responsibilityId: responsibility?.id ?? null, deliver: true
+                });
+                return res.json({ ok: true, id: update.id });
+            }
+            if (step === 'pause') {
+                const responsibility = await newest();
+                const responsibilities = require('@goobster/core/services/assistantResponsibilityService');
+                // A retried journey may ask twice.
+                if (responsibility.status !== 'PAUSED') {
+                    await responsibilities.act({ userId, id: responsibility.id, action: 'pause', expectedRevision: responsibility.revision });
+                }
+                return res.json({ ok: true });
+            }
+            if (step === 'sweep') {
+                const delivery = require('@goobster/core/services/assistantDeliveryService');
+                const today = new Date();
+                const now = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1, Number(req.body?.hour) || 12));
+                const sent = [];
+                delivery.attach({
+                    gateway: { isGoobsterGateway: true, kind: 'local', sendDm: async (to) => { sent.push(String(to)); return { ok: true }; } }
+                });
+                try {
+                    return res.json({ ok: true, result: await delivery.sweep({ now }), dms: sent });
+                } finally {
+                    delivery.detach();
+                }
+            }
+            res.status(400).json({ error: 'step' });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
     // Bypasses the event API so empty-step catalog tours can still show
     // paused/completed rows. Never calls a provider.

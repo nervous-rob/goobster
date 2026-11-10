@@ -11,7 +11,7 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, describeListening, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
+import { describeGrants, describeInterruption, describeListening, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
 import { ConnectorList } from './assistant/ConnectorList';
 import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
@@ -47,7 +47,9 @@ export function AssistantRoom() {
         queryKey: keys.observatory, queryFn: () => api.observatoryProjects() as Promise<{ projects: Project[] }>,
         enabled: enabled && featureActive(me, 'projects')
     });
-    // Work in progress changes without the person doing anything: poll gently.
+    // Work in progress changes without the person doing anything. The portal
+    // event stream says when (documentation/delegated_delivery.md); the gentle
+    // poll covers an account or a moment the stream does not reach.
     const workQ = useQuery({ queryKey: keys.assistantInitiatives, queryFn: () => api.assistantInitiatives(), enabled, refetchInterval: 15_000 });
     // Health is judged on every read, and incidents move on the steward's pass.
     const processesQ = useQuery({ queryKey: keys.assistantProcesses, queryFn: () => api.assistantProcesses(), enabled, refetchInterval: 60_000 });
@@ -80,7 +82,7 @@ export function AssistantRoom() {
         const grants = describeGrants(item.operations, projectById);
         const listening = describeListening(item, me.assistant.name);
         const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(item.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day.` : ''}${writesOutside(item.operations) ? ` Writes to outside services are made as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} outside operations a day.` : ''}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
+            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(item.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day.` : ''}${writesOutside(item.operations) ? ` Writes to outside services are made as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} outside operations a day.` : ''}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} ${describeInterruption(item.rules?.interruption)}. You can pause or revoke it at any time.`
             : question;
         if (ask && !await confirm(ask)) return;
         setBusy(item.id);

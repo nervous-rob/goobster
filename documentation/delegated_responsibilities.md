@@ -64,7 +64,12 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
   `stopCondition`, and `autoStart` (`true` queues proposed work without
-  waiting for Start; off by default).
+  waiting for Start; off by default). `interruption` decides whether the
+  responsibility's updates also reach you outside the portal: `home` (the
+  default) never does, `digest` adds one digest a day, `immediate` adds one
+  contact per request that needs your decision. `digest` and `immediate`
+  are refused at activation with `PILOT_ONLY` for an account without the
+  delivery capability. See [delegated_delivery.md](delegated_delivery.md).
 - **Expiry** (`expiresAt`, UTC), optional.
 - **Principals**: owner, authorizer, acting person and payer. Today all four are
   the signed-in person who creates the responsibility, whatever the request
@@ -314,14 +319,16 @@ you, or a project's current members.
 - **Seen is per person and per revision.** Acknowledging names an exact
   revision. Acknowledging an older revision never clears a newer one, and
   someone else's acknowledgment never affects yours. Delivering an update to
-  you (a mention in conversation, an Inbox envelope) is recorded separately
-  from acknowledging it.
+  you (a mention in conversation, an Inbox envelope, a browser notification,
+  a Discord message, a digest) is recorded separately from acknowledging it.
 - **Needs you.** An update with an open gate, such as a question or a review,
   needs action until whatever raised it is resolved. Acknowledging it does not
   resolve it. Snoozing hides it until a time you choose, and the gate stays
   open.
 - **Inbox.** A personal update can file one Inbox item. That item is the
-  update's envelope, not a second record.
+  update's envelope, not a second record. Filing it sends no browser
+  notification and no Discord message; the responsibility's interruption
+  rule decides that ([delegated_delivery.md](delegated_delivery.md)).
   - A new revision refreshes the same item and makes it unread again.
   - Reading the item in the Inbox acknowledges exactly the revision it showed.
   - Acknowledging the update in the portal marks the item read when the item

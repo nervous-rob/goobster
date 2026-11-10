@@ -173,6 +173,7 @@ class AssistantProcessLifecycleService {
                         ...columns, updatedAt: now
                     }
                 );
+                this._announce(owner);
                 return db.get('SELECT * FROM assistant_process_lifecycle WHERE id = @id', { id });
             } catch (error) {
                 if (!/UNIQUE|duplicate key/i.test(String(error?.message || ''))) throw error;
@@ -192,7 +193,13 @@ class AssistantProcessLifecycleService {
         if (result.changes !== 1) {
             throw this._error('REVISION_CONFLICT', 'This process changed while that was being applied. Refresh and try again.');
         }
+        this._announce(owner);
         return db.get('SELECT * FROM assistant_process_lifecycle WHERE id = @id', { id: seen.id });
+    }
+
+    /** A process moved between stages: the owner's open Processes report reads again (kinds only, never throws). */
+    _announce(owner) {
+        require('./assistantLiveService').changed(owner, 'update');
     }
 
     /** Is the process switched on where it lives (whatever is holding it back from running)? */

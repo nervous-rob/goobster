@@ -18,14 +18,18 @@
  *     for time this installation was itself running), and for a process
  *     that outlived its purpose either pause it under a grant that names
  *     it or ask its owner (assistantProcessLifecycleService);
- *  6. file Inbox envelopes still owed by committed updates.
+ *  6. file Inbox envelopes still owed by committed updates;
+ *  7. send what the interruption rules allow beyond the portal: contacts
+ *     still owed for open requests, and each person's digest when it is
+ *     due (assistantDeliveryService, through Attention's contact path).
  * Each pass records its time in `instance_state` (`assistant_steward_pass`)
  * so the Home projection can say when its picture was last refreshed, and
  * since when passes have followed each other without a gap.
  * Every six hours it also applies retention: process observations 90 days,
  * terminal initiatives, settled updates, resolved incidents and lifecycle
  * records of processes that are running again 180 days, the daily proposal
- * counters 14 days and the chat-message labels 30 days.
+ * counters 14 days, the chat-message labels 30 days, digests 90 days and
+ * the contact ledger 30 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
  * reconcile for the owner they name. The only model call here is the narrow
@@ -89,6 +93,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             knowledgeProposalsExpired: await require('./knowledgeChangeSetService').expireOpen({ now }),
             connectorRequests: await require('./assistantConnectorRequestService').withdrawStale()
         };
+        // After the envelopes: a contact or a digest points at a filed one.
+        result.delivery = await require('./assistantDeliveryService').sweep({ now });
         // Home says how fresh its picture is from this, in any process.
         await instanceState.set(HEARTBEAT_KEY, { at: now.toISOString(), since: upSince.toISOString() });
         if (runRetention) {
@@ -103,7 +109,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 proposalCounters: await require('./assistant/proposalCaps').prune({ now }),
                 messageLabels: await require('./assistant/messageClassification').prune({ now }),
                 knowledgeChanges: await require('./knowledgeChangeSetService').prune({ now }),
-                connectorRequests: await require('./assistantConnectorRequestService').prune({ days: RETENTION_DAYS.initiatives, now })
+                connectorRequests: await require('./assistantConnectorRequestService').prune({ days: RETENTION_DAYS.initiatives, now }),
+                delivery: await require('./assistantDeliveryService').prune({ now })
             };
         }
         return result;
@@ -112,8 +119,13 @@ async function sweep({ now = new Date(), retention = null } = {}) {
     return pending;
 }
 
-function start() {
+/**
+ * @param {{ gateway?: Object }} [options] - the Discord gateway this process
+ *   sends through; without one, outbound contact is the browser push only
+ */
+function start({ gateway = null } = {}) {
     if (timer) return;
+    require('./assistantDeliveryService').attach({ gateway });
     const tick = () => sweep()
         .then((result) => {
             if (!result.skipped && (result.expired || result.reconcile?.proposed)) {
@@ -135,6 +147,7 @@ async function stop() {
     timer = null;
     firstPass = null;
     try { require('./assistantInitiativeService').stopListening(); } catch { /* never started */ }
+    try { require('./assistantDeliveryService').detach(); } catch { /* never attached */ }
     await pending;
 }
 
