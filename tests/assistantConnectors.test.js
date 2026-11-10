@@ -4,9 +4,11 @@
  * writeConnector / readConnector / listConnectors, the externalOperations
  * budget, reconciliation after a crash, and revocation.
  *
- * Goobster ships no connector, so everything runs against a test double
- * (tests/helpers/connectorDouble.js): a fake in-memory notebook. The model
- * is scripted. No provider, no network.
+ * The framework is exercised against a test double
+ * (tests/helpers/connectorDouble.js): a fake in-memory notebook. The one
+ * connector that ships (Notion, ADR 0030; tests/notionConnector.test.js)
+ * is taken out of the registry for this file, so "nothing is installed"
+ * can be tested. The model is scripted. No provider, no network.
  */
 
 const path = require('node:path');
@@ -43,10 +45,16 @@ const GARDEN = { kind: 'external', ids: ['notebook:garden'] };
 const grant = (operation, resource = GARDEN) => ({ operation, resource });
 const WRITE = grant('external.write');
 const READ = grant('read');
+const POND = { kind: 'external', ids: ['notebook:pond'] };
+const READ_NOTES = { operation: 'read', resource: { kind: 'knowledge', ids: ['personal'] } };
+
+const shipped = require('@goobster/core/services/assistant/connectors/shipped');
+beforeAll(() => { for (const manifest of shipped) registry.unregister(manifest.id); });
 
 afterAll(async () => {
     initiatives.stopListening();
     double.unregister();
+    for (const manifest of shipped) registry.register(manifest);
     useState();
     await db.run('DELETE FROM app_accounts WHERE principalId IN (@a, @b)', { a: A, b: B });
     await db.run('DELETE FROM user_integrations WHERE userId IN (@a, @b)', { a: A, b: B });
@@ -147,8 +155,14 @@ const writes = () => double.state.calls.filter(entry => entry.kind === 'write');
 const offeredTo = (chat) => chat.mock.calls[0][1].functions.map(tool => tool.name);
 
 describe('the connector registry', () => {
-    test('Goobster ships no connector, and one registers only with the owner\'s recorded decision', () => {
-        expect(require('@goobster/core/services/assistant/connectors/shipped')).toEqual([]);
+    test('what ships carries the owner\'s recorded decision, and nothing registers without one', () => {
+        // Every shipped manifest names who decided, when, and where that is written down.
+        expect(shipped.map(manifest => manifest.id)).toEqual(['notion']);
+        for (const manifest of shipped) {
+            expect(manifest.decision).toEqual({
+                recordedBy: expect.stringMatching(/\S/), recordedAt: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/), reference: expect.stringMatching(/\S/)
+            });
+        }
         double.unregister();
         expect(registry.list()).toEqual([]);
         expect(() => registry.register({ ...double.manifest, decision: null }))
@@ -355,18 +369,71 @@ describe('writeConnector in a run', () => {
 });
 
 describe('what a connector may not do after a private read', () => {
-    test('a run that read from a connector cannot write outside this installation', async () => {
-        await queued();
+    const readGarden = call('readConnector', { connector: 'notebook', resource: 'garden', operation: 'search', input: { query: 'gate' } });
+    const bothResources = [READ, WRITE, grant('read', POND), grant('external.write', POND)];
+
+    test('what a run read from a connector resource goes nowhere outside but back into that resource', async () => {
+        await queued({ operations: bothResources });
         double.state.entries.set('garden', [{ n: 1, text: 'the gate code is 1234', operationId: null }]);
         script(
-            [call('readConnector', { connector: 'notebook', resource: 'garden', operation: 'search', input: { query: 'gate' } })],
-            [append('copied outward')],
+            [readGarden],
+            // Another resource of the same connector is still somewhere else: other people may read it.
+            [append('copied outward', 'pond')],
+            // The resource the text came from already holds it.
+            [append('noted beside it')],
             FINISH
         );
         await runner.tick({ wait: true });
-        expect((await connectorOps()).map(op => op.refusalCode || op.status)).toEqual(['SUCCEEDED', 'PRIVATE_CONTEXT']);
+        expect((await connectorOps()).map(op => `${op.resourceId} ${op.refusalCode || op.status}`)).toEqual([
+            'notebook:garden SUCCEEDED', 'notebook:pond PRIVATE_CONTEXT', 'notebook:garden SUCCEEDED'
+        ]);
         expect((await connectorOps())[0].resultText).toContain('the gate code is 1234');
+        expect(writes().map(entry => entry.resource)).toEqual(['garden']);
+    }, 60_000);
+
+    test('a run that read from two connector resources can write to neither', async () => {
+        await queued({ operations: bothResources });
+        script(
+            [readGarden],
+            [call('readConnector', { connector: 'notebook', resource: 'pond', operation: 'search', input: { query: 'x' } })],
+            [append('mixed', 'pond')],
+            [append('mixed')],
+            FINISH
+        );
+        await runner.tick({ wait: true });
+        expect((await connectorOps()).map(op => op.refusalCode || op.status)).toEqual(['SUCCEEDED', 'SUCCEEDED', 'PRIVATE_CONTEXT', 'PRIVATE_CONTEXT']);
         expect(writes()).toEqual([]);
+    }, 60_000);
+
+    test('a run that read the person\'s private notes cannot write to a connector at all', async () => {
+        const toolsRegistry = require('@goobster/core/utils/toolsRegistry');
+        const realExecute = toolsRegistry.execute.bind(toolsRegistry);
+        jest.spyOn(toolsRegistry, 'execute').mockImplementation(async (name, args) => (
+            name === 'lookupNotes' ? 'SECRET-JOURNAL a note about beans' : realExecute(name, args)
+        ));
+        await queued({ operations: [READ, WRITE, READ_NOTES] });
+        script([call('lookupNotes', { query: 'beans' })], [readGarden], [append('from my notes')], FINISH);
+        await runner.tick({ wait: true });
+        expect((await operations()).filter(op => op.tool !== 'finish').map(op => `${op.tool} ${op.refusalCode || op.status}`)).toEqual([
+            'lookupNotes SUCCEEDED', 'readConnector SUCCEEDED', 'writeConnector PRIVATE_CONTEXT'
+        ]);
+        expect(writes()).toEqual([]);
+    }, 60_000);
+
+    test('a resumed run remembers where its private reads came from', async () => {
+        const { initiative } = await queued({ operations: bothResources });
+        const dead = await crashed(initiative);
+        // Before the worker died the run had read the pond.
+        await db.run(
+            `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, seq, effect, status, operation, resourceKind, resourceId, resultText)
+             VALUES (@runId, @u, 'readConnector', 'earlier', 1, 'read', 'SUCCEEDED', 'read', 'external', 'notebook:pond', 'x')`,
+            { runId: dead.runId, u: A }
+        );
+        script([append('after the crash')], [append('back where it came from', 'pond')], FINISH);
+        await dead.resume();
+        expect((await connectorOps()).filter(op => op.tool === 'writeConnector').map(op => `${op.resourceId} ${op.refusalCode || op.status}`))
+            .toEqual(['notebook:garden PRIVATE_CONTEXT', 'notebook:pond SUCCEEDED']);
+        expect(writes().map(entry => entry.resource)).toEqual(['pond']);
     }, 60_000);
 });
 

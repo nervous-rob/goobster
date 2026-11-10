@@ -128,6 +128,8 @@ const LIMITS = {
     operations: 50,
     ids: 50,
     idLength: 200,
+    /** An outside resource as pasted (a link); what is kept is the connector's canonical id. */
+    linkLength: 600,
     paths: 20,
     branches: 20
 };
@@ -192,7 +194,7 @@ function rejectUnknownKeys(object, allowed, field) {
     }
 }
 
-function stringList(value, field, max, { pattern = null, code = 'INVALID_RESPONSIBILITY' } = {}) {
+function stringList(value, field, max, { pattern = null, code = 'INVALID_RESPONSIBILITY', length = LIMITS.idLength } = {}) {
     if (value === undefined || value === null) return [];
     if (!Array.isArray(value)) throw bad(`${field} must be a list.`, code);
     if (value.length > max) throw bad(`${field} has more than ${max} entries.`, code);
@@ -201,7 +203,7 @@ function stringList(value, field, max, { pattern = null, code = 'INVALID_RESPONS
         const text = typeof raw === 'number' && Number.isSafeInteger(raw) ? String(raw) : raw;
         if (typeof text !== 'string' || !text.trim()) throw bad(`${field} entries must be non-empty text.`, code);
         const clean = text.trim();
-        if (clean.length > LIMITS.idLength) throw bad(`${field} entries are at most ${LIMITS.idLength} characters.`, code);
+        if (clean.length > length) throw bad(`${field} entries are at most ${length} characters.`, code);
         if (pattern && !pattern.test(clean)) throw bad(`${field} has an invalid entry "${clean}".`, code);
         if (!out.includes(clean)) out.push(clean);
     }
@@ -241,11 +243,16 @@ function normalizeResource(raw, operation, index) {
         const pattern = kind === 'project' ? /^\d+$/
             : kind === 'process' ? PROCESS_REF
                 : kind === 'repository' ? REPO_PATTERN : null;
-        const ids = stringList(raw.ids, `${field}.ids`, LIMITS.ids, { pattern, code: 'INVALID_RESOURCE' });
+        // A connector resource may arrive as a pasted link, which is longer than the id kept.
+        let ids = stringList(raw.ids, `${field}.ids`, LIMITS.ids, {
+            pattern, code: 'INVALID_RESOURCE', length: kind === 'external' ? LIMITS.linkLength : LIMITS.idLength
+        });
         if (!ids.length) throw bad(`${field}.ids must name at least one ${kind}; there is no wildcard.`, 'INVALID_RESOURCE');
         // A connector's named resource, as "<connector>:<resource>" (ADR 0028): the
         // connector must be installed and the resource of the shape it accepts.
         if (kind === 'external') {
+            // A connector may accept a pasted link and keep the id (ADR 0030).
+            ids = [...new Set(ids.map(id => connectorRegistry.canonicalRef(id)))];
             for (const id of ids) {
                 if (!connectorRegistry.parseRef(id)) {
                     throw bad(`${field}.ids has "${id}", which is not a named resource of an installed connector (<connector>:<resource>).`, 'INVALID_RESOURCE');

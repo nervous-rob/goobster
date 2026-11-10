@@ -265,7 +265,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                             <div className="hint">{connector.description}</div>
                             <label className="field">
                                 <span>Which resource it may use ({connector.resource})</span>
-                                <input type="text" value={pick(connector.id).resource} maxLength={150}
+                                <input type="text" value={pick(connector.id).resource} maxLength={500}
                                     onChange={(e) => setPick(connector.id, { resource: e.target.value })}
                                     data-testid={`responsibility-connector-resource-${connector.id}`} />
                             </label>
@@ -281,11 +281,18 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                         data-testid={`responsibility-connector-write-${connector.id}`} /> Write to it as you ({connector.writes.map((entry) => entry.operation).join(', ')})
                                 </label>
                             )}
+                            {pick(connector.id).write && (connector.asks || []).length > 0 && (
+                                <div className="hint" role="note" data-testid={`responsibility-connector-asks-${connector.id}`}>
+                                    Never done for you ({connector.asks.map((entry) => entry.operation).join(', ')}): the work can only ask,
+                                    and each one waits under Needs you for your approval.
+                                </div>
+                            )}
                         </div>
                     ))}
                     {chosen.some((entry) => pick(entry.id).read) && (
                         <div className="hint" role="note" data-testid="responsibility-connector-read-note">
-                            What it reads there is your own data: once a piece of work has read from an outside service it cannot write outside this installation.
+                            What it reads there is your own data: once a piece of work has read from an outside resource it cannot write outside this
+                            installation, except back into that same resource.
                         </div>
                     )}
                 </fieldset>
@@ -304,7 +311,8 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                         )}
                         {writesOut && (
                             <>A write to an outside service is made as you and cannot be undone from here. It needs Attention set to Delegate with
-                            general external writes allowed (Settings), and it is refused once a piece of work has read your private knowledge or anything from an outside service. </>
+                            general external writes allowed (Settings), and it is refused once a piece of work has read your private knowledge or anything
+                            from another outside resource. </>
                         )}
                     </div>
                 </>

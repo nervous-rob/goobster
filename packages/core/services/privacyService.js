@@ -762,6 +762,8 @@ class PrivacyService {
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
+            // What a run asked the person to approve on an outside connector.
+            counts.assistantConnectorRequests = forgottenResponsibilities.connectorRequests;
 
             // Spitball Expeditions: research runs, their cycles, and the
             // evidence trail. Cycles/sources/claims cascade with the
@@ -1307,6 +1309,7 @@ class PrivacyService {
             assistant_run_operations: responsibilities.runOperations,
             assistant_proposal_counters: responsibilities.proposalCounters,
             assistant_message_labels: responsibilities.messageLabels,
+            assistant_connector_requests: responsibilities.connectorRequests,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',

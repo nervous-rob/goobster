@@ -2,8 +2,9 @@
  * Outside connectors in a responsibility (documentation/delegated_connectors.md,
  * DA-11d).
  *
- * Goobster ships no connector, so the journeys run against the test double
- * the fixture installs (a fake notebook). The installation's owner sees the
+ * The framework's journeys run against the test double the fixture installs
+ * (a fake notebook) beside the one connector that ships (Notion, which has
+ * its own journeys in assistantNotion.spec.js). The installation's owner sees the
  * connector's manifest, grants a named resource on it for reading and
  * writing, and sees that a write cannot be undone and how many a day are
  * allowed. Revoking the connector deletes their credential and the very
@@ -28,8 +29,9 @@ test.describe('outside connectors in a responsibility', () => {
         await login(page, { userId: GRANTING, name: 'Keeper' });
         await page.goto('/app/assistant');
 
-        const card = page.getByTestId('connector-row');
-        await expect(card).toContainText('Test notebook');
+        // Notion ships (DA-11e); this journey is about the double beside it.
+        const card = page.getByTestId('connector-row').filter({ hasText: 'Test notebook' });
+        await expect(card).toHaveCount(1);
         await expect(card.getByTestId('connector-status')).toHaveText('connected');
         await expect(card).toContainText('Can read: search');
         await expect(card).toContainText('Can write: append');
@@ -90,7 +92,7 @@ test.describe('outside connectors in a responsibility', () => {
         expect(await authorize()).toEqual({ ok: true, code: null });
 
         await page.goto('/app/assistant');
-        const card = page.getByTestId('connector-row');
+        const card = page.getByTestId('connector-row').filter({ hasText: 'Test notebook' });
         await expect(card.getByTestId('connector-status')).toHaveText('connected');
         await card.getByTestId('connector-revoke').click();
         await expect(page.getByRole('dialog')).toContainText('Your Notion credential is deleted now');

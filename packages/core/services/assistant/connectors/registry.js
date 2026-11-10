@@ -8,8 +8,8 @@
  * ['<connector>:<resource>'] }`), never the service as a whole. This
  * module only holds and checks manifests; it calls nothing outside.
  *
- * The product ships with no connector (`shipped.js` is empty). A connector
- * is added by a pull request that adds its module to `shipped.js` with the
+ * The connectors that ship are listed in `shipped.js` (Notion, ADR 0030). A
+ * connector is added by a pull request that adds its module there with the
  * owner's recorded decision in its manifest; `register()` refuses a
  * manifest without one. `testOnly` manifests (the test double in tests and
  * the browser journey's fixture) skip that rule and are never loaded here.
@@ -21,9 +21,14 @@
  *   feature      optional feature id that must be on
  *   decision     { recordedBy, recordedAt, reference }: the owner's decision
  *   credential   { provider }: a key of userIntegrationService's catalog
- *   resource     { describe, pattern }: what a named resource looks like
+ *   resource     { describe, pattern, canonical? }: what a named resource
+ *                looks like; `canonical(text)` turns what a person typed (a
+ *                link, say) into the one spelling the grant keeps, or null
  *   reads        [{ operation, describe, validate?, run }]
  *   writes       [{ operation, describe, validate?, run, reconcile? }]
+ *   asks         [{ operation, describe, action, consequence, validate?,
+ *                prepare, run }]: what a run may never do, only ask the
+ *                person to approve, one request per action (ADR 0030)
  *
  * `run({ resource, input, token, operationId })` returns the text the model
  * sees. A write that certainly did not happen throws
@@ -31,6 +36,12 @@
  * `reconcile(...)` asks the outside service whether the write with that
  * `operationId` happened and returns `{ state: 'done'|'absent'|'unknown',
  * result? }`; a write without one stops for review after any uncertainty.
+ *
+ * An ask is never run for a model. `prepare({ resource, input, token })`
+ * checks the target is inside the resource and returns `{ target, label }`
+ * for the request the person is shown; `run({ resource, target, token })`
+ * is called only when that person approves the request themselves, and
+ * must be safe to make twice.
  */
 
 const ID = /^[a-z][a-z0-9-]{1,31}$/;
@@ -79,6 +90,21 @@ function operationList(list, kind, field) {
         if (entry.reconcile !== undefined && (kind !== 'write' || typeof entry.reconcile !== 'function')) {
             throw bad(`${where}.reconcile is for writes, and must be a function.`);
         }
+        if (kind === 'ask') {
+            if (typeof entry.prepare !== 'function') throw bad(`${where}.prepare must be a function.`);
+            for (const key of ['action', 'consequence']) {
+                if (typeof entry[key] !== 'string' || !entry[key].trim()) throw bad(`${where}.${key} must say what approving does.`);
+            }
+            const voids = entry.voids ?? [];
+            if (!Array.isArray(voids) || voids.some(code => typeof code !== 'string' || !/^[A-Z][A-Z0-9_]{1,39}$/.test(code))) {
+                throw bad(`${where}.voids must be a list of refusal codes.`);
+            }
+            return Object.freeze({
+                operation: entry.operation, describe: entry.describe.trim(), run: entry.run, prepare: entry.prepare,
+                validate: entry.validate || null, action: entry.action.trim(), consequence: entry.consequence.trim(),
+                voids: Object.freeze([...voids])
+            });
+        }
         return Object.freeze({
             operation: entry.operation, describe: entry.describe.trim(), run: entry.run,
             validate: entry.validate || null, reconcile: entry.reconcile || null
@@ -116,15 +142,20 @@ function normalize(manifest, { testOnly = false } = {}) {
     const resource = manifest.resource || {};
     if (typeof resource.describe !== 'string' || !resource.describe.trim()) throw bad('resource.describe must say what a named resource is.');
     if (resource.pattern != null && !(resource.pattern instanceof RegExp)) throw bad('resource.pattern must be a regular expression.');
+    if (resource.canonical != null && typeof resource.canonical !== 'function') throw bad('resource.canonical must be a function.');
     const reads = operationList(manifest.reads ?? [], 'read', 'reads');
     const writes = operationList(manifest.writes ?? [], 'write', 'writes');
+    const asks = operationList(manifest.asks ?? [], 'ask', 'asks');
     if (!reads.length && !writes.length) throw bad('A connector reads or writes something.');
+    if (manifest.permits !== undefined && typeof manifest.permits !== 'function') throw bad('permits must be a function.');
     return Object.freeze({
         id: manifest.id, name: manifest.name.trim(), description: manifest.description.trim(),
         feature: manifest.feature || null, decision, testOnly: Boolean(testOnly),
+        // The person's own standing restriction on this service, if it has one: async ({ userId, resource }) => code | null.
+        permits: manifest.permits || null,
         credential: Object.freeze({ provider }),
-        resource: Object.freeze({ describe: resource.describe.trim(), pattern: resource.pattern || null }),
-        reads: Object.freeze(reads), writes: Object.freeze(writes)
+        resource: Object.freeze({ describe: resource.describe.trim(), pattern: resource.pattern || null, canonical: resource.canonical || null }),
+        reads: Object.freeze(reads), writes: Object.freeze(writes), asks: Object.freeze(asks)
     });
 }
 
@@ -171,15 +202,31 @@ function parseRef(ref) {
     return { connector, resource };
 }
 
+/**
+ * The spelling of a grant id that is kept: the connector's own `canonical`
+ * applied to the resource part (a pasted link becomes the id), otherwise
+ * the text unchanged. What comes back still has to pass `parseRef`.
+ */
+function canonicalRef(ref) {
+    const text = String(ref ?? '').trim();
+    const cut = text.indexOf(':');
+    if (cut < 1) return text;
+    const connector = get(text.slice(0, cut));
+    if (!connector?.resource.canonical) return text;
+    let resource = null;
+    try { resource = connector.resource.canonical(text.slice(cut + 1)); } catch { /* not one of its resources */ }
+    return typeof resource === 'string' && resource ? refOf(connector.id, resource) : text;
+}
+
 function validResource(connector, resource) {
     if (typeof resource !== 'string' || !resource || resource.length > RESOURCE_MAX) return false;
     if (/[\s*?\\\0]/.test(resource)) return false;
     return connector.resource.pattern ? connector.resource.pattern.test(resource) : true;
 }
 
-/** An operation of the connector by kind and name, or null. */
+/** An operation of the connector by kind (`read`, `write`, `ask`) and name, or null. */
 function operationOf(connector, kind, name) {
-    const list = kind === 'write' ? connector.writes : connector.reads;
+    const list = kind === 'write' ? connector.writes : kind === 'ask' ? connector.asks : connector.reads;
     return list.find(entry => entry.operation === name) || null;
 }
 
@@ -213,7 +260,8 @@ function describe(connector) {
         provider: connector.credential.provider,
         resource: connector.resource.describe,
         reads: connector.reads.map(entry => ({ operation: entry.operation, describe: entry.describe })),
-        writes: connector.writes.map(entry => ({ operation: entry.operation, describe: entry.describe, reconcilable: Boolean(entry.reconcile) }))
+        writes: connector.writes.map(entry => ({ operation: entry.operation, describe: entry.describe, reconcilable: Boolean(entry.reconcile) })),
+        asks: connector.asks.map(entry => ({ operation: entry.operation, describe: entry.describe, action: entry.action, consequence: entry.consequence }))
     };
 }
 
@@ -221,6 +269,6 @@ function describe(connector) {
 for (const manifest of require('./shipped')) register(manifest);
 
 module.exports = {
-    register, unregister, get, list, refOf, parseRef, validResource, operationOf, inputProblem, describe,
+    register, unregister, get, list, refOf, parseRef, canonicalRef, validResource, operationOf, inputProblem, describe,
     declined, ConnectorError, ConnectorDeclined, INPUT_MAX_CHARS
 };

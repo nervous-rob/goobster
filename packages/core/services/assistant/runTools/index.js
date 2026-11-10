@@ -27,7 +27,11 @@
  *    installation). A run that has read private knowledge may not publish
  *    into a project other people read and may not publish externally at
  *    all, and a plan-step run in a shared project is not offered the
- *    private tools.
+ *    private tools. One exception (ADR 0030): a private tool with
+ *    `sourceScope: 'resource'` says its text lives in the outside resource
+ *    its call names, and an external tool with `publishesTo: 'resource'`
+ *    may write back into that same resource when nothing private in the
+ *    run came from anywhere else.
  *  - optional `final: true`: the tool ends the run with its report; a
  *    resumed run records the report again from its journal.
  *  - optional `guard(args, ctx)`: asked after `authorize()` allowed the call
