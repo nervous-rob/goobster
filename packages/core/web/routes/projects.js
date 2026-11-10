@@ -8,6 +8,7 @@ const { streamWebChatTurn } = require('../appStream');
 const { backgroundJobHint } = require('../../utils/projectSetupContract');
 const { portalMimeFor } = require('../../services/projectService');
 const appTemplates = require('../../services/appTemplates');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 
 function mountProjects(app, ctx, h) {
     const { requireAuth, chatRoute, sendError, projectOwner } = h;
@@ -40,13 +41,20 @@ function mountProjects(app, ctx, h) {
 
     // Cross-project "Needs you" review board (optional ?project=&owner= filter).
     // Registered beside invites so it never competes with :slug routes.
-    app.get('/api/app/projects/needs-you', requireAuth, chatRoute(async (req) =>
-        ctx.projectMissions.listNeedsYou({
+    // With the delegated assistant installed, the board is read over the
+    // canonical gates (assistantGateService.projectBoard): each card says
+    // whether it is this person's, links to the same request Home and the
+    // Inbox show, and can carry its decision. Without it the board is the
+    // plans' own list.
+    app.get('/api/app/projects/needs-you', requireAuth, chatRoute(async (req) => {
+        const params = {
             userId: req.webUser.userId,
             project: req.query.project || null,
             owner: req.query.owner || null
-        })
-    ));
+        };
+        const gates = requireOptional('../../services/assistantGateService', { feature: 'assistant' });
+        return gates ? gates.projectBoard(params) : ctx.projectMissions.listNeedsYou(params);
+    }));
 
     app.post('/api/app/projects/invites/:inviteId/respond', requireAuth, chatRoute(async (req) =>
         ctx.observatory.respondInvite({
