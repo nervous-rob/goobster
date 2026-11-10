@@ -811,6 +811,7 @@ async function main() {
                 await db.run('DELETE FROM assistant_updates WHERE id = @id', { id });
             }
             for (const [table, column] of [
+                ['assistant_process_repairs', 'ownerUserId'],
                 ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
                 ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
                 ['attention_items', 'userId'], ['automations', 'userId']

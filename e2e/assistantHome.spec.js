@@ -290,34 +290,40 @@ test.describe('assistant-first Home', () => {
         expect((await made.json()).pass).toMatchObject({ opened: 1, relevance: 1 });
         await login(page, { userId: OWNER, name: OWNER_NAME });
 
-        // Home: one incident, said once, and one question; the card counts processes, not messages.
+        // Home: one incident, said once, and two questions; the card counts processes, not messages.
         const overview = page.getByTestId('assistant-overview');
         const card = overview.getByTestId('assistant-component-processes');
-        await expect(card).toContainText('1 needs you');
+        await expect(card).toContainText('2 needs you');
         await expect(card).toContainText('1 not working');
         await expect(card).toContainText('1 with a problem');
-        await expect(card).toContainText('2 new updates');
+        await expect(card).toContainText('3 new updates');
         const brief = overview.getByTestId('assistant-brief-item');
         await expect(brief).toHaveCount(1);
         await expect(brief).toContainText('"Nightly import" keeps failing');
         // Whether the watch is still needed is a question for the person: it
         // is asked once under Needs you and is not repeated as a finding.
-        const asks = overview.getByTestId('assistant-needs-you-item');
-        await expect(asks).toHaveCount(1);
+        const questions = overview.getByTestId('assistant-needs-you-item');
+        await expect(questions).toHaveCount(2);
+        const asks = questions.filter({ hasText: 'Release watch' });
         await expect(asks).toContainText('Still needed?');
         await expect(asks).toContainText('"Release watch" may no longer be needed');
         // It can be answered right there, and says what each answer does.
         await expect(asks.getByTestId('gate-decision').getByRole('button')).toHaveText(['Pause it', 'Keep it running']);
         await expect(asks.getByTestId('gate-decision')).toContainText('The goal it was set up for is resolved. It is still switched on.');
+        // The process that keeps failing is the owner's to repair (a pilot capability): one
+        // repair is offered, once, and nothing is run until it is approved.
+        const offer = questions.filter({ hasText: 'Nightly import' });
+        await expect(offer).toContainText('"Nightly import" keeps failing: run it once more?');
+        await expect(offer.getByTestId('gate-decision').getByRole('button')).toHaveText(['Run it once now', 'Leave it']);
 
         // Reviewing the update does not make the process healthy.
         await brief.getByRole('button', { name: 'Mark reviewed' }).click();
         await expect(overview.getByTestId('assistant-brief-empty')).toBeVisible();
         await expect(card).toContainText('1 not working');
-        // The question is still unanswered, so it is still the one thing new on the card.
-        await expect(card).toContainText('1 needs you');
-        await expect(card).toContainText('1 new update');
-        await expect(card).not.toContainText('2 new updates');
+        // The questions are still unanswered, so they are still what is new on the card.
+        await expect(card).toContainText('2 needs you');
+        await expect(card).toContainText('2 new updates');
+        await expect(card).not.toContainText('3 new updates');
 
         // The card opens the report, where each process has both judgments in words.
         await card.click();
@@ -453,10 +459,17 @@ test.describe('assistant-first Home', () => {
         expect(made.ok(), await made.text()).toBe(true);
         await login(page, { userId: OWNER, name: OWNER_NAME });
         const overview = page.getByTestId('assistant-overview');
-        const ask = overview.getByTestId('assistant-needs-you-item');
-        await expect(ask).toHaveCount(1);
+        // The owner has two questions: whether the watch is still needed, and whether to run the failing import once more.
+        const questions = overview.getByTestId('assistant-needs-you-item');
+        await expect(questions).toHaveCount(2);
+        const ask = questions.filter({ hasText: 'Release watch' });
         await ask.getByRole('button', { name: 'Keep it running' }).click();
         await expect(page.locator('#toast')).toHaveText('"Release watch" stays on.');
+        await expect(questions).toHaveCount(1);
+        await expect(overview.getByTestId('assistant-component-processes')).toContainText('1 needs you');
+        // The offered repair is answered the same way; declined, nothing is run and it is not offered again.
+        await questions.filter({ hasText: 'Nightly import' }).getByRole('button', { name: 'Leave it' }).click();
+        await expect(page.locator('#toast')).toHaveText('"Nightly import" is left as it is.');
         await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
         await expect(overview.getByTestId('assistant-component-processes')).not.toContainText('needs you');
 
