@@ -22,6 +22,12 @@
  *
  *  - A run that has read the person's private knowledge does not write
  *    into a project other people can read (`PRIVATE_CONTEXT`).
+ *  - A finding is shared with the project's members only when the grant
+ *    asks for it, the pilot gate allows it, what prompted the work is the
+ *    project's own and the run read none of the person's private knowledge;
+ *    a run that will share is not offered the private tools at all, and
+ *    anything else is published to the person alone, with the reason. See
+ *    ./assistant/projectAudience.js.
  *  - A run dispatched for an `agent` step of a project plan (ADR 0019)
  *    claims the step only inside the plan revision a person approved and
  *    started, and the step is marked done only after its reported result
@@ -41,6 +47,7 @@ const assistantConfig = require('../config/assistantConfig');
 const control = require('./assistantControlService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
+const projectAudience = require('./assistant/projectAudience');
 
 /**
  * Used when the responsibility sets no budget of its own (per UTC day), and
@@ -246,11 +253,12 @@ class AssistantRunService {
         return row ? { id: Number(row.id), slug: row.slug, name: row.name, ownerId: row.userId } : null;
     }
 
-    _messages({ responsibility, initiative, project, tools }) {
+    _messages({ responsibility, initiative, project, tools, shared = false }) {
         const system = [
             'You are doing one bounded piece of delegated work for a person, unattended. They are not watching and cannot answer questions now.',
             `The responsibility they delegated: "${responsibility.title}".${responsibility.outcome ? ` What good looks like: ${responsibility.outcome}` : ''}`,
             project ? `It is linked to their project "${project.name}".` : '',
+            shared ? projectAudience.SHARED_PROMPT(project) : '',
             `You may only use these tools: ${tools.join(', ')}. Anything else - sending, scheduling, deleting, changing what the person wrote - is not yours to do. If the work needs an action you cannot take, say so in your report instead of attempting it.`,
             'Changing something is the exception, not the goal: write or edit only when the responsibility clearly calls for it, and say exactly what you changed in your report.',
             'A refused tool call means that is outside what was delegated. Do not retry it or look for another way around it.',
@@ -450,9 +458,12 @@ class AssistantRunService {
         // Each tool says when it is on offer (a linked project, a feature
         // that is on, a plan-step run). A plan step in a project other
         // people read is not offered the person's private knowledge at all.
+        // A finding for the project's members cannot quote what the run never reads.
+        const sharing = planStep ? { shared: false } : await projectAudience.decide({ initiative, responsibility, project });
         const offered = new Set(Object.keys(TOOLS).filter((name) => {
             const spec = TOOLS[name];
             if (typeof spec.available === 'function' && !spec.available({ project, features, planStep })) return false;
+            if (sharing.shared && spec.source === 'private') return false;
             return !(planStep && sharedProject && spec.source === 'private');
         }));
 
@@ -575,8 +586,8 @@ class AssistantRunService {
                     messages: stepWork
                         ? steps.messages({ responsibility, project, tools: [...offered], ...stepWork })
                         : request
-                            ? requests.messages({ responsibility, project, tools: [...offered], source: request })
-                            : this._messages({ responsibility, initiative, project, tools: [...offered] }),
+                            ? requests.messages({ responsibility, project, tools: [...offered], source: request, shared: sharing.shared })
+                            : this._messages({ responsibility, initiative, project, tools: [...offered], shared: sharing.shared }),
                     chatOptions: {
                         max_tokens: REPLY_TOKENS,
                         background: true,
@@ -667,6 +678,8 @@ class AssistantRunService {
             return { status: 'FAILED', stopCode: 'NO_RESULT', runId: run.id };
         }
 
+        // What the run reported, before the lines naming what it changed.
+        const reported = result.summary;
         if (applied.lines.length) {
             // A change was made: the person is always told, whatever the model reported.
             result.outcome = 'DONE';
@@ -678,35 +691,91 @@ class AssistantRunService {
             recheckAfter: result.outcome === 'NO_CHANGE' ? new Date(now.getTime() + 24 * 60 * 60 * 1000) : null
         });
         if (!settled.ok) return leaseLost();
-        let updateId = null;
-        if (result.outcome === 'DONE') {
+        const updateId = result.outcome === 'DONE'
+            ? await this._publishFinding({
+                run, initiative, responsibility, project, actor, request, result, reported, applied, privateRead: ctx.privateRead
+            })
+            : null;
+        await finishRun({ status: 'COMPLETED', outcome: result.outcome, title: result.title || null, summary: result.summary || null, updateId });
+        return { status: 'COMPLETED', outcome: result.outcome, runId: run.id, updateId };
+    }
+
+    /**
+     * Tell the person what the run found and, when the grant asks for it and
+     * every condition holds, the project's members too (DA-11c). Never
+     * throws. The person's own notice is always filed; it says whether the
+     * finding was shared and, when it was not, why. Returns that notice's id.
+     */
+    async _publishFinding({ run, initiative, responsibility, project, actor, request, result, reported, applied, privateRead }) {
+        const updates = require('./assistantUpdateService');
+        const owner = responsibility.ownerUserId;
+        const title = result.title || clip(initiative.title, 200);
+        const fileFailed = (phase, code) => workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase, code });
+        const share = await projectAudience.decide({ initiative, responsibility, project, privateRead });
+        let note = share.requested ? projectAudience.keptPrivate(share.code) : null;
+
+        if (share.shared) {
             try {
-                const published = await require('./assistantUpdateService').publish({
-                    audience: { userId: responsibility.ownerUserId },
+                // Only what is the project's own is quoted: its files and what the
+                // run reported. What it changed in the person's private knowledge is theirs.
+                const sharedSummary = clip(
+                    [reported, applied.projectLines.length ? `Changed: ${applied.projectLines.join(' ')}` : ''].filter(Boolean).join('\n\n'),
+                    SUMMARY_CHARS
+                );
+                const published = await updates.publish({
+                    audience: { projectId: project.id },
                     identityKey: `initiative:${initiative.id}`,
                     kind: 'finding',
-                    title: result.title || clip(initiative.title, 200),
-                    summary: result.summary || null,
-                    components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
+                    title,
+                    summary: sharedSummary || null,
+                    components: [...new Set(['projects', ...(request ? ['conversations'] : []), 'research', ...applied.projectComponents])],
                     source: { kind: 'initiative', id: initiative.id },
-                    // A result of something asked in a conversation links back to it.
                     actions: [
-                        { kind: 'open_initiative', id: String(initiative.id) },
+                        { kind: 'open_project', id: `${project.ownerId}/${project.slug}` },
                         ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
                     ],
                     responsibilityId: responsibility.id,
                     initiativeId: initiative.id,
-                    producerUserId: actor,
-                    deliver: true
+                    producerUserId: actor
                 });
-                updateId = published.update.id;
+                // The person who produced it has it in their own notice, below.
+                await updates.acknowledge({ userId: owner, items: [{ id: published.update.id, revision: published.update.revision }] });
+                note = `Shared with the members of "${project.name}".`;
             } catch (error) {
-                logger.warn?.(`[assistant run] run ${run.id} finished but its update could not be filed: ${error.message}`);
-                await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'publish', code: 'UPDATE_FAILED' });
+                logger.warn?.(`[assistant run] run ${run.id} finished but its finding could not be shared: ${error.message}`);
+                await fileFailed('publish', 'SHARE_FAILED');
+                note = projectAudience.keptPrivate('SHARE_FAILED');
             }
         }
-        await finishRun({ status: 'COMPLETED', outcome: result.outcome, title: result.title || null, summary: result.summary || null, updateId });
-        return { status: 'COMPLETED', outcome: result.outcome, runId: run.id, updateId };
+
+        try {
+            const summary = note
+                ? clip(result.summary || '', Math.max(0, SUMMARY_CHARS - note.length - 2)) + `${result.summary ? '\n\n' : ''}${note}`
+                : result.summary;
+            const published = await updates.publish({
+                audience: { userId: owner },
+                identityKey: `initiative:${initiative.id}`,
+                kind: 'finding',
+                title,
+                summary: summary || null,
+                components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
+                source: { kind: 'initiative', id: initiative.id },
+                // A result of something asked in a conversation links back to it.
+                actions: [
+                    { kind: 'open_initiative', id: String(initiative.id) },
+                    ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                ],
+                responsibilityId: responsibility.id,
+                initiativeId: initiative.id,
+                producerUserId: actor,
+                deliver: true
+            });
+            return published.update.id;
+        } catch (error) {
+            logger.warn?.(`[assistant run] run ${run.id} finished but its update could not be filed: ${error.message}`);
+            await fileFailed('publish', 'UPDATE_FAILED');
+            return null;
+        }
     }
 
     // --- Plan-step runs (ADR 0019) -----------------------------------------------------
@@ -937,6 +1006,9 @@ class AssistantRunService {
         );
         const lines = [];
         const components = new Set();
+        // What a project's members may be told: changes to the project itself.
+        const projectLines = [];
+        const projectComponents = new Set();
         for (const row of rows) {
             const text = String(row.resultText || '');
             // A write tool that declined (title exists, note is the person's) changed nothing.
@@ -944,8 +1016,12 @@ class AssistantRunService {
             lines.push(text.split('\n')[0]);
             const component = TOOLS[row.tool]?.component;
             if (component) components.add(component);
+            if (TOOLS[row.tool]?.publishes === 'project') {
+                projectLines.push(text.split('\n')[0]);
+                if (component) projectComponents.add(component);
+            }
         }
-        return { lines, components: [...components] };
+        return { lines, components: [...components], projectLines, projectComponents: [...projectComponents] };
     }
 
     /** Retention: journals and runs of long-finished work (the initiative prune cascades too). */

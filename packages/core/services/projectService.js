@@ -950,6 +950,7 @@ class ObservatoryService {
         } catch { /* the discussion may never have been created */ }
         // Share links / members / invites cascade with the project row;
         // the dashboard file and workspace tree are removed by hand.
+        await requireOptional('./assistantUpdateService', { feature: 'assistant' })?.forgetProject(row.id);
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
         this.history.forgetProject(row);
@@ -4338,6 +4339,12 @@ class ObservatoryService {
                 present: false
             });
         } catch { /* the parlor catches up on next ensure */ }
+        // What they read of the project's findings no longer reaches them (it
+        // follows membership), and the record of having read it goes too.
+        try {
+            await requireOptional('./assistantUpdateService', { feature: 'assistant' })
+                ?.forgetMemberReceipts({ projectId: row.id, userId: target });
+        } catch { /* the retention sweep deletes what this missed */ }
         await this._notifyProjectHumans({
             projectId: row.id,
             kind: 'project-members',
