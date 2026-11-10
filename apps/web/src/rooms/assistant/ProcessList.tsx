@@ -7,9 +7,10 @@ import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { useDateLabel } from '../../hooks/useDateLabel';
+import { GateDecision } from '../../components/GateDecision';
 import type {
     AssistantProcess, AssistantProcessList, ProcessAction, ProcessActionResult, ProcessCleanup, ProcessExecution,
-    ProcessIncident, ProcessRelevance
+    ProcessIncident, ProcessRelevance, ProcessRepair
 } from '../../lib/types';
 
 /**
@@ -20,7 +21,13 @@ import type {
  * A process can be paused, resumed, archived and restored here. Nothing on
  * this page deletes one: archiving keeps the process and its history, and
  * cleaning up an archived process first shows exactly what it would remove.
- * Repair is not here; each process is still edited where it was made.
+ *
+ * A failing process may carry a repair: one typed action (run it once more,
+ * or point a followed source at the address it now redirects to) that is
+ * checked against the process's own next run and undone if it fails. A
+ * repair that waits for the person is answered here with the same decision
+ * card Home and the Inbox show. Anything else about a process is still
+ * edited where it was made.
  */
 
 const KIND_TEXT: Record<AssistantProcess['kind'], { label: string; to: string | null }> = {
@@ -127,6 +134,47 @@ function lifecycleText(process: AssistantProcess, assistantName: string, whenLab
         parts.push(`You chose to keep it running${state.kept.at ? ` ${whenLabel(state.kept.at)}` : ''}.`);
     }
     return parts.join(' ');
+}
+
+const REPAIR_WHY: Record<string, string> = {
+    VERIFY_TIMEOUT: 'no run finished in the time allowed',
+    RELAPSED: 'its next scheduled run failed again',
+    DEPENDENTS_STILL_BLOCKED: 'what depends on it is still blocked'
+};
+
+/** Where a repair stands, in a sentence or two. Empty for one that was withdrawn or declined. */
+function repairText(repair: ProcessRepair, assistantName: string, whenLabel: (value: string) => string): string {
+    const did = repair.action === 'follow_redirect'
+        ? `pointed it at the address it now redirects to${repair.address ? ` (${repair.address})` : ''}`
+        : 'ran it once more with nothing changed';
+    const when = repair.appliedAt ? ` ${whenLabel(repair.appliedAt)}` : '';
+    const lead = `${assistantName} ${did}${when}${repair.actor === 'person' ? ', as you approved' : ''}`;
+    const undone = repair.rollback === 'restored' ? ' Its previous address was put back.'
+        : repair.rollback === 'kept' ? ' Its address was changed again afterwards, so it was left as it is.' : '';
+    const attempts = repair.allowed && repair.attempt ? ` Attempt ${repair.attempt} of ${repair.allowed}.` : '';
+    switch (repair.status) {
+        case 'proposed':
+            return repair.action === 'follow_redirect'
+                ? `Its address now redirects to ${repair.address || 'another address'}. Nothing has been changed.`
+                : 'A repair is proposed: run it once more with nothing changed. Nothing has been done yet.';
+        case 'verifying':
+            return `Repair under way: ${lead}. The run after it is being checked.${attempts}`;
+        case 'observing':
+            return `Repaired: ${lead}, and the run after that worked. Its next scheduled run is being watched before it counts as fixed.`;
+        case 'succeeded':
+            return `Repair held: ${lead}, and its next scheduled run worked too.`;
+        case 'failed': {
+            const why = REPAIR_WHY[repair.stopCode || ''] || `the run after it failed${repair.stopCode ? ` (${repair.stopCode})` : ''}`;
+            const after = repair.direction === 'asked' ? ' No attempts are left.'
+                : repair.direction === 'leave' ? ' You chose to leave it running.'
+                    : repair.direction === 'pause' ? ' You chose to pause it.' : '';
+            return `Repair did not work: ${lead}, but ${why}.${undone}${attempts}${after}`;
+        }
+        case 'closed':
+            return repair.appliedAt ? `A repair was started${when} and closed without a result${repair.stopCode ? ` (${repair.stopCode})` : ''}.${undone}` : '';
+        default:
+            return '';
+    }
 }
 
 function removedText(removes: { observations: number; sourceEntries: number; sourceCache: boolean }): string[] {
@@ -269,6 +317,8 @@ function ProcessRow({ process, nameOf, assistantName, busy, cleanup, onAct, onCo
         || null;
     const stage = process.archived ? 'archived' : process.lifecycle?.stage === 'paused' && !process.enabled ? 'paused' : null;
     const stewardship = lifecycleText(process, assistantName, whenLabel);
+    const repair = process.repair;
+    const repairing = repair ? repairText(repair, assistantName, whenLabel) : '';
     const actions = process.controls.filter((action) => ACTION_LABEL[action]);
     return (
         <div id={`process-${process.kind}-${process.id}`} className={`list-row task-row process-row is-${judged.execution}`}
@@ -293,6 +343,13 @@ function ProcessRow({ process, nameOf, assistantName, busy, cleanup, onAct, onCo
                     </div>
                 )}
                 {stewardship && <div className="hint" data-testid="process-lifecycle">{stewardship}</div>}
+                {repair && repairing && (
+                    <div className="process-repair" data-testid="process-repair" data-repair-status={repair.status}>
+                        <span className="hint">{repairing}</span>
+                        {repair.diagnosis && <span className="hint"> Diagnosis: {repair.diagnosis}</span>}
+                        {repair.ask && <GateDecision card={repair.ask} surface="processes" />}
+                    </div>
+                )}
                 <div className="row-meta">
                     {lastRan ? `Last ran ${whenLabel(lastRan)}` : 'Has not run yet'}
                     {process.nextRunAt && process.enabled ? ` · next ${whenLabel(process.nextRunAt)}` : ''}
@@ -405,6 +462,7 @@ export function ProcessList({ data, pending, error }: { data: AssistantProcessLi
                 Each is judged twice from what it recorded: whether it is working, and whether it is still needed.
                 You can pause, archive and restore each one here. Nothing here deletes a process: archiving keeps it and its history,
                 and cleaning up an archived one shows exactly what it would remove before anything goes.
+                A process that keeps failing may be offered one repair, which is checked against its next run and undone if it does not work.
             </p>
             {pending && <div className="empty">Loading…</div>}
             {error && <div className="empty" role="alert">{error.message}</div>}

@@ -300,6 +300,34 @@
         "sources": ["checklist", "Notion"],
         "wrote": ["writeConnector"]
       }
+    },
+    {
+      "id": "repair-source-01",
+      "kind": "finding",
+      "responsibility": {
+        "title": "Keep the Saltmarsh ferry notices feed working",
+        "outcome": "The ferry notices source keeps being checked, and I am told plainly when it could not be made to work.",
+        "operations": [
+          { "operation": "process.repair", "resource": { "kind": "process", "ids": ["$process"] } }
+        ],
+        "budgets": { "repairAttempts": 1 }
+      },
+      "sources": {
+        "process": {
+          "name": "Saltmarsh ferry notices",
+          "purpose": "Tell me when the Saltmarsh ferry timetable changes.",
+          "cause": "SOURCE_UNAVAILABLE",
+          "worked": 2,
+          "failures": 3,
+          "afterRepair": "Winter timetable from 4 January 2027: first crossing 07:10, last crossing 18:40."
+        }
+      },
+      "expect": {
+        "outcome": "finding",
+        "mentions": ["Saltmarsh ferry notices"],
+        "sources": [],
+        "wrote": ["repairProcess"]
+      }
     }
   ]
 }

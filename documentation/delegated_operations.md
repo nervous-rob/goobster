@@ -46,6 +46,11 @@ from here, and the page never shows what the work is about.
 - **A research expedition a run already started finishes.** It was
   authorized when it started and is bounded on its own; the run that started
   it waits and reads the result after the resume.
+- **Repairs wait where they are.** Goobster applies no repair to a failing
+  process, and one he had already applied is not run again, judged or undone
+  until the resume. A repair a person approves themselves is their own act
+  and is not held
+  ([process_stewardship.md](process_stewardship.md#stop-all-and-the-pilot)).
 - **People are told.** Home says the host has stopped delegated work. People
   can still draft, edit, pause and revoke their responsibilities, and
   Goobster still notices and *proposes* work (and queues it, for a
@@ -117,6 +122,7 @@ records the pilot decision, only the owner has them.**
 | `delivery` | DA-9 | Live overview, the interruption rule, the digest, push and Discord echoes |
 | `feedback` | DA-10 | Feedback that changes selection, timing and authority |
 | `reach` | DA-11 | Repository work, editing saved notes, connecting and archiving notes, outside connectors |
+| `repair` | DA-5c | Repairing a process that keeps failing: the offer to run it once more, repair work under a `process.repair` grant, and applying a repair ([process_stewardship.md](process_stewardship.md#repairing-a-process)) |
 
 - **The owner** is any active account with the operator role. An
   installation with two operators has two owners; a disabled or demoted
@@ -125,7 +131,8 @@ records the pilot decision, only the owner has them.**
   and all of it checks `conversation`:
   - *Deciding a request from its card* (DA-7a,
     [assistant_home.md](assistant_home.md#who-is-offered-a-card-the-pilot-gate))
-    on Home, in the Inbox, on a project board and in chat. Anyone but the
+    on Home, in the Inbox, on a project board, in the Processes list and
+    in chat. Anyone but the
     owner is offered no card and the decide route answers `PILOT_ONLY`,
     whichever surface the caller names. Their requests are
     still listed and counted, and are answered where they live: a friend
@@ -184,6 +191,11 @@ records the pilot decision, only the owner has them.**
   longer do. Your stop-all holds an approval back the same way
   (`HOST_STOPPED`): nothing is sent to the outside service while delegated
   work is stopped.
+  Process repair (DA-5c) is gated as `repair`: for anyone but the owner no
+  repair is offered or proposed, `process.repair` is refused with
+  `PILOT_ONLY` at activation and at dispatch, and a repair run that was
+  already queued ends before any model call. Process incidents, and pausing
+  and archiving a process, are not gated.
   Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
   too: for anyone but the owner, activating or resuming a responsibility
   whose updates go in a digest or contact them is refused with `PILOT_ONLY`,

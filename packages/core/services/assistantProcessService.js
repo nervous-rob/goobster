@@ -8,7 +8,8 @@
  * looks like. `assess()` judges each process on two axes, execution and
  * relevance, from typed evidence (assistant/processes/assessment.js). It is
  * a read: nothing here pauses, repairs or deletes anything. Pausing,
- * archiving, restoring and cleanup live in assistantProcessLifecycleService.
+ * archiving, restoring and cleanup live in assistantProcessLifecycleService,
+ * repair in assistantProcessRepairService.
  *
  * Observations are typed per occurrence: (process, occurrenceKey, phase) is
  * unique, so a retried delivery updates one row instead of adding another,
@@ -375,6 +376,7 @@ class AssistantProcessService {
     async list({ userId, now = new Date() }) {
         const lifecycle = require('./assistantProcessLifecycleService');
         const { processes, counts } = await this.assess({ userId, now });
+        const repairs = await require('./assistantProcessRepairService').summaries({ userId });
         return {
             processes: processes.map(entry => ({
                 kind: entry.kind,
@@ -391,7 +393,9 @@ class AssistantProcessService {
                 incident: entry.incident,
                 archived: Boolean(entry.described.archived),
                 lifecycle: lifecycle.present(entry.lifecycle),
-                controls: lifecycle.controls(entry, entry.lifecycle)
+                controls: lifecycle.controls(entry, entry.lifecycle),
+                // The newest repair of it, with the decision card while it waits for the person.
+                repair: repairs.get(entry.ref) || null
             })),
             counts
         };
@@ -556,7 +560,8 @@ class AssistantProcessService {
             controls: lifecycle.controls(entry, entry.lifecycle),
             // Processes of the person's that cannot work without this one.
             dependents: lifecycle._dependents(processes, entry.ref),
-            cleanup: await lifecycle.latestCleanup(userId, ref.kind, ref.id)
+            cleanup: await lifecycle.latestCleanup(userId, ref.kind, ref.id),
+            repairs: await require('./assistantProcessRepairService').history({ userId, kind: ref.kind, id: ref.id })
         };
     }
 

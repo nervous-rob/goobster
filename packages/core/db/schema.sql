@@ -3974,6 +3974,62 @@ CREATE TABLE IF NOT EXISTS assistant_process_cleanups (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_process_cleanups_owner ON assistant_process_cleanups(ownerUserId, processKind, processId);
 
+-- Process repairs (DA-5c, ADR 0029): one row per repair of one process in
+-- one incident, proposed or attempted. A repair is one of a closed list of
+-- typed actions, applied by code, verified from the process's own typed
+-- observations and rolled back when that fails.
+--   status: PROPOSED (waiting for the person) | DECLINED | WITHDRAWN (what
+--     it was for went away) | VERIFYING (applied; waiting for one run to
+--     prove it) | OBSERVING (proved once; watching the next normal run) |
+--     SUCCEEDED | FAILED | CLOSED (ended without a verdict)
+--   action: 'rerun' (one run now, nothing changed) | 'follow_redirect'
+--   patchJson / snapshotJson: the change and what it replaced, which is the
+--     rollback plan. For a followed source these hold its address, the
+--     person's own data: exported and erased with the rest.
+--   planJson: the processes affected, the attempt budget, the verification
+--     contract and the observations already there when it was applied
+--   resultJson: what verification saw (states, codes and times only)
+--   rollback: none (nothing was changed) | restored | kept (the person had
+--     changed it since, so it was left as they set it)
+--   direction: asked | pause | leave, once attempts have run out
+--   attemptKey: the run journal row that applied it, for crash recovery
+CREATE TABLE IF NOT EXISTS assistant_process_repairs (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    name TEXT,
+    incidentId INTEGER,
+    attempt INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL DEFAULT 'PROPOSED'
+        CHECK (status IN ('PROPOSED', 'DECLINED', 'WITHDRAWN', 'VERIFYING', 'OBSERVING', 'SUCCEEDED', 'FAILED', 'CLOSED')),
+    action TEXT NOT NULL,
+    diagnosisCode TEXT,
+    diagnosisNote TEXT,
+    proposedBy TEXT NOT NULL DEFAULT 'steward' CHECK (proposedBy IN ('steward', 'run')),
+    actorKind TEXT CHECK (actorKind IN ('person', 'assistant')),
+    responsibilityId INTEGER,
+    initiativeId INTEGER,
+    attemptKey TEXT,
+    patchJson TEXT,
+    snapshotJson TEXT,
+    planJson TEXT,
+    resultJson TEXT,
+    rollback TEXT CHECK (rollback IN ('none', 'restored', 'kept')),
+    stopCode TEXT,
+    direction TEXT CHECK (direction IN ('asked', 'pause', 'leave')),
+    appliedAt TEXT,
+    verifiedAt TEXT,
+    endedAt TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_repairs_owner ON assistant_process_repairs(ownerUserId, processKind, processId);
+CREATE INDEX IF NOT EXISTS idx_assistant_process_repairs_status ON assistant_process_repairs(status, ownerUserId);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_process_repairs_attempt ON assistant_process_repairs(attemptKey);
+
 -- Daily proposal counters (DA-8, ADR 0026): how many opportunities one
 -- adapter has proposed for one responsibility on one UTC day, and how many
 -- further changes it folded into the newest revision instead. The cap is

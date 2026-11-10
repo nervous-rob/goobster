@@ -197,10 +197,14 @@ settles it in all of them.
 | A mission plan waiting for approval | A project member who may approve it | *Approve plan* |
 | An approved mission waiting to start | A project member who may start it | *Start mission* |
 | A process that may no longer be needed | The person who owns the process | *Pause it*, *Keep it running* |
+| A proposed repair of a process that keeps failing | The person who owns the process | *Run it once now* (or *Use the new address*), *Leave it* |
+| A repair that used up its attempts | The person who owns the process | *Pause it*, *Leave it running* |
 
-Every other request (work to review, a blocked mission, a question, a repair
-to review, a responsibility to review) keeps its *Open* link to the place
-where it is decided.
+Every other request (work to review, a blocked mission, a question, a
+responsibility to review) keeps its *Open* link to the place where it is
+decided. The two repair requests also appear, with the same buttons, on the
+process's row in the Processes list
+([process_stewardship.md](process_stewardship.md#repairing-a-process)).
 
 What holds:
 
@@ -209,13 +213,15 @@ What holds:
   that owns the request
   (`friendService.respond`, `accessRequestService.approve` / `decline`,
   `projectMissionService.approve` / `start`,
-  `assistantProcessLifecycleService.act`) with that service's own checks.
+  `assistantProcessLifecycleService.act`,
+  `assistantProcessRepairService.approve` / `decline` / `direct`) with that
+  service's own checks.
   Approving a plan still goes through the mission's human approval receipt
   for the plan revision you were shown.
 - **The card is the decision.** Each card names the request's `occurrence`
   and a `revision` taken from the record (the plan revision of a mission,
   the time a friend or join request was made, the contract and retirement
-  stage of a process). The decision is applied only to that card.
+  stage of a process, the revision of a repair record). The decision is applied only to that card.
 - **A stale card is refused, with what the request is now.** If the request
   was answered, withdrawn, reopened or changed after the card was shown,
   nothing is decided and you are told its current state ("This request was
@@ -246,9 +252,9 @@ conversational increment, so it is behind the pilot gate
 ([delegated_operations.md](delegated_operations.md), capability
 `conversation`). Until the host records the pilot decision, only the
 installation's owner (an account with the operator role) is offered a card
-or can decide through one, on Home, in the Inbox, on a project board and
-in chat alike. The surface is named by the caller, so the gate is the same
-for all four: none of them is a way around it.
+or can decide through one, on Home, in the Inbox, on a project board, in
+the Processes list and in chat alike. The surface is named by the caller,
+so the gate is the same for all of them: none of them is a way around it.
 
 For everyone else nothing about the request itself changes: it is still
 listed under Needs you and counted, on Home and in the Inbox. What differs
@@ -432,7 +438,7 @@ See [process_stewardship.md](process_stewardship.md#retiring-a-process).
 - `POST /api/app/assistant/gates/:ref/decide` with
   `{ "option", "occurrence", "revision", "surface" }` decides the request
   the card describes. `:ref`, `occurrence` and `revision` are the card's;
-  `surface` is `home`, `inbox`, `chat` or `project` and is recorded where the owning
+  `surface` is `home`, `inbox`, `chat`, `project` or `processes` and is recorded where the owning
   service keeps an audit (a join request's `operator_audit` row has
   `detail.via`). It answers
   `{ "decided": { "ref", "kind", "option", "message" }, "current": card | null }`.
@@ -505,7 +511,7 @@ producer's responsibility
 
 - Feedback on a briefing item (useful, already knew, wrong time, ...).
 - Deciding a request from a notification, and decisions for
-  the other request kinds (review, unblock, answer, repair, responsibility
+  the other request kinds (review, unblock, answer, responsibility
   review): those still link to where the request is decided.
 - Signals for the Conversations card beyond updates filed against it.
 - Live changes for every account: the overview changes while it is open

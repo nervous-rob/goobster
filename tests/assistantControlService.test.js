@@ -691,7 +691,7 @@ describe('the Host room routes', () => {
             work: { byStatus: { QUEUED: 1 } },
             pilot: { decision: { scope: 'owner', decidedAt: null } }
         });
-        expect(view.json.pilot.capabilities.map(entry => entry.name)).toEqual(['conversation', 'sources', 'delivery', 'feedback', 'reach']);
+        expect(view.json.pilot.capabilities.map(entry => entry.name)).toEqual(['conversation', 'sources', 'delivery', 'feedback', 'reach', 'repair']);
         expect(JSON.stringify(view.json)).not.toMatch(/SECRET|garden/i);
         expect(view.json.accounts.map(account => account.id)).toContain(A);
 

@@ -13,8 +13,8 @@ step of section 7 as recorded in ADR 0019, the rest of section 7 for
 explicit requests (requests addressed to Goobster in a conversation,
 supersession when a person changes direction) together with the project
 board of section 9.2 as recorded in ADR 0021, and the assessment,
-incidents and retirement of section 8 as recorded in ADR 0020 and 0022
-(repair is planned); the rest, and all of section
+incidents, retirement and repair of section 8 as recorded in ADR 0020, 0022
+and 0029 (what section 8 still plans is listed there); the rest, and all of section
 13 except 13.1 (ADR 0023 and 0024), the explicit-request
 part of the `conversation_request` adapter (13.2), delivery and interruption
 (13.3), repository work (ADR 0025) and findings for a project's members
@@ -457,9 +457,35 @@ moment of the change, and otherwise files a `process_retirement` request that
 is decided in place. Cleanup is the person's only, from a frozen manifest of
 exact row ids. See
 [process_stewardship.md](process_stewardship.md#retiring-a-process) and
-[ADR 0022](adr/0022-process-retirement.md). Still planned: repair, cleanup
-under `cleanup.exact`, declared owned artifacts beyond a process's own
-records, and permanent deletion (which no grant reaches today).
+[ADR 0022](adr/0022-process-retirement.md).
+
+**Shipped in DA-5c:** repair as a closed list of typed actions applied by
+code (`assistantProcessRepairService`, table `assistant_process_repairs`):
+`rerun` for automations and followed sources, and `follow_redirect` for a
+followed source whose server redirects. A repair is recorded before it is
+applied (diagnosis code and note, patch, snapshot, affected processes,
+attempt number and allowance, verification contract, rollback plan),
+verified from the typed observations recorded after it (a clean run, output
+that did not fail or is fresh where the contract asks for freshness, and
+dependents no longer blocked), observed through the next normal occurrence,
+and rolled back where safe when it fails. The assistant applies one only
+from a delegated run proposed by the standing source adapter
+`process_incident`, through the run tool `repairProcess`, under
+`process.repair` on the exact process, checked by `authorize()` at dispatch;
+the model chooses the action and writes the diagnosis and supplies nothing
+else. Without a grant the steward files `rerun` as a `process_repair`
+request that is decided in place; a redirect to another host is always
+filed that way. Attempts per incident come from the grant's
+`repairAttempts` (1 by default, 5 at most), and exhausting them files one
+request for direction. The capability is behind the pilot gate (`repair`)
+and held under the host's stop-all. See
+[process_stewardship.md](process_stewardship.md#repairing-a-process) and
+[ADR 0029](adr/0029-process-repair.md).
+
+Still planned: repair of project triggers, watches, stalled processes and
+shared-cause incidents; any repair that edits a prompt, schedule or script;
+cleanup under `cleanup.exact`; declared owned artifacts beyond a process's
+own records; and permanent deletion (which no grant reaches today).
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,
@@ -875,8 +901,9 @@ As built:
   (`assistantAccessService.allows(userId, 'conversation')`, 13.6), and so
   does deciding in place, below.
 
-**Deciding a request in place.** *Implemented for Home, the Inbox (DA-7a)
-and the chat card (DA-7b); the repair-proposal descriptor is planned.* The
+**Deciding a request in place.** *Implemented for Home, the Inbox (DA-7a),
+the chat card (DA-7b) and the repair proposal (DA-5c, also on the Processes
+list).* The
 shipped behaviour and API are in
 [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown).
 Each gate kind registers a descriptor once
@@ -1301,7 +1328,8 @@ DA-12b; how to run and read it is in
   processes.
 - **Pilot gate (implemented).** `assistantAccessService.allows(userId,
   capability)` is the per-account check every increment from DA-7 through
-  DA-11 makes (`conversation`, `sources`, `delivery`, `feedback`, `reach`).
+  DA-11 makes (`conversation`, `sources`, `delivery`, `feedback`, `reach`),
+  and DA-5c makes for process repair (`repair`).
   Until `instance_state.assistantPilot` records `everyone`, only an active
   operator account passes. The DA-11 grant operations already in the
   vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
@@ -1321,9 +1349,9 @@ DA-12b; how to run and read it is in
   fixed five-check rubric, version 1, a default until the owner records
   another.
 - **Prompt version (implemented).** `assistantRunService.promptVersion()`
-  returns `PROMPT_VERSION` and a fingerprint of the run instructions and
-  every tool definition, so a change to either is visible whether or not the
-  version was raised. It is recorded by the evaluation; it is not yet stored
+  returns `PROMPT_VERSION` and a fingerprint of the run instructions, the
+  instructions of a repair run and every tool definition, so a change to any
+  of them is visible whether or not the version was raised. It is recorded by the evaluation; it is not yet stored
   on production runs.
 - **Pilot record (implemented).** The DA-6 template has the model and prompt
   version and the caps in force, so a result can be compared across changes.
