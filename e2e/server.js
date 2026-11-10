@@ -846,19 +846,19 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
-    // Delegating by conversation (assistantConversation.spec.js): the owner,
+    // Delegating by conversation (assistantChatDelegation.spec.js): the owner,
     // with Attention on and nothing delegated, and a scripted model for the
     // person's next chat turns. Each entry of `rounds` is one round's tool
     // calls; when they run out the model says `reply`. The turn, the tools,
     // the cards and the confirmations are the real ones. No provider.
-    let conversationModel = null;
-    app.post('/e2e/fixtures/assistant-conversation', express.json(), async (req, res) => {
+    let delegationModel = null;
+    app.post('/e2e/fixtures/assistant-chat-delegation', express.json(), async (req, res) => {
         try {
             const aiService = require('@goobster/core/services/aiService');
-            if (conversationModel) {
-                aiService.chat = conversationModel.original;
-                aiService.generateText = conversationModel.generateText;
-                conversationModel = null;
+            if (delegationModel) {
+                aiService.chat = delegationModel.original;
+                aiService.generateText = delegationModel.generateText;
+                delegationModel = null;
             }
             if (req.body?.restore === true) return res.json({ ok: true });
             const userId = String(req.body?.userId || '');
@@ -888,12 +888,12 @@ async function main() {
                 }));
             };
             const reply = String(req.body?.reply || 'Done.');
-            conversationModel = { original: aiService.chat, generateText: aiService.generateText, rounds };
+            delegationModel = { original: aiService.chat, generateText: aiService.generateText, rounds };
             // The local provider has no web search of its own, so the turn first asks
             // the model whether to search. With no model to ask, a keyword match
             // ("current", "find") decides instead and the turn becomes a search
             // approval. This model answers that one question: no.
-            const { generateText } = conversationModel;
+            const { generateText } = delegationModel;
             aiService.generateText = async (prompt, ...rest) => (/requires a web search/.test(String(prompt))
                 ? 'false'
                 : generateText.call(aiService, prompt, ...rest));
@@ -917,12 +917,12 @@ async function main() {
         }
     });
     // What the database holds for that person, for the spec's own assertions.
-    app.get('/e2e/fixtures/assistant-conversation/state', async (req, res) => {
+    app.get('/e2e/fixtures/assistant-chat-delegation/state', async (req, res) => {
         try {
             const userId = String(req.query.userId || '');
             res.json({
                 // Scripted rounds the model has not played yet (0: every tool call was made).
-                unplayed: conversationModel ? conversationModel.rounds.length : 0,
+                unplayed: delegationModel ? delegationModel.rounds.length : 0,
                 responsibilities: await db.all(
                     'SELECT id, title, status, revision, proposedBy, proposalKeptAt, activatedAt FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id', { userId }),
                 receipts: await db.all(

@@ -1,4 +1,4 @@
-# ADR 0019: A model may draft a responsibility; only a person's confirmation receipt turns authority on
+# ADR 0023: A model may draft a responsibility; only a person's confirmation receipt turns authority on
 
 ## Status
 

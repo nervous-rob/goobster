@@ -3484,7 +3484,7 @@ CREATE TABLE IF NOT EXISTS assistant_responsibilities (
     endedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
-    -- 'model' when a chat tool drafted it (ADR 0019); NULL when a person did.
+    -- 'model' when a chat tool drafted it (ADR 0023); NULL when a person did.
     -- Set once at insert. Such a grant needs a human confirmation receipt
     -- to be activated or resumed, for as long as it exists.
     proposedBy TEXT CHECK (proposedBy IS NULL OR proposedBy = 'model'),
@@ -3534,7 +3534,7 @@ CREATE TABLE IF NOT EXISTS assistant_source_cursors (
     UNIQUE (responsibilityId, sourceKind, sourceId)
 );
 
--- A person's confirmation of one thing they were shown (ADR 0019): the
+-- A person's confirmation of one thing they were shown (ADR 0023): the
 -- activation or resume of a responsibility, or a decision pressed on a chat
 -- card. Minted only for a signed-in person when the confirmation is
 -- rendered, never inside a model tool call. It is bound to the subject, the

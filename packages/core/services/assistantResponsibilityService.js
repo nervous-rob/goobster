@@ -6,7 +6,7 @@
  * A responsibility is inert until its owner activates it through an
  * authenticated action, and activation needs an enabled attention policy.
  * The model never activates, resumes or widens one. It can draft one
- * (`propose()`, the `proposeResponsibility` chat tool; ADR 0019): the draft
+ * (`propose()`, the `proposeResponsibility` chat tool; ADR 0023): the draft
  * is marked `proposedBy: 'model'`, grants nothing, and for as long as it
  * exists it is activated or resumed only with a human confirmation receipt
  * (assistantConfirmationService). Activation, resume, edits and

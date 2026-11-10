@@ -186,7 +186,7 @@ pause one or cancel a piece of work; a draft grants nothing, and turning
 one on is your own confirmed press in the portal. Every service call that
 would turn authority on refuses inside a model tool call (`HUMAN_ONLY`).
 See [delegated_conversation.md](delegated_conversation.md) and
-[ADR 0019](adr/0019-conversational-delegation-and-receipts.md).
+[ADR 0023](adr/0023-conversational-delegation-and-receipts.md).
 
 ## Initiatives
 

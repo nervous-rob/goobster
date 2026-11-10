@@ -1,5 +1,5 @@
 /**
- * Human confirmation receipts (DA-7b, ADR 0019).
+ * Human confirmation receipts (DA-7b, ADR 0023).
  *
  * A model can draft a responsibility. It can never confirm one, and it can
  * never press a decision on a request. The proof that a person did is a

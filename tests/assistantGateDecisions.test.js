@@ -112,7 +112,7 @@ describe('one card on Home and in the Inbox', () => {
         const { request, card } = await friendRequest();
         const extra = { surface, userName: 'Ada' };
         if (surface === 'chat') {
-            // In chat the person's press is proved by a receipt for the card as shown (ADR 0019).
+            // In chat the person's press is proved by a receipt for the card as shown (ADR 0023).
             await identityService.grantAccount({ principalId: A, entitlement: 'bootstrap', role: 'operator' });
             extra.receipt = (await confirmations.mint({
                 userId: A, subject: 'gate', id: card.ref, action: 'decide', occurrence: card.occurrence, revision: card.revision, surface: 'chat'

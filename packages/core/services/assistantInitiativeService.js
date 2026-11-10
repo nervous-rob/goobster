@@ -333,7 +333,7 @@ class AssistantInitiativeService {
             throw new AssistantInitiativeError('INVALID_ACTION', `action must be one of ${HUMAN_ACTIONS.join(', ')}.`);
         }
         // Starting, restarting or accepting work is the owner's own decision.
-        // A model's tool call may only stop it (cancel, reject); ADR 0019.
+        // A model's tool call may only stop it (cancel, reject); ADR 0023.
         if (!NARROWING_ACTIONS.has(action) && modelCallScope.active()) {
             throw new AssistantInitiativeError(modelCallScope.HUMAN_ONLY,
                 'Only the person can start, retry or accept delegated work, from the portal.', 403);

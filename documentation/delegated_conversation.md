@@ -20,7 +20,7 @@ What Goobster drafts grants nothing. Turning it on is your own press, in the
 portal. No sequence of tool calls, in chat, in a delegated run or in an
 automation, can activate, resume or widen a responsibility, start a piece of
 work, or decide a request for you. The design and the reasons are in
-[ADR 0019](adr/0019-conversational-delegation-and-receipts.md).
+[ADR 0023](adr/0023-conversational-delegation-and-receipts.md).
 
 ## The tools
 

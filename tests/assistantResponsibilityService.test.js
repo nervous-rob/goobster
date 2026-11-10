@@ -403,7 +403,7 @@ describe('portal routes', () => {
         expect(stale.status).toBe(409);
         expect(await stale.json()).toMatchObject({ error: { code: 'REVISION_CONFLICT', details: { revision: 1 } } });
 
-        // Turning it on is confirmed: the route takes the receipt minted for what the person was shown (ADR 0019).
+        // Turning it on is confirmed: the route takes the receipt minted for what the person was shown (ADR 0023).
         const unconfirmed = await send('POST', `${url}/actions`, own, { action: 'activate', expectedRevision: 1 });
         expect(unconfirmed.status).toBe(403);
         expect(await unconfirmed.json()).toMatchObject({ error: { code: 'HUMAN_CONFIRMATION_REQUIRED' } });

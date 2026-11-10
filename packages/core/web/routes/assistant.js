@@ -11,7 +11,7 @@
  * `expectedRevision` and answer 409 REVISION_CONFLICT when it is stale.
  * Activating or resuming a responsibility, and deciding a request from a
  * chat card, also carry a human confirmation receipt minted here for the
- * session's person (ADR 0019): a model tool call has no session and cannot
+ * session's person (ADR 0023): a model tool call has no session and cannot
  * mint one.
  * The feature gate (inventory routeRules) refuses the whole prefix when the
  * feature is off.
@@ -107,7 +107,7 @@ function mountAssistant(app, ctx, h) {
         throw new AssistantResponsibilityError('INVALID_ACTION', 'action must be keep or discard.', 400);
     }));
 
-    // --- Human confirmation receipts (ADR 0019) -----------------------------
+    // --- Human confirmation receipts (ADR 0023) -----------------------------
     // { subject: responsibility, id, action: activate | resume, revision, surface: portal | chat }
     // { subject: gate, id: <gate ref>, action: decide, occurrence, revision, surface: chat }
     // Minted for the session's person when a confirmation is rendered to

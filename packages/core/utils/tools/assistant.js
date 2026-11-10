@@ -1,5 +1,5 @@
 /**
- * Chat tools for delegated work (DA-7b, ADR 0019): draft a responsibility,
+ * Chat tools for delegated work (DA-7b, ADR 0023): draft a responsibility,
  * say what is being worked on and why, and stop it.
  * Required by packages/core/utils/toolsRegistry.js (the `assistant` feature).
  *
