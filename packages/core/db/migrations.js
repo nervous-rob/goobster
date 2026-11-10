@@ -243,6 +243,8 @@ const COLUMN_MIGRATIONS = [
     ['assistant_updates', 'outboundAt', 'outboundAt TEXT'],
     // When the day's digest may go out (minutes from midnight; NULL = 09:00).
     ['attention_policies', 'digestMinute', 'digestMinute INTEGER'],
+    // Hours the person said were a wrong time (DA-10): a JSON list of 0-23.
+    ['attention_policies', 'avoidHours', 'avoidHours TEXT'],
     // Process lifecycle (DA-5b): archived definitions stay in their own table,
     // and a watch (which has no on/off switch of its own) can be paused.
     ['automations', 'archivedAt', 'archivedAt TEXT'],

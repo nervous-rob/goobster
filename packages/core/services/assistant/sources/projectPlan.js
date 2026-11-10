@@ -7,6 +7,7 @@ const db = require('../../../db');
 
 module.exports = {
     feature: 'projects',
+    learns: true,
     async read(responsibility) {
         if (!responsibility.planId || !responsibility.projectId) return [];
         const plan = await db.get(

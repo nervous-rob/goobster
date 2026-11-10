@@ -54,6 +54,19 @@ function parseJson(text, fallback) {
     }
 }
 
+/** The most hours feedback or Settings may mark: half the day, so marking alone never silences delivery. */
+const MAX_AVOID_HOURS = 12;
+
+/** A stored or submitted list of hours as sorted, distinct whole hours 0-23 (anything else is dropped). */
+function normalizeHours(value) {
+    let list = value;
+    if (typeof value === 'string') {
+        try { list = JSON.parse(value); } catch { list = []; }
+    }
+    if (!Array.isArray(list)) return [];
+    return [...new Set(list.filter(hour => Number.isInteger(hour) && hour >= 0 && hour <= 23))].sort((a, b) => a - b);
+}
+
 function normalizeMinute(value) {
     if (value === null || value === undefined || value === '') return null;
     const n = Math.trunc(Number(value));
@@ -81,6 +94,7 @@ class AttentionPolicyService {
             maxContactsPerDay: row.maxContactsPerDay,
             contactCooldownMinutes: row.contactCooldownMinutes,
             digestMinute: row.digestMinute ?? null,
+            avoidHours: normalizeHours(row.avoidHours),
             enabled: Boolean(row.enabled),
             createdAt: row.createdAt,
             updatedAt: row.updatedAt
@@ -289,6 +303,49 @@ class AttentionPolicyService {
     }
 
     /**
+     * Replace the hours marked as a wrong time (Settings; an empty list
+     * clears them). Hours are on the same clock as the quiet hours.
+     * @param {Object} params - { userId, hours }
+     * @returns {Promise<Object>}
+     */
+    async setAvoidHours({ userId, hours = [] } = {}) {
+        const clean = normalizeHours(hours);
+        if (!Array.isArray(hours) || clean.length !== hours.length || clean.length > MAX_AVOID_HOURS) {
+            throw new AttentionPolicyError('BAD_AVOID_HOURS',
+                `Hours to avoid are a list of at most ${MAX_AVOID_HOURS} different whole hours, 0 to 23.`);
+        }
+        await this._ensurePolicy({ userId, defaultEnabled: false });
+        await db.run(
+            'UPDATE attention_policies SET avoidHours = @hours, updatedAt = CURRENT_TIMESTAMP WHERE userId = @userId',
+            { userId, hours: clean.length ? JSON.stringify(clean) : null }
+        );
+        return await this.get(userId);
+    }
+
+    /**
+     * Mark one hour as a wrong time ("wrong time" feedback, DA-10). It
+     * changes when delegated work may reach the person and nothing else.
+     * Never creates a policy: someone without one is not contacted at all.
+     * @param {Object} params - { userId, hour }
+     * @returns {Promise<{ added: boolean, code: 'ADDED'|'ALREADY'|'FULL'|'NO_POLICY', hours: number[] }>}
+     */
+    async addAvoidHour({ userId, hour } = {}) {
+        if (!Number.isInteger(hour) || hour < 0 || hour > 23) {
+            throw new AttentionPolicyError('BAD_AVOID_HOURS', 'An hour is a whole number from 0 to 23.');
+        }
+        const policy = await this.get(userId);
+        if (!policy) return { added: false, code: 'NO_POLICY', hours: [] };
+        if (policy.avoidHours.includes(hour)) return { added: false, code: 'ALREADY', hours: policy.avoidHours };
+        if (policy.avoidHours.length >= MAX_AVOID_HOURS) return { added: false, code: 'FULL', hours: policy.avoidHours };
+        const hours = normalizeHours([...policy.avoidHours, hour]);
+        await db.run(
+            'UPDATE attention_policies SET avoidHours = @hours, updatedAt = CURRENT_TIMESTAMP WHERE userId = @userId',
+            { userId, hours: JSON.stringify(hours) }
+        );
+        return { added: true, code: 'ADDED', hours };
+    }
+
+    /**
      * Set the contact budget.
      * @param {Object} params - { userId, maxContactsPerDay, contactCooldownMinutes }
      * @returns {Promise<Object>}
@@ -389,19 +446,7 @@ class AttentionPolicyService {
         const start = policy?.quietStartMinute;
         const end = policy?.quietEndMinute;
         if (start === null || start === undefined || end === null || end === undefined) return false;
-        const mode = opts.mode || 'utc';
-        const timeZone = opts.timeZone || null;
-        let minute;
-        if (mode === 'local' && timeZone) {
-            try {
-                const { localMinuteInZone } = require('../config/userSettingsSchema');
-                minute = localMinuteInZone(now, timeZone);
-            } catch {
-                minute = now.getUTCHours() * 60 + now.getUTCMinutes();
-            }
-        } else {
-            minute = now.getUTCHours() * 60 + now.getUTCMinutes();
-        }
+        const minute = this._minuteOfDay(now, opts);
         if (start === end) return false;
         // Half-open [start, end). Minutes only go to 1439, so a same-day
         // window that ends at 23:59 would otherwise never cover 23:59 itself
@@ -411,6 +456,32 @@ class AttentionPolicyService {
         return start < exclusiveEnd
             ? minute >= start && minute < exclusiveEnd
             : minute >= start || minute < exclusiveEnd; // window wraps past midnight
+    }
+
+    /** The minute of the day on the clock the quiet hours use (local when asked and possible, else UTC). */
+    _minuteOfDay(now, opts = {}) {
+        if ((opts.mode || 'utc') === 'local' && opts.timeZone) {
+            try {
+                const { localMinuteInZone } = require('../config/userSettingsSchema');
+                return localMinuteInZone(now, opts.timeZone);
+            } catch { /* an unknown zone is read as UTC */ }
+        }
+        return now.getUTCHours() * 60 + now.getUTCMinutes();
+    }
+
+    /**
+     * Is this an hour the person said was a wrong time? It holds contact
+     * about delegated work only (attentionService.contactAllowed);
+     * Attention's own notices keep their own calibration.
+     * @param {Object|null} policy
+     * @param {Date} [now]
+     * @param {{ mode?: string, timeZone?: string }} [opts] - as for inQuietHours
+     * @returns {boolean}
+     */
+    avoidsHour(policy, now = new Date(), opts = {}) {
+        const hours = policy?.avoidHours;
+        if (!Array.isArray(hours) || !hours.length) return false;
+        return hours.includes(Math.floor(this._minuteOfDay(now, opts) / 60));
     }
 
     /** Erase one person's policy (privacy / forget-me). */
@@ -427,4 +498,5 @@ module.exports = new AttentionPolicyService();
 module.exports.AttentionPolicyService = AttentionPolicyService;
 module.exports.AttentionPolicyError = AttentionPolicyError;
 module.exports.ACTIONS = ACTIONS;
+module.exports.MAX_AVOID_HOURS = MAX_AVOID_HOURS;
 module.exports.ACTION_INITIATIVE = ACTION_INITIATIVE;

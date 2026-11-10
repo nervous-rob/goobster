@@ -7,6 +7,7 @@ const db = require('../../../db');
 const { fingerprint } = require('./fingerprint');
 
 module.exports = {
+    learns: true,
     async read(responsibility) {
         if (!responsibility.attentionItemId) return [];
         const item = await db.get(

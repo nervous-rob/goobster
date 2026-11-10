@@ -109,6 +109,7 @@ module.exports = {
     KIND,
     SCOPE,
     capability: CAPABILITY,
+    learns: true,
     stream: true,
     STREAM_ID,
     OPEN_LIMIT,

@@ -288,6 +288,8 @@ class UserSettingsService {
                 quietStartMinute: policy?.quietStartMinute ?? null,
                 quietEndMinute: policy?.quietEndMinute ?? null,
                 digestMinute: policy?.digestMinute ?? null,
+                // Hours marked "wrong time" on a finding (documentation/delegated_feedback.md).
+                avoidHours: policy?.avoidHours || [],
                 boundaries: policy?.boundaries || {},
                 ...initiativePrefs
             },
@@ -301,6 +303,7 @@ class UserSettingsService {
                 // The time the day's digest of delegated work goes out
                 // (documentation/delegated_delivery.md): 09:00 unless chosen.
                 digestMinute: policy?.digestMinute ?? attentionConfig.HEARTBEAT.digestMinute,
+                avoidHours: policy?.avoidHours || [],
                 boundaries,
                 timezone: customPrefs.timezone,
                 ...initiativePrefs
@@ -314,7 +317,8 @@ class UserSettingsService {
             appliesTo: SECTION_METADATA.initiative.appliesTo,
             categories: attentionPolicyService.categories,
             initiativeLevels: attentionPolicyService.initiativeLevels,
-            digestDefaultMinute: attentionConfig.HEARTBEAT.digestMinute
+            digestDefaultMinute: attentionConfig.HEARTBEAT.digestMinute,
+            maxAvoidHours: attentionPolicyService.MAX_AVOID_HOURS
         };
 
         // --- 5. Memory & Privacy Section ---
@@ -961,6 +965,7 @@ class UserSettingsService {
                     quietStartMinute: null,
                     quietEndMinute: null,
                     digestMinute: null,
+                    avoidHours: [],
                     boundaries: {},
                     ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'initiative')
                 };
@@ -1295,6 +1300,16 @@ class UserSettingsService {
             }
         }
 
+        if ('avoidHours' in changes && changes.avoidHours !== null) {
+            const hours = changes.avoidHours;
+            const max = attentionPolicyService.MAX_AVOID_HOURS;
+            const whole = Array.isArray(hours) && hours.every(h => typeof h === 'number' && Number.isInteger(h) && h >= 0 && h <= 23);
+            if (!whole || new Set(hours).size !== hours.length || hours.length > max) {
+                throw new UserSettingsError(400, 'BAD_AVOID_HOURS',
+                    `avoidHours must be a list of at most ${max} different whole hours between 0 and 23, or an empty list to clear.`);
+            }
+        }
+
         if ('boundaries' in changes && changes.boundaries !== null) {
             if (typeof changes.boundaries !== 'object' || Array.isArray(changes.boundaries)) {
                 throw new UserSettingsError(400, 'BAD_BOUNDARY', 'Boundaries must be an object keyed by category.');
@@ -1343,6 +1358,9 @@ class UserSettingsService {
             }
             if ('digestMinute' in changes) {
                 await attentionPolicyService.setDigestTime({ userId, minute: changes.digestMinute ?? null });
+            }
+            if ('avoidHours' in changes) {
+                await attentionPolicyService.setAvoidHours({ userId, hours: changes.avoidHours ?? [] });
             }
             if ('boundaries' in changes) {
                 const entries = Object.entries(changes.boundaries || {});

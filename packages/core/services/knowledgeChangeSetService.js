@@ -3,7 +3,8 @@
  *
  * One row of `kg_change_sets` is one change to a person's notes that a
  * delegated run proposed, or made under a grant that names direct editing,
- * or a review of a source that was withdrawn. The lifecycle is the one the
+ * or a review of a source that was withdrawn, or a change the person made
+ * themselves by answering a finding (`recordFeedback`, DA-10). The lifecycle is the one the
  * architecture names (section 6):
  *
  *   PROPOSED -> APPLIED | REJECTED | STALE      APPLIED -> REVERTED
@@ -33,6 +34,8 @@ const { CHANGE_SETS } = require('../config/knowledgeGraphConfig');
 const { diffText } = require('../utils/textDiff');
 
 const GATE_KINDS = { saved_note_edit: 'note_proposal', source_retraction: 'source_retraction' };
+/** `policyCode` of a change the person made from a finding (documentation/delegated_feedback.md). */
+const FEEDBACK_POLICIES = { dispute: 'FEEDBACK_WRONG', keep: 'FEEDBACK_KEEP' };
 
 class ChangeSetError extends Error {
     constructor(status, code, message) {
@@ -186,6 +189,59 @@ class KnowledgeChangeSetService {
                     afterJson: JSON.stringify({ content: cleanContent.slice(0, 1000) }),
                     rationale: clip(rationale, CHANGE_SETS.maxRationaleLength) || null,
                     evidenceJson: JSON.stringify([{ kind: 'run', id: Number(run.id) }]),
+                    appliedRevision: applied.revision, now: utcText()
+                }
+            ));
+            return { ok: true, id, revision: applied.revision };
+        });
+    }
+
+    /**
+     * A change the person made themselves from a finding (DA-10, ADR 0031):
+     * they said it was wrong (`dispute`: the note the run wrote is marked
+     * disputed) or asked to keep its wording (`keep`: the note becomes a
+     * saved note of theirs and no run rewrites it). It is their own click,
+     * so it is applied at once; it is recorded here so it is listed with
+     * every other change to their notes and the same Undo puts it back.
+     * No text changes and nothing is deleted.
+     * @returns {Promise<{ ok: true, id: number, revision: number } | { ok: false, code: string }>}
+     */
+    async recordFeedback({ guildId, userId, nodeId, change, runId = null, responsibilityId = null }) {
+        if (!['dispute', 'keep'].includes(change)) return { ok: false, code: 'BAD_REQUEST' };
+        return db.transaction(async () => {
+            const node = await kg.getPersonalNote({ guildId, userId, nodeId });
+            if (!node) return { ok: false, code: 'NOT_FOUND' };
+            if (node.archivedAt) return { ok: false, code: 'ARCHIVED' };
+            const claimStatus = node.claimStatus || 'current';
+            let applied;
+            let after;
+            if (change === 'dispute') {
+                if (claimStatus !== 'current') return { ok: false, code: 'NO_CHANGE' };
+                applied = await kg.applyNoteChange({ guildId, userId, nodeId, expectedRevision: node.revision, claimStatus: 'disputed' });
+                after = { content: node.content || null, claimStatus: 'disputed' };
+            } else {
+                if (!node.generated || node.curation === 'saved') return { ok: false, code: 'NO_CHANGE' };
+                applied = await kg.applyNoteChange({
+                    guildId, userId, nodeId, expectedRevision: node.revision,
+                    snapshot: { content: node.content, source: node.source, curation: 'saved', generated: 0, claimStatus }
+                });
+                after = { content: node.content || null, claimStatus, curation: 'saved' };
+            }
+            if (!applied.ok) return applied;
+            const id = Number(await db.insert(
+                `INSERT INTO kg_change_sets
+                    (userId, guildId, scopeKey, kind, status, runId, responsibilityId, nodeId, expectedRevision,
+                     operationsJson, beforeJson, afterJson, evidenceJson, policyCode, decisionCode, appliedRevision, decidedAt)
+                 VALUES (@userId, @guildId, @scopeKey, 'direct_change', 'APPLIED', @runId, @responsibilityId, @nodeId, @expectedRevision,
+                     @operationsJson, @beforeJson, @afterJson, @evidenceJson, @policyCode, 'APPLIED', @appliedRevision, @now)`,
+                {
+                    userId: String(userId), guildId, scopeKey: node.scopeKey, runId, responsibilityId,
+                    nodeId: node.id, expectedRevision: Number(node.revision),
+                    operationsJson: JSON.stringify([{ op: change, nodeId: Number(node.id) }]),
+                    beforeJson: JSON.stringify({ label: node.label, ...applied.before, revision: Number(node.revision) }),
+                    afterJson: JSON.stringify(after),
+                    evidenceJson: JSON.stringify(runId ? [{ kind: 'run', id: Number(runId) }] : []),
+                    policyCode: FEEDBACK_POLICIES[change],
                     appliedRevision: applied.revision, now: utcText()
                 }
             ));
@@ -405,6 +461,8 @@ class KnowledgeChangeSetService {
             claimStatus: row.kind !== 'source_retraction' && after.claimStatus && after.claimStatus !== before.claimStatus
                 ? { from: before.claimStatus || 'current', to: after.claimStatus }
                 : null,
+            // A note the person asked to keep as it is worded (no text changed).
+            kept: operations.some(op => op.op === 'keep'),
             rationale: row.rationale || null,
             policy: row.policyCode || null,
             decision: row.decisionCode || null,
@@ -472,3 +530,4 @@ class KnowledgeChangeSetService {
 module.exports = new KnowledgeChangeSetService();
 module.exports.KnowledgeChangeSetService = KnowledgeChangeSetService;
 module.exports.ChangeSetError = ChangeSetError;
+module.exports.FEEDBACK_POLICIES = FEEDBACK_POLICIES;

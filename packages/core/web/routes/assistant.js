@@ -27,18 +27,22 @@ const knowledgeImpact = require('../../services/knowledgeImpactService');
 const knowledgeGraph = require('../../services/knowledgeGraphService');
 const { dmScopeId } = require('../../utils/dmScope');
 const connectors = require('../../services/assistantConnectorService');
+const feedback = require('../../services/assistantFeedbackService');
 
 function mountAssistant(app, ctx, h) {
     const { requireAuth, assistantRoute: route } = h;
     const base = '/api/app/assistant/responsibilities';
 
+    // `learned` is what feedback taught about each source of each
+    // responsibility: the rate it may propose at now, and what it usually is.
     app.get(base, requireAuth, route(async (req) => ({
         ...(await responsibilities.list({
             userId: req.webUser.userId,
             status: req.query.status ? String(req.query.status) : null,
             limit: req.query.limit
         })),
-        vocabulary: responsibilities.vocabulary()
+        vocabulary: responsibilities.vocabulary(),
+        learned: await feedback.learned({ userId: req.webUser.userId })
     })));
 
     // { title, outcome?, operations?, scopes?, budgets?, rules?, expiresAt?,
@@ -82,6 +86,13 @@ function mountAssistant(app, ctx, h) {
     // the cutoff, the history it will not act on, and today's proposal counts.
     app.get(`${base}/:id/sources`, requireAuth, route(async (req) => initiatives.sourcesOverview({
         userId: req.webUser.userId, id: req.params.id
+    })));
+
+    // Forget what feedback taught about one source of this responsibility, so
+    // it proposes at its usual rate again. The person's own record; never
+    // behind the pilot gate.
+    app.post(`${base}/:id/sources/:adapter/reset`, requireAuth, route(async (req) => feedback.resetRate({
+        userId: req.webUser.userId, responsibilityId: req.params.id, adapter: String(req.params.adapter)
     })));
 
     // What the host's policy means for this person: whether delegated work
@@ -128,7 +139,11 @@ function mountAssistant(app, ctx, h) {
             userId: req.webUser.userId, initiativeIds: listed.initiatives.map(item => item.id)
         });
         const described = await withOrigins(req.webUser.userId, listed.initiatives);
-        return { initiatives: described.map(item => ({ ...item, run: runs.get(item.id) || null })) };
+        // What the person may say about each one, and what they already said.
+        const states = await feedback.statesForInitiatives({ userId: req.webUser.userId, rows: listed.rows });
+        return {
+            initiatives: described.map(item => ({ ...item, run: runs.get(item.id) || null, feedback: states.get(item.id) || null }))
+        };
     }));
 
     // `run` is the execution record, when the runner has picked it up: what
@@ -144,6 +159,18 @@ function mountAssistant(app, ctx, h) {
         id: req.params.id,
         action: String(req.body?.action || ''),
         expectedRevision: req.body?.expectedRevision
+    })));
+
+    // { kind: less_of_this | stop_responsibility, stop?: pause | revoke, expectedRevision? }
+    // Feedback on a piece of proposed work (documentation/delegated_feedback.md).
+    // `stop` and `expectedRevision` (the responsibility's) go with stop_responsibility,
+    // after the person confirmed it. Behind the pilot gate (capability `feedback`).
+    app.post(`${initiativeBase}/:id/feedback`, requireAuth, route(async (req) => feedback.give({
+        userId: req.webUser.userId,
+        initiativeId: req.params.id,
+        kind: String(req.body?.kind || ''),
+        stop: req.body?.stop ? String(req.body.stop) : null,
+        expectedRevision: req.body?.expectedRevision ?? null
     })));
 
     // --- Canonical updates ---------------------------------------------------
@@ -165,6 +192,19 @@ function mountAssistant(app, ctx, h) {
     // { until } - hide an open gate from Needs you; it stays open.
     app.post('/api/app/assistant/updates/:id/snooze', requireAuth, route(async (req) => ({
         snoozed: await updates.snooze({ userId: req.webUser.userId, id: req.params.id, until: req.body?.until })
+    })));
+
+    // { kind, stop?, expectedRevision? } - feedback on one of the person's own
+    // findings: useful | already_knew | wrong | less_of_this | wrong_time |
+    // keep_wording | stop_responsibility. Each changes one thing and answers
+    // with what it changed and what may still be said. 409 NOT_OFFERED when
+    // the kind would change nothing for this finding.
+    app.post('/api/app/assistant/updates/:id/feedback', requireAuth, route(async (req) => feedback.give({
+        userId: req.webUser.userId,
+        updateId: req.params.id,
+        kind: String(req.body?.kind || ''),
+        stop: req.body?.stop ? String(req.body.stop) : null,
+        expectedRevision: req.body?.expectedRevision ?? null
     })));
 
     // --- Deciding a request where it is shown -------------------------------

@@ -80,6 +80,8 @@ const INVENTORY = [
     ['assistant_updates', "audienceKind = 'user' AND audienceUserId = @userId", '*', 'sequence'],
     ['assistant_update_receipts', 'userId = @userId', '*', 'updateId'],
     ['assistant_digests', 'userId = @userId', '*', 'id'],
+    ['assistant_feedback', 'userId = @userId', '*', 'id'],
+    ['assistant_source_weights', 'ownerUserId = @userId', '*', 'responsibilityId, adapter'],
     ['assistant_process_contracts', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_observations', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_incidents', 'ownerUserId = @userId', '*', 'id'],

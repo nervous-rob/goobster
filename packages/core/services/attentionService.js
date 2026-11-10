@@ -1101,6 +1101,9 @@ Respond with ONLY JSON:
             recentNotices: recent?.c || 0,
             withinCooldown,
             quietHours,
+            // An hour marked "wrong time" on delegated work (documentation/delegated_feedback.md).
+            // Not part of `blocked`: Attention's own notices do not read it.
+            avoidedHour: attentionPolicyService.avoidsHour(policy, new Date(now), quietOpts),
             capped,
             // Hard stops, as opposed to the soft cost the score absorbs.
             blocked: quietHours || capped
@@ -1206,6 +1209,7 @@ Respond with ONLY JSON:
         if (!outboundOk) return { allowed: false, code: 'OUTBOUND_OFF' };
         const pressure = await this._measurePressure(userId, policy, now, handle);
         if (pressure.quietHours) return { allowed: false, code: 'QUIET_HOURS' };
+        if (reason !== 'attention' && pressure.avoidedHour) return { allowed: false, code: 'WRONG_TIME' };
         if (pressure.capped) return { allowed: false, code: 'CONTACT_CAP' };
         if (reason !== 'attention' && pressure.withinCooldown) return { allowed: false, code: 'COOLDOWN' };
         return { allowed: true, code: null, policy };
@@ -1241,7 +1245,7 @@ Respond with ONLY JSON:
      *
      * Never throws. A refusal is `{ contacted: false, attempted: false,
      * code }` with code ATTENTION_OFF | OUTBOUND_OFF | QUIET_HOURS |
-     * CONTACT_CAP | COOLDOWN | NO_CHANNEL; nothing left the portal and
+     * WRONG_TIME | CONTACT_CAP | COOLDOWN | NO_CHANNEL; nothing left the portal and
      * nothing was spent. `attempted: true` means the budget was spent,
      * whether or not a channel accepted the message.
      *

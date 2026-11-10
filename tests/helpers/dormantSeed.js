@@ -74,7 +74,9 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_message_labels', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'kg_change_sets', column: 'userId' }
+    { feature: 'assistant', table: 'kg_change_sets', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_feedback', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_source_weights', column: 'ownerUserId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
@@ -230,6 +232,16 @@ function createDormantSeed(db) {
         await db.run(
             "INSERT INTO assistant_digests (userId, day, updateIdsJson, sentAt) VALUES (@u, '2026-11-08', @ids, @now)",
             { u, ids: JSON.stringify([Number(updateId)]), now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_feedback (userId, updateId, initiativeId, responsibilityId, adapter, kind, effectCode)
+             VALUES (@u, @updateId, @initiativeId, @responsibilityId, 'attention_item', 'less_of_this', 'RATE_LOWERED')`,
+            { u, updateId, initiativeId, responsibilityId }
+        );
+        await db.run(
+            `INSERT INTO assistant_source_weights (responsibilityId, ownerUserId, adapter, weight, dismissals)
+             VALUES (@responsibilityId, @u, 'attention_item', 0.5, 2)`,
+            { responsibilityId, u }
         );
         const automationId = await db.insert(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule)

@@ -884,9 +884,14 @@ class AssistantResponsibilityService {
     }
 
     /** The owner's lifecycle actions: activate | pause | resume | complete | revoke | archive. */
-    async act({ userId, id, action, expectedRevision }) {
+    /**
+     * @param {Object} params
+     * @param {boolean} [params.deferDelivery] - the caller is inside its own
+     *   transaction and files the owed Inbox envelopes after it commits
+     */
+    async act({ userId, id, action, expectedRevision, deferDelivery = false }) {
         if (!HUMAN_ACTIONS.includes(action)) throw bad(`action must be one of ${HUMAN_ACTIONS.join(', ')}.`, 'INVALID_ACTION');
-        return this._act({ id, action, expectedRevision, owner: String(userId), changedBy: userId });
+        return this._act({ id, action, expectedRevision, owner: String(userId), changedBy: userId, deferDelivery });
     }
 
     /**
@@ -898,14 +903,14 @@ class AssistantResponsibilityService {
         return this._act({ id, action: 'request_review', expectedRevision, owner: null, changedBy });
     }
 
-    async _act({ id, action, expectedRevision, owner, changedBy }) {
+    async _act({ id, action, expectedRevision, owner, changedBy, deferDelivery = false }) {
         const result = await db.transaction(async () => {
             const row = await this._row(id);
             if (!row || (owner !== null && row.ownerUserId !== owner)) throw notFound();
             const updated = await this._transition(row, action, expectedRevision, changedBy);
             return { responsibility: this.present(updated) };
         });
-        await this._deliverOwed(result.responsibility.ownerUserId);
+        if (!deferDelivery) await this._deliverOwed(result.responsibility.ownerUserId);
         return result;
     }
 

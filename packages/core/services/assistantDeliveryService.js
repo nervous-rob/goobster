@@ -53,7 +53,7 @@ const DIGEST_SOURCE_TYPE = 'assistant_digest';
  */
 const SILENT_STATUSES = ['DRAFT', 'PAUSED', 'REVOKED', 'ARCHIVED'];
 /** Refusals that will not change within a pass: stop asking for this person. */
-const HOLDS = ['ATTENTION_OFF', 'OUTBOUND_OFF', 'QUIET_HOURS', 'CONTACT_CAP', 'COOLDOWN', 'NO_CHANNEL'];
+const HOLDS = ['ATTENTION_OFF', 'OUTBOUND_OFF', 'QUIET_HOURS', 'WRONG_TIME', 'CONTACT_CAP', 'COOLDOWN', 'NO_CHANNEL'];
 
 function utcText(date = new Date()) {
     return date.toISOString().slice(0, 19).replace('T', ' ');

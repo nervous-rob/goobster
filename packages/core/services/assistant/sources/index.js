@@ -44,6 +44,12 @@
  *  - `lookback(responsibility)`: what activation tells the owner about the
  *    history the adapter will not act on.
  *
+ * DA-10 (ADR 0031) adds one, described in documentation/delegated_feedback.md:
+ *  - `learns`: `true`, or `(origin) => boolean`, on an adapter that notices
+ *    things by itself. Feedback may lower how many proposals a day such an
+ *    adapter makes (../sourceWeights.js). An adapter without it carries out
+ *    what the person asked for and is never slowed by feedback.
+ *
  * To add an adapter: add a module here and one line below. The key is the
  * `sourceKind` stored on cursors and initiatives.
  */
