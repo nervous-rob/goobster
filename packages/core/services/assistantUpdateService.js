@@ -14,6 +14,12 @@
  * acknowledgment of one exact revision) are separate, so delivery never
  * clears a highlight and an old acknowledgment never hides a new revision.
  *
+ * A project-audience update (DA-11c) is read by the project's members as
+ * they are now: leaving the project ends it at once, and the member's
+ * receipts for the project's updates are deleted (`forgetMemberReceipts`).
+ * It shows who produced it and carries no link into the producer's private
+ * records. It has no Inbox envelope; its producer is told separately.
+ *
  * A person-audience update has exactly one Inbox envelope (sourceType
  * `assistant_update`, sourceId `<id>:<revision>`). A new revision refreshes
  * that envelope in place; reading it acknowledges only the rendered
@@ -29,6 +35,8 @@ const logger = require('../utils/logger');
 const COMPONENTS = ['knowledge', 'research', 'projects', 'processes', 'conversations', 'responsibilities'];
 const KINDS = ['finding', 'progress', 'process', 'question', 'responsibility'];
 const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review', 'open_conversation'];
+/** Where a member who is not the producer may be sent from a project's update. */
+const SHARED_ACTIONS = ['open_project', 'open_conversation', 'open_evidence', 'open_review'];
 const INBOX_SOURCE_TYPE = 'assistant_update';
 const PAGE_MAX = 50;
 const ACK_MAX = 100;
@@ -405,10 +413,22 @@ class AssistantUpdateService {
         return result.changes > 0;
     }
 
-    present(row, receipt, now = new Date()) {
+    /**
+     * @param {Object} row
+     * @param {Object|null} receipt - the viewer's receipt for it
+     * @param {Date} [now]
+     * @param {{ viewer?: string, names?: Map<string, string> }} [view] - who is looking, and the
+     *   display names of the producers of project updates
+     */
+    present(row, receipt, now = new Date(), view = {}) {
         const acknowledged = Number(receipt?.acknowledgedRevision || 0);
         const snoozed = Boolean(receipt?.snoozedUntil && receipt.snoozedUntil > utcText(now));
         const gate = parseJson(row.gateJson, null);
+        const shared = row.audienceKind === 'project';
+        // On a project's update, who produced it is shown; where it came from
+        // (their responsibility, their work item) is the producer's alone.
+        const own = !shared || (view.viewer != null && row.producerUserId === String(view.viewer));
+        const actions = parseJson(row.actionsJson, []);
         return {
             id: Number(row.id),
             revision: Number(row.materialRevision),
@@ -418,11 +438,14 @@ class AssistantUpdateService {
             summary: row.summary || null,
             componentIds: parseJson(row.componentsJson, []),
             audience: row.audienceKind === 'project' ? { kind: 'project', projectId: Number(row.projectId) } : { kind: 'private' },
-            responsibilityId: row.responsibilityId == null ? null : Number(row.responsibilityId),
-            initiativeId: row.initiativeId == null ? null : Number(row.initiativeId),
+            producer: shared
+                ? { name: (row.producerUserId && view.names?.get(String(row.producerUserId))) || null, you: own }
+                : null,
+            responsibilityId: row.responsibilityId == null || !own ? null : Number(row.responsibilityId),
+            initiativeId: row.initiativeId == null || !own ? null : Number(row.initiativeId),
             source: row.sourceKind ? { kind: row.sourceKind, id: row.sourceId, revision: row.sourceRevision || null } : null,
             evidence: parseJson(row.evidenceJson, []),
-            actions: parseJson(row.actionsJson, []),
+            actions: own ? actions : actions.filter(action => SHARED_ACTIONS.includes(action.kind)),
             gate: gate ? { ...gate, resolved: Boolean(row.gateResolvedAt) } : null,
             needsAction: Boolean(gate && !row.gateResolvedAt) && !snoozed,
             unseen: acknowledged < Number(row.materialRevision),
@@ -497,7 +520,8 @@ class AssistantUpdateService {
         );
         const page = rows.slice(0, size);
         const receipts = await this._receipts(userId, page.map(row => Number(row.id)));
-        const updates = page.map(row => this.present(row, receipts.get(Number(row.id)), now));
+        const names = await this._producerNames(page);
+        const updates = page.map(row => this.present(row, receipts.get(Number(row.id)), now, { viewer: userId, names }));
         const last = page[page.length - 1];
         return {
             asOf: new Date(now).toISOString(),
@@ -544,6 +568,64 @@ class AssistantUpdateService {
             counts: { unseen, needsAction, complete: rows.length < COUNT_SCAN_MAX },
             components: [...components.values()]
         };
+    }
+
+    /**
+     * Display names of the people who produced the page's project updates:
+     * the name the project knows them by, then their nickname, then their
+     * account name. Nobody is named from a private source.
+     */
+    async _producerNames(rows) {
+        const wanted = [...new Set(rows.filter(row => row.audienceKind === 'project' && row.producerUserId)
+            .map(row => `${row.projectId}\u0000${row.producerUserId}`))];
+        const names = new Map();
+        for (const key of wanted) {
+            const [projectId, userId] = key.split('\u0000');
+            if (names.has(userId)) continue;
+            try {
+                const member = await db.get(
+                    'SELECT userName FROM project_members WHERE projectId = @projectId AND userId = @userId',
+                    { projectId: Number(projectId), userId }
+                );
+                const nickname = member?.userName ? null : await db.get('SELECT nickname FROM user_nicknames WHERE userId = @userId LIMIT 1', { userId });
+                const principal = member?.userName || nickname?.nickname ? null
+                    : await db.get('SELECT displayName FROM principals WHERE id = @userId LIMIT 1', { userId });
+                const name = member?.userName || nickname?.nickname || principal?.displayName || null;
+                if (name) names.set(userId, name);
+            } catch { /* a name is cosmetic: the update still shows */ }
+        }
+        return names;
+    }
+
+    /**
+     * A person left a project (or was removed): the receipts they hold for
+     * its updates go with their membership. What they could read already
+     * ended with it; this is the record of having read it.
+     * @returns {Promise<number>} receipts deleted
+     */
+    async forgetMemberReceipts({ projectId, userId }) {
+        const id = positiveId(projectId);
+        if (!id || !userId) return 0;
+        return (await db.run(
+            `DELETE FROM assistant_update_receipts
+             WHERE userId = @userId
+               AND updateId IN (SELECT id FROM assistant_updates WHERE audienceKind = 'project' AND projectId = @projectId)`,
+            { userId: String(userId), projectId: id }
+        )).changes;
+    }
+
+    /** A project is gone: so are the findings shared with it, and everyone's receipts for them. */
+    async forgetProject(projectId) {
+        const id = positiveId(projectId);
+        if (!id) return 0;
+        await db.run(
+            `DELETE FROM assistant_update_receipts
+             WHERE updateId IN (SELECT id FROM assistant_updates WHERE audienceKind = 'project' AND projectId = @projectId)`,
+            { projectId: id }
+        );
+        return (await db.run(
+            "DELETE FROM assistant_updates WHERE audienceKind = 'project' AND projectId = @projectId", { projectId: id }
+        )).changes;
     }
 
     async _visibleRow(userId, id) {
@@ -672,6 +754,35 @@ class AssistantUpdateService {
         return true;
     }
 
+    /**
+     * Receipts for a project's updates held by someone who no longer reads
+     * the project, and findings whose project is gone: the removal paths
+     * delete them at once, this catches one that was missed.
+     */
+    async sweepProjectReceipts() {
+        const receipts = (await db.run(
+            `DELETE FROM assistant_update_receipts
+             WHERE updateId IN (SELECT id FROM assistant_updates WHERE audienceKind = 'project')
+               AND NOT EXISTS (
+                   SELECT 1 FROM assistant_updates u
+                   WHERE u.id = assistant_update_receipts.updateId
+                     AND (EXISTS (SELECT 1 FROM observatory_projects p WHERE p.id = u.projectId AND p.userId = assistant_update_receipts.userId)
+                          OR EXISTS (SELECT 1 FROM project_members m WHERE m.projectId = u.projectId AND m.userId = assistant_update_receipts.userId)))`,
+            {}
+        )).changes;
+        const orphans = await db.all(
+            `SELECT id FROM assistant_updates
+             WHERE audienceKind = 'project' AND NOT EXISTS (SELECT 1 FROM observatory_projects p WHERE p.id = assistant_updates.projectId)
+             ORDER BY id LIMIT 1000`,
+            {}
+        );
+        for (const { id } of orphans) {
+            await db.run('DELETE FROM assistant_update_receipts WHERE updateId = @id', { id });
+            await db.run('DELETE FROM assistant_updates WHERE id = @id', { id });
+        }
+        return receipts + orphans.length;
+    }
+
     /** Retention: updates without an open gate untouched for `days` (receipts cascade). */
     async prune({ days = 180, now = new Date() } = {}) {
         const cutoff = utcText(new Date(now.getTime() - days * 86400000));
@@ -686,7 +797,7 @@ class AssistantUpdateService {
             await db.run('DELETE FROM assistant_update_receipts WHERE updateId = @id', { id });
             removed += (await db.run('DELETE FROM assistant_updates WHERE id = @id', { id })).changes;
         }
-        return removed;
+        return removed + await this.sweepProjectReceipts();
     }
 }
 

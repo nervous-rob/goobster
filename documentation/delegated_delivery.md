@@ -228,6 +228,11 @@ Tests: `tests/assistantDeliveryService.test.js`,
 
 - "Wrong time" feedback that moves the digest or contact time (DA-10).
 - A spoken briefing as a delivery (DA-7c).
-- Findings for a project's members in a digest: project updates file no
-  personal Inbox item, so they stay on Home (DA-11).
+- A finding shared with a project's members
+  ([delegated_project_findings.md](delegated_project_findings.md)) reaching
+  them outside the portal. The shared copy files no personal Inbox item, so
+  it is in no member's digest and contacts nobody; members see it on Home,
+  which changes while open. The person whose responsibility found it gets
+  their own notice, and that one follows the rule. No increment is assigned
+  to this yet.
 - Deciding a request from the notification itself.

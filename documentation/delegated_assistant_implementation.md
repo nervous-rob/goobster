@@ -83,9 +83,9 @@ increment done because its proposal exists.
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
-| DA-9: delivery and interruption | Done: `assistant.changed` and the `assistant` stream event (Home and the Responsibilities page change while open and refetch after a reconnect), the interruption rule (`home` / `digest` / `immediate`), one digest a day at the person's digest time (default 09:00), and `attentionService.requestContact()` as the one contact path, with delegated contacts and Attention's notices sharing the daily cap and cooldown; see [delegated_delivery.md](delegated_delivery.md). Owner-only until the pilot decision. Left for later increments: timing feedback (DA-10), the spoken briefing as a delivery (DA-7c), project-audience findings in a digest (DA-11) | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
+| DA-9: delivery and interruption | Done: `assistant.changed` and the `assistant` stream event (Home and the Responsibilities page change while open and refetch after a reconnect), the interruption rule (`home` / `digest` / `immediate`), one digest a day at the person's digest time (default 09:00), and `attentionService.requestContact()` as the one contact path, with delegated contacts and Attention's notices sharing the daily cap and cooldown; see [delegated_delivery.md](delegated_delivery.md). Owner-only until the pilot decision. Left for later increments: timing feedback (DA-10), the spoken briefing as a delivery (DA-7c). Not assigned to an increment: a project's shared findings reaching its members outside the portal | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
-| DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
+| DA-11: extended reach | In progress. DA-11c done: findings shared with a project's members under current membership, with the producer shown, only from the project's own sources, never from a run that read private notes, behind the owner-only pilot gate, with receipts deleted when a member leaves ([delegated_project_findings.md](delegated_project_findings.md)). Planned: repository work, saved-note edits, note connections and archiving, and typed outside connectors | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
 | DA-12: operator controls and model evaluation | Done for the host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). Still planned (DA-12b): the real-model evaluation set. The caps hold the DA-3 defaults until the owner records the pilot's numbers | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
@@ -299,8 +299,9 @@ boards are a read over the canonical gates and decide through
 
 Not in DA-4b, by owner decision 4 and the conservative reading: a model
 reading conversations for implied requests, conversation context in a run,
-and one-to-one chat (DA-8); findings for a project audience and anything
-posted back into the conversation (DA-11c).
+and one-to-one chat (DA-8); a reply posted back into the conversation
+(still not built; DA-11c shares findings with a project's members on Home
+instead, see [delegated_project_findings.md](delegated_project_findings.md)).
 
 ### DA-5: keep processes healthy and useful
 
@@ -511,6 +512,7 @@ entries in the run's tool table (ADR 0018), never by exposing a chat tool:
   applies unless the grant explicitly names direct editing.
 - **Findings for a project's members** (`audience: project`) under the
   project's membership at delivery time, with the producer shown.
+  *Done (DA-11c):* [delegated_project_findings.md](delegated_project_findings.md).
 - **Outside connectors** (`external.write`, and read connectors such as a
   calendar) as typed adapters with a manifest of exactly what each reads and
   writes. The product non-goal of broad surveillance stands: a connector is
@@ -523,7 +525,7 @@ Exit scenarios:
 - A run cannot push to a branch outside its patterns or to a protected one.
 - A saved-note proposal shows a diff; applying it is the person's action.
 - An archived note is restorable with its connections.
-- A member who leaves a project stops receiving its findings at once.
+- A member who leaves a project stops receiving its findings at once. *(Done, DA-11c.)*
 - An outside write that may have happened stops for review, never retries.
 - Revoking a connector stops its use at the next call and removes its tokens.
 

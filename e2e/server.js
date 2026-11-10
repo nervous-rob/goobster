@@ -957,6 +957,48 @@ async function main() {
             aiService.chat = original;
         }
     });
+    // Findings shared with a project's members (assistantProjectAudience.spec.js,
+    // documentation/delegated_project_findings.md): the installation's owner
+    // (an operator, with Attention on) with a project and its conversation, a
+    // collaborator seated in both, and someone outside the project. The
+    // pilot decision is cleared so the owner-only gate applies. Safe to call
+    // again: it starts all three over.
+    app.post('/e2e/fixtures/assistant-project-audience', express.json(), async (req, res) => {
+        try {
+            const ids = ['ownerId', 'memberId', 'outsiderId'].map(key => String(req.body?.[key] || ''));
+            if (ids.some(id => !/^\d{5,20}$/.test(id))) return res.status(400).json({ error: 'ids' });
+            const [ownerId, memberId, outsiderId] = ids;
+            const names = { [ownerId]: 'Ada', [memberId]: 'Bo', [outsiderId]: 'Cy' };
+            for (const userId of ids) {
+                await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: names[userId] });
+                const mine = await db.all('SELECT id FROM observatory_projects WHERE userId = @userId', { userId });
+                for (const { id } of mine) await db.run('DELETE FROM project_members WHERE projectId = @id', { id });
+                for (const [table, column] of [
+                    ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                    ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                    ['parlor_conversations', 'ownerId'], ['observatory_projects', 'userId']
+                ]) {
+                    await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+                }
+            }
+            await db.run("DELETE FROM assistant_updates WHERE audienceKind = 'project' AND producerUserId = @ownerId", { ownerId });
+            await db.run("DELETE FROM instance_state WHERE key = 'assistantPilot'");
+            await identityService.grantAccount({ principalId: ownerId, entitlement: 'bootstrap', role: 'operator' });
+            await policies.enroll({ userId: ownerId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId: ownerId, name: String(req.body?.project || 'Shared lab') });
+            await db.run(
+                'INSERT INTO project_members (projectId, userId, userName, invitedBy) VALUES (@projectId, @userId, @userName, @ownerId)',
+                { projectId: project.id, userId: memberId, userName: names[memberId], ownerId }
+            );
+            const conversation = await parlorService.ensureProjectConversation({
+                project: { id: project.id, ownerId, name: project.name },
+                members: [{ userId: memberId, userName: names[memberId] }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The pass that files a project's open requests in the person's Inbox.
     app.post('/e2e/fixtures/assistant-conversation/adopt', express.json(), async (req, res) => {
         try {

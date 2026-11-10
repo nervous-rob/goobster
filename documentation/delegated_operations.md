@@ -131,14 +131,21 @@ records the pilot decision, only the owner has them.**
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.
+  Sharing a responsibility's findings with its project's members
+  (`scopes.audience: "project"`, DA-11c,
+  [delegated_project_findings.md](delegated_project_findings.md)) is also a
+  `reach` capability: for anyone but the owner, creating, editing or
+  activating such a responsibility is refused with `PILOT_ONLY` (naming the
+  capability), and a finding published after the gate closed comes to its
+  person alone.
   Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
   too: for anyone but the owner, activating or resuming a responsibility
   whose updates go in a digest or contact them is refused with `PILOT_ONLY`,
   nothing is sent out for one that is already active, the digest time is
   not offered in Settings, and the portal is not told of changes while it
   is open.
-  Everything delegated runs can do today (reading, generated notes, project
-  files, sandbox runs, research) is not gated.
+  Everything else delegated runs can do today (reading, generated notes,
+  project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated

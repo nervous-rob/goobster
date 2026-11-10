@@ -169,7 +169,8 @@ Two observations shaped the design:
   DA-4a in [ADR 0019](0019-delegated-plan-steps.md), which also adds
   `available({ planStep })`, `final`, `source: 'private'` and
   `publishes: 'project'` to the tool spec.
-- **Project audiences.** A run's finding goes to the owner only.
+- **Project audiences.** A run's finding goes to the owner only. (Added later
+  by DA-11c: see `documentation/delegated_project_findings.md`.)
 
 ## Consequences
 
