@@ -193,6 +193,19 @@ async function rehearse({ onJourney = null } = {}) {
         if (result.skipped) throw new RehearsalError('PASS_SKIPPED', `The periodic pass did not run (${result.reason}).`);
         return result;
     };
+    /**
+     * The first day after the rehearsal's clock on which the person has had
+     * no digest. The periodic pass delivers too, and by now the clock has
+     * moved most of a day, so whether a digest has already gone out depends
+     * on the hour the rehearsal was started at. What is checked must not.
+     */
+    const digestDay = async (userId) => {
+        const today = new Date(clock).toISOString().slice(0, 10);
+        const last = await db.get('SELECT MAX(day) AS day FROM assistant_digests WHERE userId = @userId', { userId });
+        const [year, month, date] = (last?.day && last.day > today ? last.day : today).split('-').map(Number);
+        const at = (hour, minute) => new Date(Date.UTC(year, month - 1, date + 1, hour, minute, 0));
+        return { day: at(0, 0).toISOString().slice(0, 10), at };
+    };
     let lastSeen = 0;
     /** One periodic pass, and the work it newly proposed under `grant`. */
     const look = async (grant) => {
@@ -825,22 +838,20 @@ async function rehearse({ onJourney = null } = {}) {
             check('Home and the Inbox count the same requests', view.counts.needsAction === Number(page.needsYou), { home: view.counts.needsAction, inbox: page.needsYou });
             check('Home counts the same unread updates the list holds', view.counts.unseen === unseen, { home: view.counts.unseen, list: unseen });
 
-            // One digest a day for a responsibility set to digest, through the fake gateway.
-            // The day after everything so far, so no digest has gone out on it yet.
-            const tomorrow = (hour, minute) => {
-                const today = new Date(clock);
-                return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1, hour, minute, 0));
-            };
+            // One digest a day for a responsibility set to digest, through the fake gateway,
+            // on a day that has had none.
+            const { day, at } = await digestDay(owner);
             await publish('Crossings may be cancelled from Thursday to Saturday.');
             const dmsBefore = seen.dms.length;
-            const early = await delivery.sweep({ now: tomorrow(8, 59) });
+            const early = await delivery.sweep({ now: at(8, 59) });
             check('before the digest time nothing is sent', early.digests === 0 && seen.dms.length === dmsBefore, early);
-            const sent = await delivery.sweep({ now: tomorrow(9, 1) });
-            const digests = await db.all('SELECT * FROM assistant_digests WHERE userId = @owner', { owner });
+            const sent = await delivery.sweep({ now: at(9, 1) });
+            const digests = await db.all('SELECT * FROM assistant_digests WHERE userId = @owner AND day = @day', { owner, day });
             check('at the digest time one digest goes out as one Inbox item and one message', sent.digests === 1 && digests.length === 1
                 && seen.dms.length === dmsBefore + 1, { sweep: sent, digests: digests.length, dms: seen.dms.length - dmsBefore });
-            const later = await delivery.sweep({ now: tomorrow(20, 0) });
+            const later = await delivery.sweep({ now: at(20, 0) });
             check('and no second digest that day', later.digests === 0 && seen.dms.length === dmsBefore + 1, later);
+            world.digested = one.update.id;
         });
 
         /* -------------------------------------------------------------- */
@@ -930,27 +941,25 @@ async function rehearse({ onJourney = null } = {}) {
             check('and with a revision that is not the current one it stops nothing', stale === 'REVISION_CONFLICT' && (await grantRow()).status === 'ACTIVE', stale);
 
             // Wrong time: the hour a finding was sent outside the portal, and only for delegated updates.
-            const sent = await db.get(
-                "SELECT id FROM assistant_updates WHERE audienceUserId = @owner AND outboundKind = 'digest' AND outboundAt IS NOT NULL ORDER BY id DESC LIMIT 1", { owner }
-            );
+            const sent = world.digested ? await db.get(
+                "SELECT id FROM assistant_updates WHERE id = @id AND audienceUserId = @owner AND outboundKind = 'digest' AND outboundAt IS NOT NULL",
+                { id: Number(world.digested), owner }
+            ) : null;
             if (check('journey F left a finding that went out in the digest', Boolean(sent))) {
                 const timing = await feedback.give({ userId: owner, updateId: sent.id, kind: 'wrong_time' });
                 const policy = await policies.get(owner);
                 check('"wrong time" marks the hour it was sent, and nothing about the source', timing.feedback.effect.code === 'HOUR_AVOIDED'
                     && timing.feedback.effect.hour === 9 && JSON.stringify(policy.avoidHours) === '[9]'
                     && Number((await rate()).weight) === 0.5, { effect: timing.feedback.effect, avoidHours: policy.avoidHours });
-                const later = (days, hour, minute) => {
-                    const today = new Date(clock);
-                    return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + days, hour, minute, 0));
-                };
+                const { at } = await digestDay(owner);
                 await updates.publish({
                     audience: { userId: owner }, identityKey: 'rehearsal:storm-watch', kind: 'finding', title: 'Storm warning for Thursday',
                     summary: 'Crossings resume on Sunday.', components: ['research'], responsibilityId: knowledge.id, deliver: true
                 });
                 const dmsBefore = seen.dms.length;
-                const held = await delivery.sweep({ now: later(2, 9, 1) });
+                const held = await delivery.sweep({ now: at(9, 1) });
                 check('the next digest is held in that hour', held.digests === 0 && seen.dms.length === dmsBefore, held);
-                const out = await delivery.sweep({ now: later(2, 10, 1) });
+                const out = await delivery.sweep({ now: at(10, 1) });
                 check('and goes out when the hour has passed', out.digests === 1 && seen.dms.length === dmsBefore + 1, out);
             }
 
