@@ -24,6 +24,7 @@
 
 const db = require('../../db');
 const sources = require('./sources');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 
 const KINDS = ['chat_message', 'followed_source_entry', 'ci_verdict', 'job_failure'];
 const BY_ORIGIN = {
@@ -51,7 +52,9 @@ async function freshCi({ watch, origin, actor }) {
     try {
         const project = await db.get('SELECT * FROM observatory_projects WHERE id = @id', { id: Number(watch.projectId) });
         if (!project) return { ok: false };
-        const ci = await require('../projectService').repos.ci({ row: project, userId: actor, name: origin.clone || watch.cloneName, ref: watch.lastSha });
+        const projects = requireOptional('../projectService', { feature: 'projects' });
+        if (!projects) return { ok: false };
+        const ci = await projects.repos.ci({ row: project, userId: actor, name: origin.clone || watch.cloneName, ref: watch.lastSha });
         return {
             ok: true,
             state: ci.state, total: ci.total, passed: ci.passed, truncated: ci.truncated,
