@@ -13,24 +13,40 @@ const { spawnSync } = require('node:child_process');
 const { inventory } = require('./lib/liveCredentials');
 
 const ROOT = path.join(__dirname, '..');
+// An evaluation spends real tokens on purpose, so each one is selected by name and runs alone.
+const EVALUATIONS = {
+    '--research-evaluation': {
+        label: 'Research evaluation', flag: 'GOOBSTER_RESEARCH_EVAL', spec: 'tests/live/researchEvaluation.live.test.js',
+        options: (env) => require('./lib/researchEvaluation').evaluationOptions(env,
+            require('../tests/live/research-evaluation/questions.v1.json'))
+    },
+    '--assistant-evaluation': {
+        label: 'Assistant evaluation', flag: 'GOOBSTER_ASSISTANT_EVAL', spec: 'tests/live/assistant.live.test.js',
+        options: (env) => require('./lib/assistantEvaluation').evaluationOptions(env,
+            require('../tests/live/assistant-evaluation/cases.v1.json'))
+    }
+};
 const args = process.argv.slice(2);
-if (args.some(arg => arg !== '--research-evaluation')) throw new Error('Supported option: --research-evaluation');
-const evaluationOnly = args.includes('--research-evaluation');
-const liveEnv = evaluationOnly ? { ...process.env, GOOBSTER_RESEARCH_EVAL: '1' } : process.env;
+if (args.length > 1 || args.some(arg => !Object.hasOwn(EVALUATIONS, arg))) {
+    throw new Error(`Supported options (one at a time): ${Object.keys(EVALUATIONS).join(', ')}`);
+}
+const selected = args.length ? EVALUATIONS[args[0]] : null;
+const liveEnv = selected ? { ...process.env, [selected.flag]: '1' } : process.env;
 const resultsDir = process.env.GOOBSTER_TEST_RESULTS_DIR
     || path.join(ROOT, 'test-results', 'groups');
 fs.mkdirSync(resultsDir, { recursive: true });
 
-const evaluation = require('./lib/researchEvaluation').evaluationOptions(liveEnv,
-    require('../tests/live/research-evaluation/questions.v1.json'));
+const evaluations = Object.values(EVALUATIONS)
+    .filter(entry => !selected || entry === selected)
+    .map(entry => ({ label: entry.label, ...entry.options(liveEnv) }));
 const outputFile = path.join(resultsDir, 'live-jest.json');
 fs.rmSync(outputFile, { force: true });
 const startedAt = Date.now();
 const jestBin = require.resolve('jest/bin/jest');
 const result = spawnSync(
     process.execPath,
-    [jestBin, '--config', 'jest.live.config.js', ...(evaluationOnly
-        ? ['--runTestsByPath', 'tests/live/researchEvaluation.live.test.js'] : []), '--json', `--outputFile=${outputFile}`],
+    [jestBin, '--config', 'jest.live.config.js', ...(selected
+        ? ['--runTestsByPath', selected.spec] : []), '--json', `--outputFile=${outputFile}`],
     {
         cwd: ROOT,
         stdio: 'inherit',
@@ -51,12 +67,14 @@ try {
     report = JSON.parse(fs.readFileSync(outputFile, 'utf8'));
 } catch { /* jest crashed before writing json */ }
 
-const creds = inventory().filter(row => !evaluationOnly || row.id === evaluation.provider);
+const creds = inventory().filter(row => !selected || row.id === evaluations[0].provider);
 const skipReasons = creds
     .filter((row) => !row.present)
     .map((row) => row.skipReason);
 
-if (evaluation.reason) skipReasons.push(`Research evaluation: ${evaluation.reason}`);
+for (const evaluation of evaluations) {
+    if (evaluation.reason) skipReasons.push(`${evaluation.label}: ${evaluation.reason}`);
+}
 
 const record = {
     groupId: 'live',

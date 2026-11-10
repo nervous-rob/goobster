@@ -175,6 +175,16 @@ finished. Failure records in the work ledger hold a code only.
 
 Design and reasons: [ADR 0018](adr/0018-delegated-runs.md).
 
+## Measuring a model
+
+The instructions a run is given carry a version
+(`assistantRunService.promptVersion()`: a number raised on purpose, and a
+fingerprint that changes with any edit to the instructions or a tool's
+definition). The optional [evaluation set](delegated_evaluation.md) runs
+fixed, fictional responsibilities against a real provider and records what
+the model did, with that version and the model used. It is not part of
+`npm test` or CI.
+
 ## Not built yet
 
 Editing notes you saved, connecting or archiving notes, repository work

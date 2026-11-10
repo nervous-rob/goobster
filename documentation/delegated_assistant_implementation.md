@@ -9,7 +9,7 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
 canonical updates and process observations), the read-only DA-2 Home, the
-DA-3 runner and the host's controls of DA-12 (DA-12a) are implemented; everything else in this
+DA-3 runner and DA-12 (the host's controls and the evaluation set) are implemented; everything else in this
 document is still planned.** Updated 2026-11-09 (DA-7 through DA-12 added as planned increments).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
@@ -81,11 +81,11 @@ increment done because its proposal exists.
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
 | DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
-| DA-12: operator controls and model evaluation | Done for the host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). Still planned (DA-12b): the real-model evaluation set. The caps hold the DA-3 defaults until the owner records the pilot's numbers | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
+| DA-12: operator controls and model evaluation | Done. The host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). The real-model evaluation set (DA-12b): six fixed, fictional cases, opt-in and never in required CI; see [delegated_evaluation.md](delegated_evaluation.md). The caps hold the DA-3 defaults until the owner records the pilot's numbers, and the "useful result" rubric is a default until the owner records another | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
-in mind; of them only the host's controls (DA-12a) are implemented. Their contracts are in
+in mind; of them only DA-12 is implemented. Their contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
 DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4
@@ -330,7 +330,7 @@ Record each pilot cycle using this template:
 | Human effort | Questions, approvals, corrections and orchestration still required |
 | Delivery | Home/component updates, actual interruptions, duplicates and relevance |
 | Resources | Tokens/search/compute/storage; missing or estimated accounting noted |
-| Model and prompt version | The provider and model id the runs used, and the commit of the run prompt (`assistantRunService._messages`), so a result can be compared across changes |
+| Model and prompt version | The provider and model id the runs used, and the prompt version label (`v<version>-<fingerprint>` from `assistantRunService.promptVersion()`; an [evaluation](delegated_evaluation.md) run writes all three in its `manifest.json`), so a result can be compared across changes |
 | Caps in force | `installationRuns`, `runsPerAccount`, `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds` as shown in Host → Delegated work, and which of them the host set |
 | Reliability | Failures, revoked access, concurrent edits, retries, unwanted actions |
 | Decision | Keep policy, narrow/widen it explicitly, repair machinery, or stop |
@@ -481,9 +481,9 @@ optional evaluation set that runs fixed, fictional responsibilities against
 a real provider and measures refusals, unwanted writes, cost per useful
 result and prompt-injection resistance; it is never part of required CI.
 
-Status: the view, the caps, stop-all and the pilot gate are built (DA-12a,
-[delegated_operations.md](delegated_operations.md)). The evaluation set is
-still planned (DA-12b).
+Status: built. The view, the caps, stop-all and the pilot gate are DA-12a
+([delegated_operations.md](delegated_operations.md)); the evaluation set is
+DA-12b ([delegated_evaluation.md](delegated_evaluation.md)).
 
 Exit scenarios:
 
@@ -494,10 +494,13 @@ Exit scenarios:
 - Per-account and installation caps hold under concurrent claims. (Built.)
 - An unset budget still means the conservative default. (Built.)
 - A page or file that tells the run to exceed its grant changes nothing: the
-  call is refused by authorization, not by the prompt. (Built for a scripted
-  model; measuring it against a real provider is DA-12b.)
+  call is refused by authorization, not by the prompt. (Built: for a scripted
+  model in required CI, and against a real provider by the evaluation set's
+  two injection cases, whose live test fails if anything outside the grant
+  takes effect.)
 - Evaluation results are recorded with the model and prompt version used.
-  (Planned, DA-12b. The pilot cycle template above already has the row.)
+  (Built: every evaluation record names the provider, the model and the
+  prompt version label, and the pilot cycle template above has the row.)
 
 ## Validation and review requirements
 
