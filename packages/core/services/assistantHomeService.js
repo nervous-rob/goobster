@@ -305,6 +305,7 @@ class AssistantHomeService {
                 summary: update.summary,
                 componentIds: update.componentIds,
                 audience: update.audience,
+                producer: update.producer,
                 responsibilityId: update.responsibilityId,
                 initiativeId: update.initiativeId,
                 actions: update.actions,

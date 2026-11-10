@@ -125,7 +125,13 @@ describe('creating and validating', () => {
         await expect(draft({ planId: 5 })).rejects.toMatchObject({ code: 'INVALID_LINK' });
         await expect(draft({ scopes: { audience: 'project' } })).rejects.toMatchObject({ code: 'INVALID_LINK' });
         const mine = await project(A, 'mine');
-        expect((await draft({ projectId: mine, scopes: { audience: 'project' } })).projectId).toBe(mine);
+        // Sharing findings with a project is a pilot capability (documentation/delegated_project_findings.md).
+        await require('@goobster/core/services/assistantAccessService').recordDecision({ scope: 'everyone' });
+        try {
+            expect((await draft({ projectId: mine, scopes: { audience: 'project' } })).projectId).toBe(mine);
+        } finally {
+            await db.run("DELETE FROM instance_state WHERE key = 'assistantPilot'", {});
+        }
     });
 
     test('an idempotency key replays the first create', async () => {

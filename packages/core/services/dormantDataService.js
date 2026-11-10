@@ -207,6 +207,16 @@ async function forgetProjects(userId, { abortJob = null } = {}) {
         for (const row of running) abortJob(row.id);
     }
 
+    // What was shared with a project the person owned goes with the project.
+    const ownedProjects = 'SELECT id FROM observatory_projects WHERE userId = @userId';
+    await db.run(
+        `DELETE FROM assistant_update_receipts WHERE updateId IN
+            (SELECT id FROM assistant_updates WHERE audienceKind = 'project' AND projectId IN (${ownedProjects}))`,
+        { userId }
+    );
+    await db.run(
+        `DELETE FROM assistant_updates WHERE audienceKind = 'project' AND projectId IN (${ownedProjects})`, { userId }
+    );
     const memberships = (await db.run(
         'DELETE FROM project_members WHERE userId = @userId', { userId }
     )).changes;
