@@ -581,6 +581,11 @@ describe('a change of direction', () => {
         const stopped = await row(proposed);
         const retried = (await initiatives.act({ userId: A, id: proposed, action: 'retry', expectedRevision: stopped.revision })).initiative;
         expect(retried).toMatchObject({ status: 'QUEUED', parentInitiativeId: proposed });
+        // The same change of direction, read once more, does not withdraw what they started again.
+        await db.run('UPDATE assistant_source_cursors SET sourceRevision = @before WHERE responsibilityId = @rid AND sourceKind = @kind',
+            { before: String(steerId - 1), rid: grant.id, kind: 'conversation_request' });
+        expect(await lookLater(grant)).toMatchObject({ steered: [], superseded: 0 });
+        expect(await row(retried.id)).toMatchObject({ status: 'QUEUED', supersededBy: null });
     });
 
     test('calling work off without a replacement stops it and proposes nothing new', async () => {

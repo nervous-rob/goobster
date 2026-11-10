@@ -49,11 +49,18 @@ const plural = (n, one, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 async function apply({ responsibility, event }) {
     const owner = responsibility.ownerUserId;
     const open = await db.all(
-        `SELECT id, sourceId FROM assistant_initiatives
-         WHERE ownerUserId = @owner AND sourceKind = @kind AND sourceId LIKE @conversation
-           AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING')
-         ORDER BY id ASC`,
-        { owner, kind: KIND, conversation: `parlor:${Number(event.conversationId)}:%` }
+        `SELECT i.id, i.sourceId FROM assistant_initiatives i
+         WHERE i.ownerUserId = @owner AND i.sourceKind = @kind AND i.sourceId LIKE @conversation
+           AND i.status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING')
+           -- A request this message already withdrew and its owner started
+           -- again is theirs to keep: the message is read once more while
+           -- the cursor settles, and must not withdraw it a second time.
+           AND NOT EXISTS (
+                SELECT 1 FROM assistant_initiatives earlier
+                WHERE earlier.ownerUserId = i.ownerUserId AND earlier.sourceKind = i.sourceKind
+                  AND earlier.sourceId = i.sourceId AND earlier.supersededBy = @ref)
+         ORDER BY i.id ASC`,
+        { owner, kind: KIND, conversation: `parlor:${Number(event.conversationId)}:%`, ref: event.sourceId }
     );
     // Only what was asked before this message: its own replacement request is new work.
     const targets = open.filter(row => messageIdOf(row.sourceId) < Number(event.messageId));
