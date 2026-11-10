@@ -237,10 +237,12 @@ Code: `services/assistantControlService.js` (stop, caps, the view),
 `web/routes/admin.js`. Tests: `tests/assistantControlService.test.js` on
 SQLite and Postgres, and the `e2e/hostAssistant.spec.js` journey.
 
+How a real model behaves under these limits is measured by the optional
+[evaluation set](delegated_evaluation.md), whose records carry the caps in
+force.
+
 ## Not built yet
 
-- The evaluation set that runs fixed, fictional responsibilities against a
-  real provider (DA-12b).
 - Caps for one account that differ from everyone else's, and a ceiling
   separate from the default.
 - Telling people in their Inbox that the host stopped or resumed their work

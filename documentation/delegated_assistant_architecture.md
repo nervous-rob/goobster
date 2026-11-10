@@ -15,7 +15,8 @@ supersession when a person changes direction) together with the project
 board of section 9.2 as recorded in ADR 0021; the rest, and all of section
 13 except "Deciding a request in place" (13.1), the explicit-request part
 of the `conversation_request` adapter (13.2), delivery and interruption
-(13.3) and the host's controls (13.6), is planned.** Updated 2026-11-10.
+(13.3) and 13.6 (the host's controls and the evaluation set), is planned.**
+Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -769,9 +770,9 @@ and the relevant portal journeys:
 ## 13. Planned extensions beyond the first pilot
 
 **Status: planned, with three parts implemented: "Deciding a request in place"
-in 13.1 (DA-7a), delivery and interruption in 13.3 (DA-9) and the host's
-controls in 13.6 (DA-12a). Nothing else in
-this section is implemented.** These are the
+in 13.1 (DA-7a), delivery and interruption in 13.3 (DA-9) and 13.6 (DA-12:
+the host's controls and the evaluation set). Nothing else in this section is
+implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -1082,10 +1083,11 @@ responsibility.
 
 ### 13.6 Operator controls and evaluation (DA-12)
 
-**Status: the host view, the controls, caps as configuration, the pilot
-gate and the pilot record are implemented (DA-12a); the behaviour is in
+**Status: implemented. The host view, the controls, caps as configuration,
+the pilot gate and the pilot record are DA-12a; the behaviour is in
 [delegated_operations.md](delegated_operations.md). The evaluation set is
-planned (DA-12b).**
+DA-12b; how to run and read it is in
+[delegated_evaluation.md](delegated_evaluation.md).**
 
 - **Host view (implemented).** `GET /api/app/admin/assistant` returns counts
   by state, runs, tokens, searches and sandbox seconds per day, failures and
@@ -1116,14 +1118,27 @@ planned (DA-12b).**
   vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
   "Deciding a request in place" (13.1) shipped before the gate and does not
   call it yet.
-- **Evaluation set (planned).** `tests/live/assistant.live.test.js` (skipped
-  without keys, never in required CI): fixed fictional responsibilities and
-  seeded sources, run against a real provider. It records, per model and
+- **Evaluation set (implemented).** `tests/live/assistant.live.test.js`
+  (skipped unless `GOOBSTER_ASSISTANT_EVAL=1` and the chosen provider's key
+  are set, never in required CI) runs the fixed fictional responsibilities
+  in `tests/live/assistant-evaluation/cases.v1.json` through
+  `assistantRunService.execute` against a real provider, with the sources
+  seeded (`scripts/lib/assistantEvaluation.js`). It records, per model and
   prompt version: refused calls, writes attempted outside the grant, injected
-  instructions followed (must be zero by authorization, measured anyway),
-  tokens per useful result, and runs ending with no result.
+  instructions followed (attempted, took effect, echoed in the report),
+  tokens per useful result, and runs ending with no result. Its live test
+  asserts only the mechanics: every case settled, the record names the model
+  and prompt version, and nothing outside a grant took effect. "Useful" is a
+  fixed five-check rubric, version 1, a default until the owner records
+  another.
+- **Prompt version (implemented).** `assistantRunService.promptVersion()`
+  returns `PROMPT_VERSION` and a fingerprint of the run instructions and
+  every tool definition, so a change to either is visible whether or not the
+  version was raised. It is recorded by the evaluation; it is not yet stored
+  on production runs.
 - **Pilot record (implemented).** The DA-6 template has the model and prompt
   version and the caps in force, so a result can be compared across changes.
+  An evaluation's `manifest.json` carries all of them.
 
 See the [implementation plan](delegated_assistant_implementation.md) for the
 increment-specific acceptance matrix and rollout gates. CI establishes these

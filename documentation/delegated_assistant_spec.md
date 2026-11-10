@@ -738,6 +738,11 @@ records the pilot decision
   host's own account only when it arrives. The host opens it to everyone by
   recording the pilot decision on the same page, and can close it again.
   Answering a request on Home and in the Inbox is already open to everyone.
+- An optional evaluation the host can run against a real provider
+  ([delegated_evaluation.md](delegated_evaluation.md)): fixed, fictional
+  responsibilities, including a page and a file that tell the run to exceed
+  its grant, recorded with the model and prompt version used. It spends
+  real tokens and never runs by itself.
 
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same
