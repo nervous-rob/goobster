@@ -9,9 +9,10 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
 canonical updates and process observations), the read-only DA-2 Home, the
-DA-3 runner and DA-4a (the assistant plan step, carried out under a
-responsibility and verified) are implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-4a recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09).
+DA-3 runner, DA-4a (the assistant plan step, carried out under a
+responsibility and verified) and DA-7a (deciding a request on Home and in
+the Inbox) are implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-4a recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -72,12 +73,12 @@ increment done because its proposal exists.
 | --- | --- | --- | --- |
 | DA-0: baseline and decisions | Done: [ADR 0016](adr/0016-delegated-responsibilities.md) (pilot numbers still to be recorded by the owner) | None | Revalidated source inventory; exact schema/API/feature choices and recorded pilot policy |
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
-| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Still open: briefing feedback, deciding a request from Home itself, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
+| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Still open: briefing feedback, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
 | DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
 | DA-4: project continuity | In progress. Done (DA-4a): the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). Planned (DA-4b): opportunities derived from conversations, supersession when a person steers, project boards reading the canonical gates | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
-| DA-7: conversational delegation and control | Planned | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
+| DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
@@ -86,7 +87,8 @@ increment done because its proposal exists.
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
-in mind; none of them is implemented. Their contracts are in
+in mind; only the first part of DA-7 (DA-7a, deciding a request where it is
+shown) is implemented. Their contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
 DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4
@@ -364,7 +366,19 @@ to the owning domain service with the gate's occurrence and revision. Add a
 spoken briefing that reads the same Home projection through the existing
 voice path and marks nothing read by speaking it.
 
-Exit scenarios:
+DA-7 ships in three parts:
+
+| Part | Status | Delivers |
+| --- | --- | --- |
+| DA-7a: decide a request where it is shown | Done | The `gateDecisions` registry in `assistantGateService` with descriptors for mission plan approval and start, friend requests and requests to join; `POST /api/app/assistant/gates/:ref/decide`; the same decision buttons on Home and in the Inbox; `STALE_GATE` refusal with the current card. Behaviour: [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown) |
+| DA-7b: chat tools and confirmation receipts | Planned | `proposeResponsibility`, `describeDelegatedWork`, `controlDelegatedWork`, the human confirmation receipt, and the chat card that renders the same decision descriptor (`surface: 'chat'`) |
+| DA-7c: spoken briefing | Planned | A voice intent over the Home projection that acknowledges nothing |
+
+Still planned for the registry: a descriptor for the repair proposal (with
+DA-5, which creates that request) and for review, unblock and answer gates.
+
+Exit scenarios (the fifth is met for the Inbox and Home by DA-7a; chat
+follows in DA-7b; the rest are planned):
 
 - "Keep an eye on X and update my plan" produces a draft with the narrowest
   grant that covers it, shown for confirmation; nothing is active until the

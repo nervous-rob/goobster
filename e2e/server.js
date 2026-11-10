@@ -615,9 +615,34 @@ async function main() {
     });
 
     const app = express();
+    // Express 4 does not catch a rejected async handler, and Node ends the
+    // process on an unhandled rejection. One fixture that threw (a retried
+    // journey seeding the same project twice) took this server down and every
+    // later journey failed with a refused connection. Hand the error to
+    // Express instead, so it is one failed request.
+    for (const method of ['get', 'post']) {
+        const register = app[method].bind(app);
+        app[method] = (route, ...handlers) => register(route, ...handlers.map((handler) =>
+            (handler.constructor.name === 'AsyncFunction'
+                ? (req, res, next) => handler(req, res, next).catch(next)
+                : handler)));
+    }
+    // A journey that is retried seeds again. Reuse the project the first attempt made.
+    const ensureProject = async ({ userId, name }) => {
+        try {
+            return await observatory.createProject({ userId, name });
+        } catch (err) {
+            if (err?.code !== 'DUPLICATE_PROJECT') throw err;
+            const existing = (await observatory.listProjects(userId)).find((project) => project.name === name);
+            if (!existing) throw err;
+            return existing;
+        }
+    };
+    // For e2e/harness.spec.js: proof that a rejecting fixture is one failed request.
+    app.post('/e2e/fixtures/rejects', async () => { throw new Error('This fixture rejects on purpose.'); });
     app.post('/e2e/fixtures/account-export', express.json(), async (req, res) => {
         const userId = String(req.body.userId);
-        const project = await observatory.createProject({ userId, name: 'Portable account fixture' });
+        const project = await ensureProject({ userId, name: 'Portable account fixture' });
         await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user',
             mutations: { upsert: [{ type: 'concept', label: 'Portable evidence fixture', content: 'This saved knowledge belongs in the account archive.' }] } });
         const directory = path.join(DATA_DIR, 'sandbox', 'projects', userId, project.slug);
@@ -630,7 +655,7 @@ async function main() {
         if (req.body.advance) { sourceNow += 3600_000; sourceVersion++; res.json({ ok: true }); return; }
         await db.run('DELETE FROM followed_sources WHERE userId = @userId', { userId });
         await policies.enroll({ userId, initiative: 'observe' });
-        const project = await observatory.createProject({ userId, name: 'Source following fixture' });
+        const project = await ensureProject({ userId, name: 'Source following fixture' });
         await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user', mutations: { upsert: [{ type: 'concept', label: 'Followed topic fixture', content: 'An explicitly kept research topic.' }] } });
         res.json({ project });
     });
@@ -851,6 +876,28 @@ async function main() {
         try {
             const updates = require('@goobster/core/services/assistantUpdateService');
             res.json({ resolved: await updates.resolveGate({ audience: { userId: String(req.body?.userId) }, identityKey: 'e2e:gate' }) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // A request the person can decide where it is shown (the decide-in-place
+    // journey): somebody asks to be friends, and can take it back while the
+    // card is still on screen. `step` is ask | withdraw.
+    app.post('/e2e/fixtures/assistant-home/friend-request', express.json(), async (req, res) => {
+        try {
+            const friends = require('@goobster/core/services/friendService');
+            const userId = String(req.body?.userId || '');
+            const fromId = String(req.body?.fromId || '');
+            if (!/^\d{5,20}$/.test(userId) || !/^\d{5,20}$/.test(fromId)) return res.status(400).json({ error: 'userId, fromId' });
+            const pair = `(requesterId = @fromId AND addresseeId = @userId) OR (requesterId = @userId AND addresseeId = @fromId)`;
+            if (req.body?.step === 'withdraw') {
+                const row = await db.get(`SELECT id FROM friendships WHERE status = 'pending' AND (${pair})`, { userId, fromId });
+                return res.json(await friends.cancel({ userId: fromId, requestId: row?.id }));
+            }
+            await identityService.ensureLegacyPrincipal({ discordId: fromId, displayName: req.body?.fromName || 'Ada' });
+            await db.run(`DELETE FROM friendships WHERE ${pair}`, { userId, fromId });
+            const { request } = await friends.request({ userId: fromId, userName: req.body?.fromName || 'Ada', targetId: userId });
+            res.json({ ok: true, requestId: request.id });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }
