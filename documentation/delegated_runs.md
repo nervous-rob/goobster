@@ -313,6 +313,16 @@ alone and says why. See
 [delegated_project_findings.md](delegated_project_findings.md). The ledger
 code `SHARE_FAILED` records, with no text, that filing the shared copy failed.
 
+## Measuring a model
+
+The instructions a run is given carry a version
+(`assistantRunService.promptVersion()`: a number raised on purpose, and a
+fingerprint that changes with any edit to the instructions or a tool's
+definition). The optional [evaluation set](delegated_evaluation.md) runs
+fixed, fictional responsibilities against a real provider and records what
+the model did, with that version and the model used. It is not part of
+`npm test` or CI.
+
 ## Not built yet
 
 Editing notes you saved, connecting or archiving notes (DA-11b), outside

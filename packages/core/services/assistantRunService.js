@@ -75,6 +75,13 @@ const STOP_CODES = new Set([
     'REVISION_CONFLICT', 'ACTOR_MISMATCH', 'ATTENTION_NOT_ENROLLED', 'FEATURE_UNAVAILABLE', 'ASSISTANT_PAUSED'
 ]);
 
+/**
+ * The version of the instructions a run is given (`_messages`). Raise it
+ * when they change on purpose: evaluation results are compared per version
+ * (documentation/delegated_evaluation.md).
+ */
+const PROMPT_VERSION = 1;
+
 function utcText(date = new Date()) {
     return date.toISOString().slice(0, 19).replace('T', ' ');
 }
@@ -322,6 +329,24 @@ class AssistantRunService {
             'Look into it within the responsibility above and report.'
         ].filter(Boolean).join('\n');
         return [{ role: 'system', content: system }, { role: 'user', content: user }];
+    }
+
+    /**
+     * Which instructions and tool definitions a run is given right now: the
+     * version above, and a fingerprint that changes with any edit to the
+     * instructions or to a tool's definition, bumped or not.
+     * @returns {{ version: number, fingerprint: string, label: string }}
+     */
+    promptVersion() {
+        const messages = this._messages({
+            responsibility: { title: '{title}', outcome: '{outcome}' },
+            initiative: { title: '{change}', reason: '{detail}' },
+            project: { name: '{project}' },
+            tools: Object.keys(TOOLS)
+        });
+        const definitions = Object.values(TOOLS).map(tool => tool.definition);
+        const fingerprint = crypto.createHash('sha256').update(JSON.stringify({ messages, definitions })).digest('hex').slice(0, 12);
+        return { version: PROMPT_VERSION, fingerprint, label: `v${PROMPT_VERSION}-${fingerprint}` };
     }
 
     /** The journaled, authorized tool executor for one run. */
@@ -1095,4 +1120,5 @@ module.exports.TOOLS = TOOLS;
 module.exports.DEFAULT_BUDGETS = DEFAULT_BUDGETS;
 module.exports.DEFAULT_EXTERNAL_OPERATIONS = DEFAULT_EXTERNAL_OPERATIONS;
 module.exports.MAX_EXTERNAL_OPERATIONS = MAX_EXTERNAL_OPERATIONS;
+module.exports.PROMPT_VERSION = PROMPT_VERSION;
 module.exports.argsHash = argsHash;
