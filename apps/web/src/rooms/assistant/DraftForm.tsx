@@ -5,6 +5,7 @@ import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import type { ResponsibilityOperation } from '../../lib/types';
 import type { Project } from './grants';
+import { NO_WIDER_SOURCES, SourceChoices, widerOperations, widerScopes, type WiderSources } from './SourceChoices';
 
 /** Drafts a responsibility from plain choices. A draft grants nothing. */
 export function DraftForm({ projects, onCreated }: { projects: Project[]; onCreated: () => Promise<unknown> }) {
@@ -22,6 +23,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [planSteps, setPlanSteps] = useState(false);
     const [projectRequests, setProjectRequests] = useState(false);
     const [parlorRequests, setParlorRequests] = useState(false);
+    const [wider, setWider] = useState<WiderSources>(NO_WIDER_SOURCES);
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
     const [deepResearch, setDeepResearch] = useState(false);
@@ -30,6 +32,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const canSandbox = featureActive(me, 'sandbox');
     const canResearch = featureActive(me, 'expeditions');
     const canKnowledge = featureActive(me, 'knowledge');
+    const chosenProject = projects.find((project) => String(project.id) === projectId);
 
     function operations(): ResponsibilityOperation[] {
         const list: ResponsibilityOperation[] = [];
@@ -51,6 +54,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             if (runCode && canSandbox) list.push({ operation: 'sandbox.run', resource: { kind: 'project', ids: [projectId] } });
             if (planSteps) list.push({ operation: 'plan.step.execute', resource: { kind: 'project', ids: [projectId] } });
         }
+        list.push(...widerOperations(wider, chosenProject));
         return list;
     }
 
@@ -59,6 +63,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         const list: string[] = [];
         if (projectId && projectRequests) list.push('project_chat');
         if (parlorRequests) list.push('parlor');
+        list.push(...widerScopes(wider, chosenProject));
         return list;
     }
 
@@ -80,6 +85,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             });
             setTitle('');
             setOutcome('');
+            setWider(NO_WIDER_SOURCES);
             toast('Saved as a draft. Review it below, then activate it.');
             await onCreated();
         } catch (error) { toast((error as Error).message, true); } finally { setSaving(false); }
@@ -165,6 +171,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                     </div>
                 )}
             </fieldset>
+            <SourceChoices project={chosenProject} value={wider} onChange={setWider} />
             <label className="field">
                 <span>Ends</span>
                 <select value={days} onChange={(e) => setDays(e.target.value)}>

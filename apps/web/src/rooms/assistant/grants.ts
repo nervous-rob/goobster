@@ -60,3 +60,15 @@ export function describeListening(item: Pick<Responsibility, 'scopes'>, name: st
     ].filter(Boolean);
     return places.length ? `Takes requests you address to ${name} in ${places.join(' and ')}` : null;
 }
+
+/** The wider sources it notices work from, in plain words (delegated_opportunity_sources.md). */
+export function describeNoticing(item: Pick<Responsibility, 'scopes'>): string | null {
+    const sources = item.scopes?.sources || [];
+    const things = [
+        sources.includes('personal_chat') ? 'requests in your own chats' : null,
+        sources.includes('followed_source') ? 'items you keep from sources you follow' : null,
+        sources.includes('job_failure') ? 'new causes of failed project runs' : null,
+        sources.includes('ci_verdict') ? 'CI results on watched branches' : null
+    ].filter(Boolean);
+    return things.length ? `Notices ${things.join(', ')}` : null;
+}

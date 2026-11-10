@@ -28,7 +28,7 @@ const logger = require('../utils/logger');
 
 const COMPONENTS = ['knowledge', 'research', 'projects', 'processes', 'conversations', 'responsibilities'];
 const KINDS = ['finding', 'progress', 'process', 'question', 'responsibility'];
-const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review', 'open_conversation'];
+const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review', 'open_conversation', 'open_chat'];
 const INBOX_SOURCE_TYPE = 'assistant_update';
 const PAGE_MAX = 50;
 const ACK_MAX = 100;

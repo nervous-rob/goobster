@@ -80,7 +80,7 @@ increment done because its proposal exists.
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
-| DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
+| DA-8: wider opportunity sources | Done. Four adapters (`chat_request` for `personal_chat`, `followed_source`, `job_failure`, `ci_verdict`), each opt-in in `scopes.sources` and behind the owner-only `sources` pilot capability; history before activation is never acted on; one narrow model label for implied requests in personal chat (charged to the responsibility's budget, at most 10 percent of it); a daily cap of 3 per source that coalesces the excess; one investigation per failure cause; skipped CI is not passing; a lookback preview ([delegated_opportunity_sources.md](delegated_opportunity_sources.md), [ADR 0026](adr/0026-wider-opportunity-sources.md)) | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
 | DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
@@ -287,8 +287,9 @@ boards are a read over the canonical gates and decide through
 
 Not in DA-4b, by owner decision 4 and the conservative reading: a model
 reading conversations for implied requests, conversation context in a run,
-and one-to-one chat (DA-8); findings for a project audience and anything
-posted back into the conversation (DA-11c).
+and one-to-one chat (all three arrived in DA-8, for personal chat only, see
+below); findings for a project audience and anything posted back into the
+conversation (DA-11c).
 
 ### DA-5: keep processes healthy and useful
 

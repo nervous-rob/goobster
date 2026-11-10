@@ -184,7 +184,16 @@ class AssistantRunService {
              WHERE responsibilityId = @rid AND id <> @run AND startedAt >= @day`,
             { rid: responsibilityId, run: exceptRunId, day: dayStart(now) }
         );
-        return { tokens: Number(row?.tokens || 0), searches: Number(row?.searches || 0), compute: Number(row?.compute || 0) };
+        // Judging chat messages (ADR 0026) is paid from the same daily token budget.
+        const judged = await db.get(
+            `SELECT COALESCE(SUM(COALESCE(actualTokens, estimatedTokens)), 0) AS n FROM usage_reservations
+             WHERE workKind = 'assistant_classification' AND workId = @rid AND status <> 'released' AND createdAt >= @day`,
+            { rid: String(responsibilityId), day: dayStart(now) }
+        );
+        return {
+            tokens: Number(row?.tokens || 0) + Number(judged?.n || 0),
+            searches: Number(row?.searches || 0), compute: Number(row?.compute || 0)
+        };
     }
 
     /** Open, or resume, the run row of a claimed initiative. */
@@ -495,8 +504,7 @@ class AssistantRunService {
         // the person. Deleted, out of reach or no longer covered ends the
         // attempt here, before any model call.
         let request = null;
-        const requests = !planStep && initiative.origin?.kind === 'parlor_message'
-            ? require('./assistant/conversationRequestRun') : null;
+        const requests = !planStep ? require('./assistant/originRuns').forKind(initiative.origin?.kind) : null;
         if (requests) {
             const loaded = await requests.load({ initiative, responsibility });
             if (!loaded.ok) {
@@ -630,12 +638,14 @@ class AssistantRunService {
                     kind: 'finding',
                     title: result.title || clip(initiative.title, 200),
                     summary: result.summary || null,
-                    components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
+                    components: [...new Set([...(project ? ['projects'] : []), ...(request?.conversationId != null ? ['conversations'] : []), 'research', ...applied.components])],
                     source: { kind: 'initiative', id: initiative.id },
                     // A result of something asked in a conversation links back to it.
                     actions: [
                         { kind: 'open_initiative', id: String(initiative.id) },
-                        ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                        ...(request?.conversationId != null
+                            ? [{ kind: request.kind === 'chat_message' ? 'open_chat' : 'open_conversation', id: String(request.conversationId) }]
+                            : [])
                     ],
                     responsibilityId: responsibility.id,
                     initiativeId: initiative.id,

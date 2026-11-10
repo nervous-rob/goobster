@@ -132,7 +132,7 @@ module.exports = {
         summary: 'Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations. Inert until a person activates one.',
         apiKeys: [],
         configKeys: [],
-        docs: ['documentation/delegated_responsibilities.md', 'documentation/delegated_runs.md', 'documentation/delegated_plan_steps.md', 'documentation/delegated_conversation_requests.md'],
+        docs: ['documentation/delegated_responsibilities.md', 'documentation/delegated_runs.md', 'documentation/delegated_plan_steps.md', 'documentation/delegated_conversation_requests.md', 'documentation/delegated_opportunity_sources.md'],
         payload: {
             files: [
                 'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService,assistantGateService,assistantGateDescriptors,assistantRunService,assistantRunnerService}.js',

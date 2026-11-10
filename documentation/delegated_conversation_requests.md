@@ -54,8 +54,8 @@ A responsibility takes requests from the places named in its
 On the Assistant page the draft form offers both as checkboxes: *Take
 requests you address to Goobster in this project's conversations* and *...in
 your discussions*. The responsibility's row then says where it listens.
-`personal_chat` is reserved for one-to-one chat with Goobster and is not
-read yet (DA-8).
+`personal_chat` is a separate, pilot-gated source for your own portal chats:
+[delegated_opportunity_sources.md](delegated_opportunity_sources.md).
 
 The source says where requests are read. What a run may then **do** is still
 only the responsibility's operations: a responsibility that takes requests
