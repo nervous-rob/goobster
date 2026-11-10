@@ -31,6 +31,8 @@ const runs = require('@goobster/core/services/assistantRunService');
 const runner = require('@goobster/core/services/assistantRunnerService');
 const updates = require('@goobster/core/services/assistantUpdateService');
 const gates = require('@goobster/core/services/assistantGateService');
+const confirmations = require('@goobster/core/services/assistantConfirmationService');
+const modelCallScope = require('@goobster/core/utils/modelCallScope');
 const policies = require('@goobster/core/services/attentionPolicyService');
 const access = require('@goobster/core/services/assistantAccessService');
 const identityService = require('@goobster/core/services/identityService');
@@ -61,7 +63,7 @@ beforeEach(async () => {
     jest.restoreAllMocks();
     runner._reset();
     for (const table of [
-        'kg_change_sets', 'assistant_run_operations', 'assistant_runs', 'assistant_initiatives', 'assistant_source_cursors',
+        'kg_change_sets', 'assistant_confirmation_receipts', 'assistant_run_operations', 'assistant_runs', 'assistant_initiatives', 'assistant_source_cursors',
         'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions', 'assistant_responsibilities',
         'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures',
         'project_mission_evidence', 'project_missions', 'observatory_projects', 'research_claims', 'research_sources',
@@ -165,9 +167,17 @@ describe('a saved-note proposal', () => {
             { op: 'same', text: 'Cover the beans.' }
         ]);
         expect(card.options.map(option => option.id)).toEqual(['apply', 'reject']);
-        // Someone else cannot see or decide it.
+        // Someone else cannot see or decide it. Outside the pilot the refusal
+        // comes before the request is looked up (deciding from a card is the
+        // owner's until the pilot decision is recorded); inside it, the
+        // request does not exist for them.
+        expect(await cardOf(set.id, B)).toBeNull();
+        await expect(decide(set.id, 'apply', { userId: B, card })).rejects.toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        await access.recordDecision({ scope: 'everyone' });
         expect(await cardOf(set.id, B)).toBeNull();
         await expect(decide(set.id, 'apply', { userId: B, card })).rejects.toMatchObject({ status: 404 });
+        await instanceState.remove(access.KEY_PILOT);
+        expect(await noteRow(note.id)).toMatchObject({ content: 'Frost is expected on the 14th. Cover the beans.', revision: note.revision });
 
         const decided = await decide(set.id, 'apply', { card });
         expect(decided.decided.message).toBe('Applied.');
@@ -562,6 +572,65 @@ describe('the owner-only pilot gate', () => {
         await runner.tick({ wait: true });
         expect(offeredTo(chat).filter(name => ['findNotes', 'listNoteLinks', 'proposeNoteChange', 'amendSavedNote', 'linkNotes', 'retractNoteLink', 'archiveNote', 'confirmNote'].includes(name))).toEqual([]);
         expect(await setRows()).toEqual([]);
+    }, 60_000);
+
+    test('a suggestion left waiting when its person leaves the pilot is listed, cannot be applied, and is theirs again when they return', async () => {
+        const note = await saved('Frost date', 'Frost on the 14th.');
+        await queued();
+        script([call('proposeNoteChange', { id: note.id, revision: note.revision, content: 'Frost on the 9th.', rationale: 'Almanac.' })], FINISH);
+        await runner.tick({ wait: true });
+        const [set] = await setRows();
+        const card = await cardOf(set.id);
+        expect(card).toMatchObject({ kind: 'note_proposal', state: 'open' });
+
+        await db.run("UPDATE app_accounts SET role = 'member' WHERE principalId = @id", { id: A });
+        expect(await cardOf(set.id)).toBeNull();
+        await expect(decide(set.id, 'apply', { card })).rejects.toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        await expect(decide(set.id, 'reject', { card })).rejects.toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        expect(await noteRow(note.id)).toMatchObject({ content: 'Frost on the 14th.', revision: note.revision });
+        // It is still theirs to read, and nothing was applied or dropped.
+        const waiting = (await changes.overview({ guildId: scope, userId: A })).proposals;
+        expect(waiting.map(entry => entry.id)).toEqual([Number(set.id)]);
+        expect((await setRows())[0]).toMatchObject({ status: 'PROPOSED' });
+
+        await db.run("UPDATE app_accounts SET role = 'operator' WHERE principalId = @id", { id: A });
+        expect((await decide(set.id, 'apply')).decided.message).toBe('Applied.');
+        expect(await noteRow(note.id)).toMatchObject({ content: 'Frost on the 9th.' });
+    }, 60_000);
+
+    test('in a conversation the suggestion is applied with the receipt minted for the lines shown, once, and never by a model call', async () => {
+        const note = await saved('Frost date', 'Frost on the 14th.');
+        await queued();
+        script([call('proposeNoteChange', { id: note.id, revision: note.revision, content: 'Frost on the 9th.', rationale: 'Almanac.' })], FINISH);
+        await runner.tick({ wait: true });
+        const [set] = await setRows();
+        const card = await cardOf(set.id);
+        const press = (extra = {}) => gates.decide({
+            userId: A, ref: card.ref, option: 'apply', occurrence: card.occurrence, revision: card.revision, surface: 'chat', ...extra
+        });
+
+        await expect(press()).rejects.toMatchObject({ status: 403, code: 'HUMAN_CONFIRMATION_REQUIRED' });
+        const minted = await confirmations.mint({
+            userId: A, subject: 'gate', id: card.ref, action: 'decide', occurrence: card.occurrence, revision: card.revision, surface: 'chat'
+        });
+        // What was confirmed is the card with its diff: the same card with other lines is another hash.
+        expect(minted.shown.diff).toEqual(card.diff);
+        expect(confirmations.cardHash(card)).not.toBe(confirmations.cardHash({ ...card, diff: [{ op: 'add', text: 'Frost never comes.' }] }));
+        expect(confirmations.cardHash(card)).not.toBe(confirmations.cardHash({ ...card, diff: undefined }));
+
+        // Holding the person's receipt, a model's tool call still applies nothing, on any surface.
+        for (const surface of ['chat', 'home', 'inbox']) {
+            await expect(modelCallScope.run('test', () => press({ surface, receipt: minted.receipt })))
+                .rejects.toMatchObject({ status: 403, code: 'HUMAN_ONLY' });
+        }
+        expect(await noteRow(note.id)).toMatchObject({ content: 'Frost on the 14th.', revision: note.revision });
+
+        expect((await press({ receipt: minted.receipt })).decided.message).toBe('Applied.');
+        expect(await noteRow(note.id)).toMatchObject({ content: 'Frost on the 9th.', revision: note.revision + 1 });
+        const [spent] = await db.all('SELECT subjectKind, surface, consumedAt FROM assistant_confirmation_receipts', {});
+        expect(spent).toMatchObject({ subjectKind: 'gate', surface: 'chat', consumedAt: expect.any(String) });
+        await expect(press({ receipt: minted.receipt })).rejects.toMatchObject({ code: 'STALE_GATE' });
+        expect(await noteRow(note.id)).toMatchObject({ revision: note.revision + 1 });
     }, 60_000);
 
     test('recording the pilot decision opens it to everyone', async () => {

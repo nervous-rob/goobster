@@ -503,7 +503,16 @@ export type Responsibility = {
     /** `sources` names where it notices work: `project_chat`, `parlor`, `personal_chat`, `followed_source`, `job_failure`, `ci_verdict` (delegated_conversation_requests.md, delegated_opportunity_sources.md). */
     scopes?: { sources?: string[]; audience?: string };
     budgets: Record<string, number>; rules?: { autoStart?: boolean; interruption?: string; stopCondition?: string }; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
+    /** 'model' when it was drafted in a conversation: turning it on always takes the person's own confirmation. */
+    proposedBy?: 'model' | null;
+    proposal?: { conversation: string | null; keptAt: string | null } | null;
 };
+/**
+ * A single-use human confirmation (documentation/delegated_conversation.md):
+ * minted for the signed-in person and bound to exactly what `shown` holds.
+ */
+export type ConfirmationSurface = 'portal' | 'chat';
+export type ConfirmationReceipt<Shown = unknown> = { receipt: string; expiresAt: string; surface: ConfirmationSurface; shown: Shown };
 export type AssistantRun = {
     id: number; status: string; stopCode: string | null; outcome: string | null; rounds: number; tokensUsed: number;
     searches: number; computeSeconds?: number; resultTitle: string | null; resultSummary: string | null; startedAt: string; endedAt: string | null;
@@ -1307,7 +1316,11 @@ export type ToolCard =
     | { kind: 'repo-integration'; project: string; owner: string | null; name: string; repo: string; operation: string;
         base: string; branch: string; result: string; conflicts: string[]; from: string | null; to: string | null }
     | { kind: 'repo-pr'; project: string; owner: string | null; name: string; repo: string; number: number; url: string;
-        title: string; head: string; base: string; draft: boolean };
+        title: string; head: string; base: string; draft: boolean }
+    /** A draft responsibility proposed in this conversation. Only the id: the card reads the record itself. */
+    | { kind: 'assistant-proposal'; id: number }
+    /** Open requests the person can decide here. Only references: each card is read from the server. */
+    | { kind: 'assistant-requests'; refs: string[] };
 
 export type TurnStep = {
     type: 'text' | 'tool';

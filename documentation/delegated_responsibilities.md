@@ -149,6 +149,12 @@ Owner actions are `activate` (draft to active), `pause`, `resume` (from paused
 or needs review), `complete`, `revoke` (from any non-terminal status, including
 a draft) and `archive` (from completed, revoked or expired).
 
+- **Turning authority on is confirmed.** Through the portal, `activate` and
+  `resume` take a single-use confirmation receipt for the revision and grant
+  you were shown. A draft proposed in a conversation (`proposedBy: 'model'`)
+  needs one from any caller, and can also be kept or discarded
+  ([delegated_conversation.md](delegated_conversation.md#confirmation-receipts)).
+
 - **Activation re-checks everything.** The grant needs at least one operation.
   Every linked record and granted resource must still be reachable by the
   acting person, every feature the operations need must be available, and the
@@ -214,9 +220,13 @@ Refusal codes: `FEATURE_UNAVAILABLE`, `ASSISTANT_PAUSED`,
 what he may do. Inside a piece of work, a refusal is also noted in the
 [work ledger](work_ledger.md) (phase `responsibility_authorize`, code only).
 
-The model cannot create, activate or widen a responsibility. There is no AI
-tool or MCP tool for responsibilities; they change only through the
-authenticated portal routes.
+The model cannot activate, resume or widen a responsibility. In your own
+private chat it can **draft** one (`proposeResponsibility`), read yours and
+pause one or cancel a piece of work; a draft grants nothing, and turning
+one on is your own confirmed press in the portal. Every service call that
+would turn authority on refuses inside a model tool call (`HUMAN_ONLY`).
+See [delegated_conversation.md](delegated_conversation.md) and
+[ADR 0023](adr/0023-conversational-delegation-and-receipts.md).
 
 ## Initiatives
 
@@ -416,6 +426,8 @@ The assistant's periodic pass applies these windows:
 | Runs and their operation journals ([delegated_runs.md](delegated_runs.md)) | 180 days after the run finished, and with their initiative |
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
 | Source cursors | As long as their responsibility |
+| A draft proposed in a conversation that was never kept, edited or activated | 7 days |
+| Confirmation receipts | 30 days after they expire |
 
 ## Portal API
 
@@ -425,10 +437,12 @@ All routes act as the signed-in person. Another person's responsibility answers
 | Route | Purpose |
 | --- | --- |
 | `GET /api/app/assistant/responsibilities` | Your responsibilities (`?status=` to filter) plus the vocabulary. |
-| `POST /api/app/assistant/responsibilities` | Create a draft. Pass `activate: true` to create and activate in one step. An `Idempotency-Key` header (or `idempotencyKey` in the body) makes a retried create return the first one. |
+| `POST /api/app/assistant/responsibilities` | Create a draft. It is always a draft: `activate: true` is refused (`HUMAN_CONFIRMATION_REQUIRED`). An `Idempotency-Key` header (or `idempotencyKey` in the body) makes a retried create return the first one. |
 | `GET /api/app/assistant/responsibilities/:id` | One responsibility and its revision history. |
 | `PATCH /api/app/assistant/responsibilities/:id` | Edit. Requires `expectedRevision`. |
-| `POST /api/app/assistant/responsibilities/:id/actions` | `{ action, expectedRevision }`, where `action` is `activate`, `pause`, `resume`, `complete`, `revoke` or `archive`. |
+| `POST /api/app/assistant/responsibilities/:id/actions` | `{ action, expectedRevision, receipt? }`, where `action` is `activate`, `pause`, `resume`, `complete`, `revoke` or `archive`. `activate` and `resume` require `receipt`. |
+| `POST /api/app/assistant/responsibilities/:id/proposal` | `{ action: 'keep' \| 'discard', expectedRevision }` for a draft proposed in a conversation. |
+| `POST /api/app/assistant/confirmations` | Issue the single-use receipt for what you are confirming. See [delegated_conversation.md](delegated_conversation.md#api). |
 
 | `GET /api/app/assistant/initiatives` | Your initiatives (`?responsibilityId=`, `?status=`, `?limit=` up to 100). |
 | `GET /api/app/assistant/initiatives/:id` | One initiative. |
@@ -436,7 +450,8 @@ All routes act as the signed-in person. Another person's responsibility answers
 | `GET /api/app/assistant/updates` | Updates you can see, newest first (`?component=`, `?responsibilityId=`, `?limit=` up to 50, `?cursor=`). The first page also returns `counts` (`unseen`, `needsAction`, `complete`) and per-component counts. A cursor belongs to the person it was issued to. |
 | `POST /api/app/assistant/updates/acknowledge` | `{ items: [{ id, revision }] }`, up to 100 items. Each result is `acknowledged`, `older_revision` or `not_found`. |
 | `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
-| `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface }`: decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
+| `GET /api/app/assistant/gates/:ref` | One request's decision card. |
+| `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface, receipt? }` (`receipt` is required when `surface` is `chat`): decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card; an account outside the pilot gate answers 403 `PILOT_ONLY`. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
 | `GET /api/app/assistant/processes` | Your recurring processes, each with whether it has a contract, its assessment, the incident it is part of, its retirement stage (`lifecycle`) and the actions you may take (`controls`); counts per state; and the incidents still open. |
 | `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations, existing delivery history, assessment, incident, retirement stage, the processes that depend on it and its newest cleanup preview. |
 | `POST /api/app/assistant/processes/:kind/:id/actions` | `{ action, expectedRevision?, cleanupId?, manifestHash? }`: `pause`, `resume`, `archive`, `restore`, `keep`, `preview_cleanup` or `cleanup` one of your processes. See [process_stewardship.md](process_stewardship.md#retiring-a-process). |
@@ -450,9 +465,9 @@ revision. An action that the current status does not allow answers 409
 ## Privacy
 
 Responsibilities, their revision history, source cursors, initiatives,
-personal updates, update receipts, process contracts, process observations,
-process incidents, process retirement records and cleanup previews are
-personal data:
+personal updates, update receipts, confirmation receipts, process contracts,
+process observations, process incidents, process retirement records and
+cleanup previews are personal data:
 
 - The transparency report (`/what-do-you-know-about-me`, Settings → Privacy)
   counts them.

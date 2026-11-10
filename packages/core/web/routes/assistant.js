@@ -9,6 +9,10 @@
  * and payer of a responsibility come from the session, never the body.
  * Another person's id answers 404. Edits and lifecycle actions carry
  * `expectedRevision` and answer 409 REVISION_CONFLICT when it is stale.
+ * Activating or resuming a responsibility, and deciding a request from a
+ * chat card, also carry a human confirmation receipt minted here for the
+ * session's person (ADR 0023): a model tool call has no session and cannot
+ * mint one.
  * The feature gate (inventory routeRules) refuses the whole prefix when the
  * feature is off.
  */
@@ -20,6 +24,7 @@ const processes = require('../../services/assistantProcessService');
 const incidents = require('../../services/assistantIncidentService');
 const lifecycle = require('../../services/assistantProcessLifecycleService');
 const gates = require('../../services/assistantGateService');
+const confirmations = require('../../services/assistantConfirmationService');
 const control = require('../../services/assistantControlService');
 const access = require('../../services/assistantAccessService');
 const knowledgeChanges = require('../../services/knowledgeChangeSetService');
@@ -28,6 +33,11 @@ const knowledgeGraph = require('../../services/knowledgeGraphService');
 const { dmScopeId } = require('../../utils/dmScope');
 const connectors = require('../../services/assistantConnectorService');
 const feedback = require('../../services/assistantFeedbackService');
+const { AssistantResponsibilityError } = responsibilities;
+
+/** Actions that turn authority on: the route takes them only with a receipt. */
+const CONFIRMED_ACTIONS = ['activate', 'resume'];
+const confirmationRequired = (message) => new AssistantResponsibilityError('HUMAN_CONFIRMATION_REQUIRED', message, 403);
 
 function mountAssistant(app, ctx, h) {
     const { requireAuth, assistantRoute: route } = h;
@@ -46,15 +56,20 @@ function mountAssistant(app, ctx, h) {
     })));
 
     // { title, outcome?, operations?, scopes?, budgets?, rules?, expiresAt?,
-    //   attentionItemId?, projectId?, planId?, activate?: true }
+    //   attentionItemId?, projectId?, planId? }
     // Idempotency-Key (header) or idempotencyKey (body) replays a retried create.
+    // Always a draft: activation is a separate, confirmed action on what the
+    // draft was normalized to (`activate: true` is refused).
     app.post(base, requireAuth, route(async (req) => {
         const body = req.body && typeof req.body === 'object' ? req.body : {};
         const { activate, ...fields } = body;
+        if (activate !== undefined && activate !== false && activate !== null) {
+            throw confirmationRequired('A responsibility is created as a draft. Review it, then activate it with a confirmation.');
+        }
         return responsibilities.create({
             userId: req.webUser.userId,
             body: fields,
-            activate: activate === true,
+            activate: false,
             idempotencyKey: req.get('Idempotency-Key') || null
         });
     }));
@@ -74,12 +89,52 @@ function mountAssistant(app, ctx, h) {
         });
     }));
 
-    // { action: activate | pause | resume | complete | revoke | archive, expectedRevision }
-    app.post(`${base}/:id/actions`, requireAuth, route(async (req) => responsibilities.act({
+    // { action: activate | pause | resume | complete | revoke | archive, expectedRevision, receipt? }
+    // activate and resume need `receipt`: the confirmation minted for this
+    // person, this responsibility, this revision and the grant as shown
+    // (POST /api/app/assistant/confirmations). It is spent by the action.
+    app.post(`${base}/:id/actions`, requireAuth, route(async (req) => {
+        const action = String(req.body?.action || '');
+        const receipt = typeof req.body?.receipt === 'string' && req.body.receipt ? req.body.receipt : null;
+        if (CONFIRMED_ACTIONS.includes(action) && !receipt) {
+            throw confirmationRequired(`To ${action} a responsibility, confirm it: this needs the confirmation receipt for what you were shown.`);
+        }
+        return responsibilities.act({
+            userId: req.webUser.userId,
+            id: req.params.id,
+            action,
+            expectedRevision: req.body?.expectedRevision,
+            receipt: CONFIRMED_ACTIONS.includes(action) ? receipt : null
+        });
+    }));
+
+    // { action: keep | discard, expectedRevision } - the person's answer to a
+    // draft proposed in a conversation, other than turning it on. `keep`
+    // leaves it in Responsibilities as a draft; `discard` deletes it and its
+    // history (only a proposal that never ran).
+    app.post(`${base}/:id/proposal`, requireAuth, route(async (req) => {
+        const action = String(req.body?.action || '');
+        const params = { userId: req.webUser.userId, id: req.params.id, expectedRevision: req.body?.expectedRevision };
+        if (action === 'keep') return responsibilities.keepProposal(params);
+        if (action === 'discard') return responsibilities.discardProposal(params);
+        throw new AssistantResponsibilityError('INVALID_ACTION', 'action must be keep or discard.', 400);
+    }));
+
+    // --- Human confirmation receipts (ADR 0023) -----------------------------
+    // { subject: responsibility, id, action: activate | resume, revision, surface: portal | chat }
+    // { subject: gate, id: <gate ref>, action: decide, occurrence, revision, surface: chat }
+    // Minted for the session's person when a confirmation is rendered to
+    // them. Answers { receipt, expiresAt, surface, shown }: `shown` is what
+    // the receipt is bound to, and what the confirmation displays. Single
+    // use, 15 minutes; a stale revision answers 409.
+    app.post('/api/app/assistant/confirmations', requireAuth, route(async (req) => confirmations.mint({
         userId: req.webUser.userId,
-        id: req.params.id,
+        subject: String(req.body?.subject || ''),
+        id: req.body?.id,
         action: String(req.body?.action || ''),
-        expectedRevision: req.body?.expectedRevision
+        revision: req.body?.revision,
+        occurrence: req.body?.occurrence,
+        surface: String(req.body?.surface || '')
     })));
 
     // What delegating would do with the wider sources this responsibility names:
@@ -208,7 +263,17 @@ function mountAssistant(app, ctx, h) {
     })));
 
     // --- Deciding a request where it is shown -------------------------------
-    // { option, occurrence, revision, surface: home | inbox | chat }
+    // The current decision card for a gate reference, as this person: what a
+    // chat card renders. A read; 404 when there is none they may act on.
+    app.get('/api/app/assistant/gates/:ref', requireAuth, route(async (req) => {
+        const card = await gates.card({ userId: req.webUser.userId, ref: req.params.ref });
+        if (!card) throw new gates.AssistantGateError(404, 'NOT_FOUND', 'No such request.');
+        return { card };
+    }));
+
+    // { option, occurrence, revision, surface: home | inbox | chat, receipt? }
+    // `chat` needs `receipt`: the confirmation minted when the chat card was
+    // rendered to this person, spent by the decision.
     // `:ref` is an update id, or `inbox-<item id>` for a request that lives
     // on its own Inbox item (a friend request, a request to join). The card
     // on Home, in the Inbox and in chat all post here; the owning domain
@@ -222,6 +287,7 @@ function mountAssistant(app, ctx, h) {
         occurrence: req.body?.occurrence,
         revision: req.body?.revision,
         surface: req.body?.surface,
+        receipt: typeof req.body?.receipt === 'string' && req.body.receipt ? req.body.receipt : null,
         gateway: ctx.gateway
     })));
 

@@ -12,10 +12,11 @@ canonical updates and process observations), the read-only DA-2 Home, the
 DA-3 runner, DA-4 (the assistant plan step, carried out under a
 responsibility and verified; requests made in conversation, changes of
 direction and project boards on the canonical gates), DA-7a (deciding a
-request on Home and in the Inbox), DA-9 (live Home, the interruption rule,
-the daily digest and the shared contact path) and DA-12 (the host's controls
-and the evaluation set) are implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b, DA-9, DA-12a and DA-12b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
+request on Home and in the Inbox), DA-7b (delegating and steering by
+conversation, with confirmation receipts), DA-9 (live Home, the interruption
+rule, the daily digest and the shared contact path) and DA-12 (the host's
+controls and the evaluation set) are implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b, DA-7b, DA-9, DA-12a and DA-12b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -81,7 +82,7 @@ increment done because its proposal exists.
 | DA-4: project continuity | Done. DA-4a: the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). DA-4b: requests a person addresses to Goobster in a project conversation or a discussion become proposed work by fixed rules (no model reads conversations), with a link back and a private result; a change of direction supersedes that person's unfinished work from the conversation and names what rested on it; plan-step work is withdrawn as soon as its plan moves on; project boards read the canonical gates and decide through the gate registry ([delegated_conversation_requests.md](delegated_conversation_requests.md), [assistant_home.md](assistant_home.md#project-boards), [ADR 0021](adr/0021-conversation-requests-and-steering.md)). Left for later increments: model classification, conversation context and one-to-one chat (DA-8); project-audience findings and replies posted into a conversation (DA-11c) | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | In progress. Done (DA-5a): observations for every cataloged kind, the two-axis health and relevance assessment, incidents with shared-cause grouping, hysteresis and cooldown, the `process_health` and `process_relevance` Attention generators, the Home Processes card and the Processes report on the Responsibilities page; see [process_stewardship.md](process_stewardship.md), [ADR 0020](adr/0020-process-assessment-and-incidents.md). Done (DA-5b): pause, resume, archive, restore and exact cleanup of a process by its owner, with launches fenced in each owning service's own claim and already-started work counted; pause and archive by the assistant only under `process.pause` / `process.archive` on the exact process, and a `process_retirement` request decided in place otherwise; see [Retiring a process](process_stewardship.md#retiring-a-process), [ADR 0022](adr/0022-process-retirement.md). Still open: repair through runs (DA-5c); cleanup under `cleanup.exact`; declared owned artifacts; a producer of target-ended codes for watches | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
-| DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
+| DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Done: the chat tools, confirmation receipts and the chat cards (DA-7b: [delegated_conversation.md](delegated_conversation.md), [ADR 0023](adr/0023-conversational-delegation-and-receipts.md)). Planned: the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Done. Four adapters (`chat_request` for `personal_chat`, `followed_source`, `job_failure`, `ci_verdict`), each opt-in in `scopes.sources` and behind the owner-only `sources` pilot capability; history before activation is never acted on; one narrow model label for implied requests in personal chat (charged to the responsibility's budget, at most 10 percent of it); a daily cap of 3 per source that coalesces the excess; one investigation per failure cause; skipped CI is not passing; a lookback preview ([delegated_opportunity_sources.md](delegated_opportunity_sources.md), [ADR 0026](adr/0026-wider-opportunity-sources.md)) | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Done: `assistant.changed` and the `assistant` stream event (Home and the Responsibilities page change while open and refetch after a reconnect), the interruption rule (`home` / `digest` / `immediate`), one digest a day at the person's digest time (default 09:00), and `attentionService.requestContact()` as the one contact path, with delegated contacts and Attention's notices sharing the daily cap and cooldown; see [delegated_delivery.md](delegated_delivery.md). Owner-only until the pilot decision. Left for later increments: timing feedback (DA-10), the spoken briefing as a delivery (DA-7c). Not assigned to an increment: a project's shared findings reaching its members outside the portal | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
@@ -105,9 +106,9 @@ by the pilot gate DA-12a added
 those increments checks `assistantAccessService.allows(userId, capability)`
 with its own capability name (`conversation`, `sources`, `delivery`,
 `feedback`, `reach`), and the host records the decision in Host → Delegated
-work. DA-7a shipped before the gate and does not check it yet; whether
-answering a request in place should be owner-only is an open question for
-DA-7.
+work. DA-7a shipped before the gate; DA-7b put answering a request in
+place behind it (`conversation`) on every surface, the conservative reading
+of the rule above.
 
 DA-2 does not wait for every autonomous capability. It initially projects real
 existing state and explicit empty states. DA-5 observation adapters can be built
@@ -406,15 +407,16 @@ DA-7 ships in three parts:
 
 | Part | Status | Delivers |
 | --- | --- | --- |
-| DA-7a: decide a request where it is shown | Done | The `gateDecisions` registry in `assistantGateService` with descriptors for mission plan approval and start, friend requests and requests to join; `POST /api/app/assistant/gates/:ref/decide`; the same decision buttons on Home and in the Inbox; `STALE_GATE` refusal with the current card. Behaviour: [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown) |
-| DA-7b: chat tools and confirmation receipts | Planned | `proposeResponsibility`, `describeDelegatedWork`, `controlDelegatedWork`, the human confirmation receipt, and the chat card that renders the same decision descriptor (`surface: 'chat'`) |
+| DA-7a: decide a request where it is shown | Done | The `gateDecisions` registry in `assistantGateService` with descriptors for mission plan approval and start, friend requests and requests to join; `POST /api/app/assistant/gates/:ref/decide`; the same decision buttons on Home and in the Inbox; `STALE_GATE` refusal with the current card. Behind the pilot gate since DA-7b (`conversation`: the owner alone until the pilot decision is recorded; everyone else keeps the Inbox's own buttons). Behaviour: [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown) |
+| DA-7b: chat tools and confirmation receipts | Done | `proposeResponsibility`, `describeDelegatedWork`, `controlDelegatedWork` in the speaker's own private chat; drafts marked `proposedBy: 'model'`; the single-use human confirmation receipt on activate, resume and chat decisions; the model-call scope that makes every authority-raising call refuse inside a tool call; the proposal card and the decision card in portal chat (`surface: 'chat'`). Behaviour: [delegated_conversation.md](delegated_conversation.md); decision: [ADR 0023](adr/0023-conversational-delegation-and-receipts.md) |
 | DA-7c: spoken briefing | Planned | A voice intent over the Home projection that acknowledges nothing |
 
 Still planned for the registry: a descriptor for the repair proposal (with
 DA-5, which creates that request) and for review, unblock and answer gates.
 
-Exit scenarios (the fifth is met for the Inbox and Home by DA-7a; chat
-follows in DA-7b; the rest are planned):
+Exit scenarios (all met by DA-7a and DA-7b except the last, the spoken
+briefing, which is DA-7c; confirmation is in the portal only, not in a
+Discord DM):
 
 - "Keep an eye on X and update my plan" produces a draft with the narrowest
   grant that covers it, shown for confirmation; nothing is active until the

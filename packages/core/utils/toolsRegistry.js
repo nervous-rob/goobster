@@ -18,7 +18,8 @@ const optionalTools = {
     economy: requireOptional('./tools/economy', { feature: 'economy' }),
     gambling: requireOptional('./tools/gambling', { feature: 'gambling' }),
     exchange: requireOptional('./tools/exchange', { feature: 'exchange' }),
-    tavern: requireOptional('./tools/tavern', { feature: 'tavern' })
+    tavern: requireOptional('./tools/tavern', { feature: 'tavern' }),
+    assistant: requireOptional('./tools/assistant', { feature: 'assistant' })
 };
 const absentToolFeatures = new Set(Object.keys(optionalTools).filter(feature => !optionalTools[feature]));
 const parlorTools = require('./tools/parlor');
@@ -28,7 +29,8 @@ const fileTools = require('./tools/files');
 const selfDocsTools = require('./tools/selfDocs');
 const capabilityGapTools = require('./tools/capabilityGaps');
 const selfDocsConfig = require('../config/selfDocsConfig');
-const { isIncognitoToolBlocked } = require('./toolPrivacy');
+const { isIncognitoToolBlocked, incognitoRefusal } = require('./toolPrivacy');
+const modelCallScope = require('./modelCallScope');
 const { surfaceActive, requireSurface, GateError, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const catalog = {
@@ -38,6 +40,7 @@ const catalog = {
     ...optionalTools.gambling,
     ...optionalTools.exchange,
     ...optionalTools.tavern,
+    ...optionalTools.assistant,
     ...parlorTools,
     ...attentionTools,
     ...integrationTools,
@@ -94,6 +97,9 @@ const TOOL_ORDER = [
     'scheduleFollowUp',
     'trackAttention',
     'watchFor',
+    'proposeResponsibility',
+    'describeDelegatedWork',
+    'controlDelegatedWork',
     'searchGithubCode',
     'readGithubFile',
     'searchNotion',
@@ -118,6 +124,8 @@ for (const name of TOOL_ORDER) {
     }
     tools[name] = catalog[name];
 }
+
+const DELEGATION_TOOLS = new Set(optionalTools.assistant ? optionalTools.assistant.TOOL_NAMES : []);
 
 const warnedUnclaimed = new Set();
 
@@ -213,9 +221,29 @@ module.exports = {
         if (!isWeb) {
             definitions = definitions.filter(def => def.name !== 'setSpeechAccent');
         }
+        // An unattended turn cannot draft, read or steer delegated work.
+        if (isAutomation) {
+            definitions = definitions.filter(def => !DELEGATION_TOOLS.has(def.name));
+        }
         if (!Array.isArray(names)) return definitions;
         const allowed = new Set(names);
         return definitions.filter(def => allowed.has(def.name));
+    },
+
+    /**
+     * Drop the tools this turn's person may not use at all (a tool's own
+     * `offered(interactionContext)`), so the model is not shown a tool that
+     * can only refuse. Execution checks the same thing again.
+     * @param {Array<{ name: string }>} definitions
+     * @param {Object} interactionContext
+     */
+    async offeredTo(definitions, interactionContext) {
+        const kept = [];
+        for (const def of definitions) {
+            const offered = tools[def.name]?.offered;
+            if (typeof offered !== 'function' || await offered(interactionContext)) kept.push(def);
+        }
+        return kept;
     },
 
     async execute(name, args) {
@@ -230,11 +258,14 @@ module.exports = {
         const refusal = featureRefusal(name);
         if (refusal) return refusal;
         if (isIncognitoToolBlocked(name, args?.interactionContext)) {
-            return '❌ Saving memories, files and records is disabled in incognito. Use a regular chat to save this content.';
+            return incognitoRefusal(name);
         }
         const policy = await require('../services/personalPolicyService').toolPolicy(args?.interactionContext);
         if (!policy.allows(name)) return '❌ This tool is disabled by your personal settings.';
-        return tools[name].execute(args || {});
+        // Every caller of the registry is a model's tool call (chat, an
+        // automation turn, voice, a plan step): human-only operations
+        // refuse inside this scope (ADR 0023).
+        return modelCallScope.run(`registry:${name}`, () => tools[name].execute(args || {}));
     },
 
     registerCommandAdapters

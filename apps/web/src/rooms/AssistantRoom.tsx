@@ -11,7 +11,7 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, describeInterruption, describeListening, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
+import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
 import { ConnectorList } from './assistant/ConnectorList';
 import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
@@ -79,15 +79,33 @@ export function AssistantRoom() {
     ]);
 
     async function act(item: Responsibility, action: string, question?: string) {
-        const grants = describeGrants(item.operations, projectById);
-        const listening = describeListening(item, me.assistant.name);
-        const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(item.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day.` : ''}${writesOutside(item.operations) ? ` Writes to outside services are made as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} outside operations a day.` : ''}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} ${describeInterruption(item.rules?.interruption)}. You can pause or revoke it at any time.`
-            : question;
-        if (ask && !await confirm(ask)) return;
         setBusy(item.id);
         try {
-            await api.responsibilityAction(item.id, action, item.revision);
+            if (action === 'discard') {
+                if (question && !await confirm(question)) return;
+                await api.proposalAction(item.id, 'discard', item.revision);
+                return;
+            }
+            if (action !== 'activate' && action !== 'resume') {
+                if (question && !await confirm(question)) return;
+                await api.responsibilityAction(item.id, action, item.revision);
+                return;
+            }
+            // Turning authority on is confirmed: the server says what this
+            // revision allows, the question shows that, and the single-use
+            // confirmation it issued is spent by the action.
+            const confirmation = await api.confirmResponsibility(item.id, action, item.revision, 'portal');
+            const shown = confirmation.shown;
+            if (action === 'activate') {
+                const grants = describeGrants(shown.operations, projectById);
+                const listening = describeListening(shown, me.assistant.name);
+                const noticing = describeNoticing(shown);
+                const sharing = describeSharing(shown);
+                if (!await confirm(`Activate "${shown.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${noticing ? ` ${noticing}.` : ''}${sharing ? ` ${sharing}.` : ''}${shown.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(shown.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(shown.budgets)} a day.` : ''}${writesOutside(shown.operations) ? ` Writes to outside services are made as you and cannot be undone from here; at most ${externalOperationsPerDay(shown.budgets)} outside operations a day.` : ''}${shown.expiresAt ? ` It ends ${whenLabel(shown.expiresAt)}.` : ''} ${describeInterruption(shown.rules?.interruption)}. You can pause or revoke it at any time.`)) return;
+            } else if (question && !await confirm(question)) {
+                return;
+            }
+            await api.responsibilityAction(item.id, action, shown.revision, confirmation.receipt);
         } catch (error) {
             toast((error as Error).message, true);
         } finally {

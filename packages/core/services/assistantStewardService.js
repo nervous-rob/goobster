@@ -31,9 +31,11 @@
  * Every six hours it also applies retention: process observations 90 days,
  * terminal initiatives, settled updates, resolved incidents and lifecycle
  * records of processes that are running again 180 days, the daily proposal
- * counters 14 days, the chat-message labels 30 days, digests 90 days, the
- * contact ledger 30 days, and feedback whose finding and work are gone
- * (with what was learned for a responsibility that ended) 180 days.
+ * counters 14 days, the chat-message labels 30 days, confirmation receipts
+ * 30 days, a draft proposed in a conversation that its owner neither kept
+ * nor activated 7 days, digests 90 days, the contact ledger 30 days, and
+ * feedback whose finding and work are gone (with what was learned for a
+ * responsibility that ended) 180 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
  * reconcile for the owner they name. The only model call here is the narrow
@@ -53,7 +55,7 @@ const LOCK = 'assistant_steward';
 const { HEARTBEAT_KEY, STALE_AFTER_MS } = require('./assistantHomeService');
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
-const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180, incidents: 180, lifecycle: 180 };
+const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180, incidents: 180, lifecycle: 180, confirmations: 30, proposals: 7 };
 // The first pass waits so it does not compete for pooled connections with
 // the other startup sweeps that each hold one for a singleton lock.
 const FIRST_PASS_DELAY_MS = 60 * 1000;
@@ -111,6 +113,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
                 updates: await updates.prune({ days: RETENTION_DAYS.updates, now }),
+                proposals: await responsibilities.pruneProposals({ days: RETENTION_DAYS.proposals, now }),
+                confirmations: await require('./assistantConfirmationService').prune({ days: RETENTION_DAYS.confirmations, now }),
                 proposalCounters: await require('./assistant/proposalCaps').prune({ now }),
                 messageLabels: await require('./assistant/messageClassification').prune({ now }),
                 knowledgeChanges: await require('./knowledgeChangeSetService').prune({ now }),

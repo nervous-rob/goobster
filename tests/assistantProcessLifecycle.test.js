@@ -38,6 +38,8 @@ const privacy = require('@goobster/core/services/privacyService');
 const { DEFAULTS } = require('@goobster/core/services/assistant/processes/assessment');
 const { useState } = require('./helpers/featureFixtures');
 
+const pilot = require('@goobster/core/services/assistantAccessService');
+
 const A = '760000000000000001';
 const B = '760000000000000002';
 const DAY = 86400000;
@@ -63,6 +65,7 @@ beforeEach(async () => {
     useState();
     jest.restoreAllMocks();
     for (const table of TABLES) await db.run(`DELETE FROM ${table}`, {});
+    await require('@goobster/core/services/instanceStateService').remove(pilot.KEY_PILOT);
     await policies.enroll({ userId: A, initiative: 'assist' });
 });
 
@@ -652,9 +655,36 @@ describe('the assistant, when a purpose is over', () => {
         await expect(act(await automation('still useful'), 'keep')).rejects.toMatchObject({ code: 'NOT_A_CANDIDATE' });
     });
 
+    test('until the pilot decision is recorded, someone who is not the owner is asked without a card and answers from the Processes list', async () => {
+        const gates = require('@goobster/core/services/assistantGateService');
+        const inbox = require('@goobster/core/services/inboxService');
+        const task = await automation('release watch');
+        await finishedPurpose(task);
+        await pass();
+
+        // The request is filed and counted; only the card to press is withheld.
+        const update = await updateFor(task);
+        const page = await inbox.list({ userId: A, view: 'needs_you', limit: 10 });
+        expect(page.items).toHaveLength(1);
+        expect(page.items[0].decision).toBeNull();
+        expect(await gates.card({ userId: A, ref: update.id })).toBeNull();
+        await expect(gates.decide({
+            userId: A, ref: String(update.id), option: 'pause', occurrence: 1, revision: 'c1:GOAL_RESOLVED:l0', surface: 'home'
+        })).rejects.toMatchObject({ status: 403, code: pilot.REFUSAL_CODE, details: { capability: 'conversation' } });
+        expect((await db.get('SELECT isEnabled FROM automations WHERE id = @id', { id: task.id })).isEnabled).toBe(1);
+
+        // The Processes list is theirs as before, and answering there settles the request.
+        expect((await listed(task)).controls).toEqual(expect.arrayContaining(['pause', 'keep']));
+        await act(task, 'pause');
+        expect((await db.get('SELECT isEnabled FROM automations WHERE id = @id', { id: task.id })).isEnabled).toBe(0);
+        expect((await updateFor(task)).gateResolvedAt).toBeTruthy();
+    });
+
     test('the question is answered where it is shown: pause it, or keep it, through the same act as the Processes list', async () => {
         const gates = require('@goobster/core/services/assistantGateService');
         const inbox = require('@goobster/core/services/inboxService');
+        // Deciding from a card is a pilot capability (documentation/delegated_operations.md): the host has opened it here.
+        await pilot.recordDecision({ scope: 'everyone' });
         const task = await automation('release watch');
         const other = await automation('weekly digest');
         await finishedPurpose(task);

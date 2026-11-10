@@ -63,6 +63,7 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_initiatives', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_updates', column: 'audienceUserId' },
     { feature: 'assistant', table: 'assistant_update_receipts', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_confirmation_receipts', column: 'userId' },
     { feature: 'assistant', table: 'assistant_digests', column: 'userId' },
     { feature: 'assistant', table: 'assistant_process_contracts', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' },
@@ -228,6 +229,12 @@ function createDormantSeed(db) {
         await db.run(
             'INSERT INTO assistant_update_receipts (updateId, userId, acknowledgedRevision) VALUES (@updateId, @u, 1)',
             { updateId, u }
+        );
+        await db.run(
+            `INSERT INTO assistant_confirmation_receipts
+                (userId, subjectKind, subjectId, action, revision, grantHash, surface, nonceHash, expiresAt)
+             VALUES (@u, 'responsibility', @responsibilityId, 'activate', '1', 'grant-hash', 'chat', 'hash-secret', @now)`,
+            { u, responsibilityId: String(responsibilityId), now: utc() }
         );
         await db.run(
             "INSERT INTO assistant_digests (userId, day, updateIdsJson, sentAt) VALUES (@u, '2026-11-08', @ids, @now)",

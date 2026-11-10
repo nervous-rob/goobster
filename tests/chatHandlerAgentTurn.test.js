@@ -26,6 +26,7 @@ jest.mock('@goobster/core/services/memoryService', () => ({
 jest.mock('@goobster/core/utils/toolsRegistry', () => ({
     TOOL_ORDER: ['observatory'],
     getDefinitions: jest.fn(),
+    offeredTo: async (definitions) => definitions,
     execute: jest.fn(),
     registerCommandAdapters: jest.fn()
 }));

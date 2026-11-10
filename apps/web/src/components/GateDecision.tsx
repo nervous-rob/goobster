@@ -10,9 +10,9 @@ import type { GateDecisionCard, GateDecisionOption, GateSurface } from '../lib/t
  * The decision buttons of one request, wherever it is shown
  * (documentation/assistant_home.md, "Deciding a request where it is shown").
  *
- * Home and the Inbox render the card the server described and post the
- * choice with the card's occurrence and revision; the service that owns the
- * request decides. Nothing here knows what a kind means. A card that has
+ * Home, the Inbox and a chat card render the card the server described and
+ * post the choice with the card's occurrence and revision; the service that
+ * owns the request decides. Nothing here knows what a kind means. A card that has
  * changed since it was shown is refused by the server: the refusal says what
  * the request is now, and the refetch below shows it.
  */
@@ -37,7 +37,7 @@ export function GateDecision({ card, surface }: { card: GateDecisionCard; surfac
     const diff = card.diff || [];
 
     const refresh = () => Promise.all(
-        [['inbox'], keys.home, keys.me, ...(ALSO_REFRESH[card.kind] || [])]
+        [['inbox'], keys.home, keys.me, ['assistant-gate', card.ref], ...(ALSO_REFRESH[card.kind] || [])]
             .map((queryKey) => queryClient.invalidateQueries({ queryKey }))
     );
 
@@ -45,7 +45,10 @@ export function GateDecision({ card, surface }: { card: GateDecisionCard; surfac
         if (option.danger && !(await confirm(`${option.label}? ${option.effect || card.detail || ''}`.trim()))) return;
         setBusy(option.id);
         try {
-            const { decided } = await api.decideGate(card, option.id, surface);
+            // In a conversation the press is proved: a single-use confirmation of
+            // this card as shown, asked for now and spent by the decision.
+            const receipt = surface === 'chat' ? (await api.confirmGate(card)).receipt : undefined;
+            const { decided } = await api.decideGate(card, option.id, surface, receipt);
             toast(decided.message);
         } catch (error) {
             toast((error as Error).message, true);

@@ -79,6 +79,9 @@ const INVENTORY = [
     ['kg_change_sets', 'userId = @userId', '*', 'id'],
     ['assistant_updates', "audienceKind = 'user' AND audienceUserId = @userId", '*', 'sequence'],
     ['assistant_update_receipts', 'userId = @userId', '*', 'updateId'],
+    // What the person confirmed and when; the secret's hash stays out of the archive.
+    ['assistant_confirmation_receipts', 'userId = @userId',
+        'id, userId, subjectKind, subjectId, action, revision, grantHash, surface, createdAt, expiresAt, consumedAt', 'id'],
     ['assistant_digests', 'userId = @userId', '*', 'id'],
     ['assistant_feedback', 'userId = @userId', '*', 'id'],
     ['assistant_source_weights', 'ownerUserId = @userId', '*', 'responsibilityId, adapter'],
@@ -129,7 +132,7 @@ const INVENTORY = [
     ['repo_watches', 'createdBy = @userId', '*', 'id'],
     ['screen_vision_clients', 'userId = @userId', 'userId, label, createdAt, lastConnectedAt', 'userId']
 ];
-const TRANSIENT = new Set(['claimToken', 'leaseToken', 'runnerId', 'executionAttemptId', 'claimUntil', 'tokenHash']);
+const TRANSIENT = new Set(['claimToken', 'leaseToken', 'runnerId', 'executionAttemptId', 'claimUntil', 'tokenHash', 'nonceHash']);
 function cleanRow(table, row, userId) {
     const result = Object.fromEntries(Object.entries(row).filter(([key]) => !TRANSIENT.has(key)));
     if (table === 'knowledge_transfers' && row.userId !== userId) {
