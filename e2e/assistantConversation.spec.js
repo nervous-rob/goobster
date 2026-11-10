@@ -16,9 +16,15 @@ const { login } = require('./helpers');
 
 const USER = '99000000000000441';
 const NAME = 'Asker';
+// Deciding a request from its card is the owner's alone until the pilot
+// decision is recorded (documentation/delegated_operations.md), so the board
+// journey runs as an owner. No other spec uses this id.
+const OWNER = '99000000000000713';
 
-async function seed(page, project) {
-    const seeded = await page.request.post('/e2e/fixtures/assistant-conversation', { data: { userId: USER, name: NAME, project } });
+async function seed(page, project, userId = USER) {
+    const seeded = await page.request.post('/e2e/fixtures/assistant-conversation', {
+        data: { userId, name: NAME, project, owner: userId === OWNER }
+    });
     expect(seeded.ok(), await seeded.text()).toBe(true);
     return seeded.json();
 }
@@ -29,8 +35,8 @@ async function say(page, conversationId, text) {
     return said.json();
 }
 
-async function adopt(page) {
-    const adopted = await page.request.post('/e2e/fixtures/assistant-conversation/adopt', { data: { userId: USER } });
+async function adopt(page, userId = USER) {
+    const adopted = await page.request.post('/e2e/fixtures/assistant-conversation/adopt', { data: { userId } });
     expect(adopted.ok(), await adopted.text()).toBe(true);
 }
 
@@ -105,9 +111,9 @@ test.describe('requests made in conversation', () => {
     });
 
     test('a plan approval is one request on the project board, on Home and in the Inbox, and approving it from the project settles it everywhere', async ({ page }) => {
-        const { slug } = await seed(page, 'Board choice');
-        await adopt(page);
-        await login(page, { userId: USER, name: NAME });
+        const { slug } = await seed(page, 'Board choice', OWNER);
+        await adopt(page, OWNER);
+        await login(page, { userId: OWNER, name: NAME });
 
         // Home shows the request with its decision.
         const overview = page.getByTestId('assistant-overview');
@@ -116,7 +122,7 @@ test.describe('requests made in conversation', () => {
         await expect(onHome.getByTestId('gate-decision').getByRole('button')).toHaveText(['Approve plan']);
 
         // The project's Overview shows the same request, with the same button.
-        await page.goto(`/app/projects/${USER}/${slug}`);
+        await page.goto(`/app/projects/${OWNER}/${slug}`);
         const now = page.getByTestId('project-now-needs');
         await expect(now).toHaveCount(1);
         await expect(now).toContainText('Approve mission plan');
@@ -134,11 +140,11 @@ test.describe('requests made in conversation', () => {
         // The approval is gone from the board; the plan now waits to be started.
         await expect(board.getByTestId('board-card')).toContainText('Start approved mission');
         await expect(board.getByTestId('board-card').filter({ hasText: 'Approve mission plan' })).toHaveCount(0);
-        await page.goto(`/app/projects/${USER}/${slug}/mission`);
+        await page.goto(`/app/projects/${OWNER}/${slug}/mission`);
         await expect(page.locator('.obs-section-head .badge')).toHaveText('APPROVED');
 
         // And it is settled on Home and in the Inbox: the next request (start) took its place.
-        await adopt(page);
+        await adopt(page, OWNER);
         await page.goto('/app/');
         await expect(onHome).toHaveCount(1);
         await expect(onHome.getByTestId('gate-decision').getByRole('button')).toHaveText(['Start mission']);

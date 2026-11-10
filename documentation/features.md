@@ -40,7 +40,7 @@ See [configuration.md](configuration.md) for every config key and environment va
 | Cursor agents | `cursor` | `github` | 1 | 1 | 0 | 0 |
 | Screen Vision | `screenVision` | - | 1 | 0 | 0 | 0 |
 | Discord Activity | `discordActivity` | `discord` | 0 | 0 | 0 | 0 |
-| Delegated assistant | `assistant` | - | 0 | 0 | 0 | 0 |
+| Delegated assistant | `assistant` | - | 0 | 3 | 0 | 0 |
 
 ## Core
 
@@ -367,8 +367,8 @@ Feature id: `assistant`. Responsibilities: versioned, human-activated grants of 
 - **Kind:** feature
 - **Fresh install default:** off
 - **Depends on:** nothing
-- **Owns:** 1 portal route group
+- **Owns:** 3 chat tools (`controlDelegatedWork`, `describeDelegatedWork`, `proposeResponsibility`); 1 portal route group
 - **Host override:** `GOOBSTER_FEATURE_ASSISTANT=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
 - **Config keys:** `assistant.installationRuns`, `assistant.runsPerAccount`, `assistant.defaultModelTokens`, `assistant.defaultSearches`, `assistant.defaultComputeSeconds`
-- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md), [delegated_runs.md](delegated_runs.md), [delegated_plan_steps.md](delegated_plan_steps.md), [delegated_conversation_requests.md](delegated_conversation_requests.md), [delegated_operations.md](delegated_operations.md), [delegated_project_findings.md](delegated_project_findings.md), [delegated_knowledge.md](delegated_knowledge.md), [delegated_evaluation.md](delegated_evaluation.md), [delegated_connectors.md](delegated_connectors.md), [process_stewardship.md](process_stewardship.md), [delegated_delivery.md](delegated_delivery.md)
+- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md), [delegated_runs.md](delegated_runs.md), [delegated_plan_steps.md](delegated_plan_steps.md), [delegated_conversation_requests.md](delegated_conversation_requests.md), [delegated_conversation.md](delegated_conversation.md), [delegated_operations.md](delegated_operations.md), [delegated_project_findings.md](delegated_project_findings.md), [delegated_knowledge.md](delegated_knowledge.md), [delegated_evaluation.md](delegated_evaluation.md), [delegated_connectors.md](delegated_connectors.md), [process_stewardship.md](process_stewardship.md), [delegated_delivery.md](delegated_delivery.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.

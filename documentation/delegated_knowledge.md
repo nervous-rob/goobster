@@ -175,6 +175,22 @@ operation (`PILOT_ONLY`), the tools are not offered to anyone else's runs, and
 each tool asks again when called. Undoing and restoring stay available after the
 pilot closes, so a run's change is always reversible.
 
+Applying or dismissing a suggestion, and answering a withdrawn-source review,
+is a decision from a card, so it also asks for `conversation`
+([assistant_home.md](assistant_home.md#who-is-offered-a-card-the-pilot-gate)).
+A suggestion is only ever filed for someone inside the pilot, so the two differ
+only for a person who has since left it: their suggestion stays listed here and
+under Needs you, carries no card, cannot be applied, and lapses after a month
+like any undecided one. Nothing is changed in their notes meanwhile, and they
+decide it as before if they return.
+
+From a card in portal chat the decision also needs the confirmation receipt
+minted for that card
+([delegated_conversation.md](delegated_conversation.md)): the receipt covers
+the lines of the diff the person was shown, is spent once, and a model's tool
+call can neither mint nor spend one, so no run and no chat tool applies a
+suggestion.
+
 ## Retention and erasure
 
 A change set holds the text of a note, so it is personal data. Decided change

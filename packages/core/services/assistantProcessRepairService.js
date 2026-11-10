@@ -51,6 +51,7 @@ const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
 const assessment = require('./assistant/processes/assessment');
+const modelCallScope = require('../utils/modelCallScope');
 
 const ACTIONS = ['rerun', 'follow_redirect'];
 const REPAIR_IDENTITY = 'process_repair:';
@@ -918,10 +919,21 @@ class AssistantProcessRepairService {
     }
 
     /**
+     * Approving a repair and answering the question at the attempt limit are
+     * the person's own decisions. A model's tool call is never one (ADR 0023):
+     * a run repairs only through `repair()`, under its grant.
+     */
+    _humanOnly() {
+        modelCallScope.assertHuman(() => this._error(modelCallScope.HUMAN_ONLY,
+            'Only the person can answer this, by pressing it themselves. A tool call is not a decision.', 403));
+    }
+
+    /**
      * The person approves a proposed repair: it is applied as their own act.
      * @returns {Promise<{ message: string, repair: Object }>}
      */
     async approve({ userId, repairId, expectedRevision = null, now = new Date() }) {
+        this._humanOnly();
         const owner = String(userId);
         const row = await this._owned(owner, repairId);
         if (row.status !== 'PROPOSED') throw this._error('NOT_OPEN', 'This repair is no longer waiting for an answer.');
@@ -979,6 +991,7 @@ class AssistantProcessRepairService {
      * own act, through the lifecycle service) or leave it running.
      */
     async direct({ userId, repairId, direction, expectedRevision = null, now = new Date() }) {
+        this._humanOnly();
         if (!['pause', 'leave'].includes(direction)) throw this._error('INVALID_DIRECTION', 'direction must be pause or leave.', 400);
         const row = await this._owned(userId, repairId);
         if (row.direction !== 'asked') throw this._error('NOT_OPEN', 'This is no longer waiting for an answer.');

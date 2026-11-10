@@ -5,8 +5,13 @@
  *
  * A responsibility is inert until its owner activates it through an
  * authenticated action, and activation needs an enabled attention policy.
- * The model never creates, activates or widens one: there is no AI or MCP
- * tool for this service. `authorize()` is the single authority check; it
+ * The model never activates, resumes or widens one. It can draft one
+ * (`propose()`, the `proposeResponsibility` chat tool; ADR 0023): the draft
+ * is marked `proposedBy: 'model'`, grants nothing, and for as long as it
+ * exists it is activated or resumed only with a human confirmation receipt
+ * (assistantConfirmationService). Activation, resume, edits and
+ * create-and-activate all refuse inside a model tool call
+ * (utils/modelCallScope.js). `authorize()` is the single authority check; it
  * intersects the feature state, the grant's status/expiry/revision, the
  * acting principal, the granted operation and resource, the actor's current
  * access to that resource, and the owner's attention boundaries.
@@ -27,6 +32,7 @@ const { features } = require('../features/featureState');
 const { unavailableResult } = require('../features/gate');
 const attentionPolicyService = require('./attentionPolicyService');
 const workFailureService = require('./workFailureService');
+const modelCallScope = require('../utils/modelCallScope');
 const control = require('./assistantControlService');
 const pilotAccess = require('./assistantAccessService');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
@@ -52,6 +58,11 @@ const TRANSITIONS = {
 };
 /** Actions a person can take from the portal (request_review is the system's). */
 const HUMAN_ACTIONS = ['activate', 'pause', 'resume', 'complete', 'revoke', 'archive'];
+/** Actions that turn authority on: a person's own confirmation, never a model's call. */
+const CONFIRMED_ACTIONS = new Set(['activate', 'resume']);
+/** A proposal the owner neither kept nor activated is deleted after this many days (the steward's retention pass). */
+const PROPOSAL_RETENTION_DAYS = 7;
+const CONVERSATION_REF_MAX = 200;
 
 /**
  * The closed operation vocabulary. Each operation lists the resource kinds it
@@ -145,6 +156,8 @@ class AssistantResponsibilityError extends Error {
 }
 
 const bad = (message, code = 'INVALID_RESPONSIBILITY') => new AssistantResponsibilityError(code, message, 400);
+const humanOnly = () => new AssistantResponsibilityError(modelCallScope.HUMAN_ONLY,
+    'Only the person can do this, from the portal. A tool call cannot activate, resume or change a responsibility.', 403);
 const notFound = () => new AssistantResponsibilityError('NOT_FOUND', 'No such responsibility.', 404);
 
 function utcText(date = new Date()) {
@@ -406,6 +419,7 @@ class AssistantResponsibilityService {
         this.RESOURCE_KINDS = Object.keys(RESOURCE_KINDS);
         this.BUDGET_KEYS = BUDGET_KEYS;
         this.HUMAN_ACTIONS = HUMAN_ACTIONS;
+        this.PROPOSAL_RETENTION_DAYS = PROPOSAL_RETENTION_DAYS;
     }
 
     /** The public shape of a row. An overdue live grant reads as EXPIRED. */
@@ -438,7 +452,12 @@ class AssistantResponsibilityService {
             reviewedAt: row.reviewedAt || null,
             endedAt: row.endedAt || null,
             createdAt: row.createdAt,
-            updatedAt: row.updatedAt
+            updatedAt: row.updatedAt,
+            // 'model' when a chat tool drafted it; such a grant is confirmed with a receipt.
+            proposedBy: row.proposedBy === 'model' ? 'model' : null,
+            proposal: row.proposedBy === 'model'
+                ? { conversation: row.proposedConversation || null, keptAt: row.proposalKeptAt || null }
+                : null
         };
     }
 
@@ -786,6 +805,29 @@ class AssistantResponsibilityService {
      * @returns {Promise<{ responsibility: Object, created: boolean }>}
      */
     async create({ userId, body = {}, activate = false, idempotencyKey = null }) {
+        if (modelCallScope.active()) throw humanOnly();
+        return this._create({ userId, body, activate, idempotencyKey });
+    }
+
+    /**
+     * A draft the model proposes from a conversation (the
+     * `proposeResponsibility` chat tool). The same validator as a person's
+     * draft, so an unknown operation or a wildcard is rejected here too. It
+     * is never activated by this call, it is marked `proposedBy: 'model'`
+     * with the conversation it came from, and from then on only a human
+     * confirmation receipt activates or resumes it.
+     * @param {{ userId: string, body: Object, conversation?: string|null, idempotencyKey?: string|null }} params
+     * @returns {Promise<{ responsibility: Object, created: boolean }>}
+     */
+    async propose({ userId, body = {}, conversation = null, idempotencyKey = null }) {
+        const reference = conversation == null ? null : String(conversation).slice(0, CONVERSATION_REF_MAX) || null;
+        return this._create({
+            userId, body, activate: false, idempotencyKey,
+            proposal: { by: 'model', conversation: reference }
+        });
+    }
+
+    async _create({ userId, body = {}, activate = false, idempotencyKey = null, proposal = null }) {
         if (!userId) throw bad('A user id is required.');
         const owner = String(userId);
         const key = cleanText(idempotencyKey ?? body?.idempotencyKey ?? null, 'idempotencyKey', LIMITS.idempotencyKey);
@@ -804,7 +846,7 @@ class AssistantResponsibilityService {
         if (fields.scopesJson) await this._checkProjectAudience(fields.scopesJson, owner);
 
         try {
-            return await this._insert({ owner, fields, key, activate });
+            return await this._insert({ owner, fields, key, activate: proposal ? false : activate, proposal });
         } catch (error) {
             // A concurrent create with the same key won the unique index.
             if (key && String(error?.message || '').includes('UNIQUE')) {
@@ -815,17 +857,19 @@ class AssistantResponsibilityService {
         }
     }
 
-    async _insert({ owner, fields, key, activate }) {
+    async _insert({ owner, fields, key, activate, proposal = null }) {
         return db.transaction(async () => {
             const id = await db.insert(
                 `INSERT INTO assistant_responsibilities
                     (ownerUserId, authorizedBy, actingUserId, payerUserId, status, title, outcome,
                      attentionItemId, projectId, planId, scopesJson, operationsJson, budgetsJson, rulesJson,
-                     idempotencyKey, expiresAt)
+                     idempotencyKey, expiresAt, proposedBy, proposedConversation)
                  VALUES (@owner, @owner, @owner, @owner, 'DRAFT', @title, @outcome,
                      @attentionItemId, @projectId, @planId, @scopesJson, @operationsJson, @budgetsJson, @rulesJson,
-                     @key, @expiresAt)`,
+                     @key, @expiresAt, @proposedBy, @proposedConversation)`,
                 {
+                    proposedBy: proposal ? proposal.by : null,
+                    proposedConversation: proposal ? proposal.conversation : null,
                     owner,
                     title: fields.title,
                     outcome: fields.outcome ?? null,
@@ -855,6 +899,7 @@ class AssistantResponsibilityService {
      * changes the status.
      */
     async update({ userId, id, expectedRevision, body = {} }) {
+        if (modelCallScope.active()) throw humanOnly();
         const fields = this._fields(body, { creating: false });
         if (!Object.keys(fields).length) throw bad('Nothing to change.');
         return db.transaction(async () => {
@@ -876,6 +921,8 @@ class AssistantResponsibilityService {
             }
             await this._validateLinks({ ...row, ...fields }, row.ownerUserId);
             if (fields.scopesJson) await this._checkProjectAudience(fields.scopesJson, row.ownerUserId);
+            // A person who edits a proposal has taken it on: it is no longer pruned.
+            if (row.proposedBy === 'model' && !row.proposalKeptAt) fields.proposalKeptAt = utcText();
             const updated = await this._write(row, expectedRevision, fields, {
                 changeKind: 'edit', changedBy: userId, authority: authorityChange
             });
@@ -883,10 +930,132 @@ class AssistantResponsibilityService {
         });
     }
 
-    /** The owner's lifecycle actions: activate | pause | resume | complete | revoke | archive. */
-    async act({ userId, id, action, expectedRevision }) {
+    /**
+     * The owner's lifecycle actions: activate | pause | resume | complete | revoke | archive.
+     *
+     * `activate` and `resume` turn authority on, so they are a person's own:
+     * they refuse inside a model tool call, and for a responsibility the
+     * model drafted they need `receipt`, a human confirmation receipt bound
+     * to this id, revision and grant (assistantConfirmationService). A
+     * receipt that is supplied is always checked and spent, whoever drafted
+     * the row. The portal's action route asks for one on every activation
+     * and resume. Pause, revoke, complete and archive only narrow.
+     */
+    async act({ userId, id, action, expectedRevision, receipt = null }) {
         if (!HUMAN_ACTIONS.includes(action)) throw bad(`action must be one of ${HUMAN_ACTIONS.join(', ')}.`, 'INVALID_ACTION');
-        return this._act({ id, action, expectedRevision, owner: String(userId), changedBy: userId });
+        if (CONFIRMED_ACTIONS.has(action) && modelCallScope.active()) throw humanOnly();
+        return this._act({ id, action, expectedRevision, owner: String(userId), changedBy: userId, receipt });
+    }
+
+    /** Whether a human confirmation receipt is required to take `action` on this row. */
+    needsReceipt(responsibility, action) {
+        return CONFIRMED_ACTIONS.has(action) && responsibility?.proposedBy === 'model';
+    }
+
+    /** Inside the action's transaction: spend the receipt, or refuse when one is owed. */
+    async _confirm(row, action, receipt) {
+        const proposed = row.proposedBy === 'model';
+        if (!receipt) {
+            if (!proposed) return;
+            throw new AssistantResponsibilityError('HUMAN_CONFIRMATION_REQUIRED',
+                'This responsibility was drafted in a conversation. Confirm it yourself, from its card or the Responsibilities page.', 403);
+        }
+        const confirmations = require('./assistantConfirmationService');
+        if (proposed) {
+            const pilot = require('./assistantAccessService');
+            if (!(await pilot.allows(row.ownerUserId, confirmations.CAPABILITY))) {
+                throw new AssistantResponsibilityError(pilot.REFUSAL_CODE,
+                    'Delegating by conversation is limited to the installation\'s owner until the pilot decision is recorded.', 403,
+                    { capability: confirmations.CAPABILITY });
+            }
+        }
+        try {
+            await confirmations.redeem({
+                userId: row.ownerUserId,
+                receipt,
+                subject: 'responsibility',
+                id: row.id,
+                action,
+                revision: row.revision,
+                hash: confirmations.grantHash(this.present(row))
+            });
+        } catch (error) {
+            throw new AssistantResponsibilityError(error.code || 'CONFIRMATION_INVALID', error.message, error.status || 403);
+        }
+    }
+
+    /**
+     * Keep a model's proposal as a draft: the owner saw it and wants it left
+     * in Responsibilities to review later. It still grants nothing.
+     */
+    async keepProposal({ userId, id, expectedRevision }) {
+        if (modelCallScope.active()) throw humanOnly();
+        return db.transaction(async () => {
+            const row = await this._row(id);
+            if (!row || row.ownerUserId !== String(userId)) throw notFound();
+            if (row.proposedBy !== 'model' || row.status !== 'DRAFT') {
+                throw new AssistantResponsibilityError('INVALID_TRANSITION', 'Only a proposed draft can be kept.', 409, { status: row.status });
+            }
+            assertRevision(row, expectedRevision);
+            if (!row.proposalKeptAt) {
+                // Not a new revision: nothing about the grant changed.
+                await db.run(
+                    'UPDATE assistant_responsibilities SET proposalKeptAt = @now, updatedAt = @now WHERE id = @id AND revision = @revision',
+                    { id: row.id, revision: row.revision, now: utcText() }
+                );
+            }
+            return { responsibility: this.present(await this._row(row.id)) };
+        });
+    }
+
+    /**
+     * Decline a model's proposal: the draft and its history are deleted, so
+     * nothing is left behind. Only for a proposal that never ran (a draft
+     * that was never activated); anything else is revoked, not deleted.
+     * @returns {Promise<{ discarded: true, id: number }>}
+     */
+    async discardProposal({ userId, id, expectedRevision }) {
+        return db.transaction(async () => {
+            const row = await this._row(id);
+            if (!row || row.ownerUserId !== String(userId)) throw notFound();
+            if (row.proposedBy !== 'model' || row.status !== 'DRAFT' || row.activatedAt) {
+                throw new AssistantResponsibilityError('INVALID_TRANSITION',
+                    'Only a proposed draft that never ran can be discarded. Revoke this one instead.', 409, { status: row.status });
+            }
+            assertRevision(row, expectedRevision);
+            await this._deleteProposal(row.id);
+            return { discarded: true, id: Number(row.id) };
+        });
+    }
+
+    async _deleteProposal(id) {
+        await require('./assistantConfirmationService').forgetSubject({ subject: 'responsibility', id });
+        await db.run('DELETE FROM assistant_source_cursors WHERE responsibilityId = @id', { id });
+        await db.run('DELETE FROM assistant_responsibility_revisions WHERE responsibilityId = @id', { id });
+        await db.run(
+            "DELETE FROM assistant_responsibilities WHERE id = @id AND proposedBy = 'model' AND status = 'DRAFT' AND activatedAt IS NULL",
+            { id }
+        );
+    }
+
+    /**
+     * Retention for proposals: a model's draft that its owner neither kept,
+     * edited nor activated is deleted after PROPOSAL_RETENTION_DAYS.
+     * @returns {Promise<number>} drafts deleted
+     */
+    async pruneProposals({ days = PROPOSAL_RETENTION_DAYS, now = new Date(), limit = 200 } = {}) {
+        const cutoff = utcText(new Date(now.getTime() - Math.max(0, Number(days) || 0) * 24 * 60 * 60 * 1000));
+        const rows = await db.all(
+            `SELECT id FROM assistant_responsibilities
+             WHERE proposedBy = 'model' AND status = 'DRAFT' AND activatedAt IS NULL
+               AND proposalKeptAt IS NULL AND createdAt < @cutoff
+             ORDER BY id LIMIT @limit`,
+            { cutoff, limit: Math.max(1, Math.min(1000, Number(limit) || 200)) }
+        );
+        for (const row of rows) {
+            await db.transaction(async () => this._deleteProposal(row.id));
+        }
+        return rows.length;
     }
 
     /**
@@ -898,11 +1067,11 @@ class AssistantResponsibilityService {
         return this._act({ id, action: 'request_review', expectedRevision, owner: null, changedBy });
     }
 
-    async _act({ id, action, expectedRevision, owner, changedBy }) {
+    async _act({ id, action, expectedRevision, owner, changedBy, receipt = null }) {
         const result = await db.transaction(async () => {
             const row = await this._row(id);
             if (!row || (owner !== null && row.ownerUserId !== owner)) throw notFound();
-            const updated = await this._transition(row, action, expectedRevision, changedBy);
+            const updated = await this._transition(row, action, expectedRevision, changedBy, { confirm: owner !== null, receipt });
             return { responsibility: this.present(updated) };
         });
         await this._deliverOwed(result.responsibility.ownerUserId);
@@ -916,7 +1085,7 @@ class AssistantResponsibilityService {
         } catch { /* retried by the steward's next pass */ }
     }
 
-    async _transition(row, action, expectedRevision, changedBy) {
+    async _transition(row, action, expectedRevision, changedBy, { confirm = false, receipt = null } = {}) {
         const nowText = utcText();
         const spec = TRANSITIONS[action];
         assertRevision(row, expectedRevision);
@@ -931,6 +1100,9 @@ class AssistantResponsibilityService {
         }
         // The caller saw `row`; a lazy expiry persisted just now is not their conflict.
         const expected = current.revision;
+        // A person's action: the receipt for exactly this row is spent here,
+        // in the transaction, once the transition itself is known to be legal.
+        if (confirm && CONFIRMED_ACTIONS.has(action)) await this._confirm(current, action, receipt);
         if (spec.to === 'ACTIVE') await this._validateForActivation(current);
         const sets = { status: spec.to };
         if (action === 'activate') sets.activatedAt = nowText;

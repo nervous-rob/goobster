@@ -26,13 +26,23 @@
  * Inbox and a chat card all go through `decide()`; it checks the card the
  * person acted on against the current one, calls the domain service, and
  * never writes an outcome itself. `decide()` is for a person's own click on
- * an authenticated surface. It must never be reachable from a model tool
- * call: a model call is not a confirmation.
+ * an authenticated surface. It is never reachable from a model tool call (a
+ * model call is not a confirmation): it refuses inside one
+ * (utils/modelCallScope.js), and a decision pressed on a chat card must
+ * also carry the human confirmation receipt minted when that card was
+ * rendered to the person (assistantConfirmationService, ADR 0023).
+ *
+ * Deciding in place is part of DA-7, so it is behind the pilot gate
+ * (assistantAccessService, capability `conversation`): until the host
+ * records the pilot decision only the owner is offered a card or can
+ * decide through one, on any surface. Everyone else has no card, so Home
+ * links to the request and the Inbox keeps its own buttons and routes.
  */
 
 const db = require('../db');
 const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
+const modelCallScope = require('../utils/modelCallScope');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const IDENTITY_PREFIX = 'project_gate:';
@@ -48,6 +58,8 @@ const BOARD_STEP_LIMIT = 40;
 const INBOX_REF = /^inbox-(\d{1,15})$/;
 const UPDATE_REF = /^\d{1,15}$/;
 const LIMITS = { label: 60, text: 400, option: 40, diff: 40, diffText: 300 };
+/** The pilot capability deciding in place belongs to (DA-7). */
+const PILOT_CAPABILITY = 'conversation';
 
 class AssistantGateError extends Error {
     constructor(status, code, message, details = null) {
@@ -202,6 +214,11 @@ class AssistantGateService {
         };
     }
 
+    /** May this person decide in place? The owner alone until the pilot decision is recorded. */
+    async _pilotAllows(userId) {
+        return require('./assistantAccessService').allows(String(userId), PILOT_CAPABILITY);
+    }
+
     /**
      * The current decision card for a gate reference, or null. A read: it
      * changes nothing. This is what a chat card renders (DA-7b).
@@ -209,20 +226,23 @@ class AssistantGateService {
      */
     async card({ userId, ref }) {
         if (!userId || features.enforcedOff('assistant')) return null;
+        if (!(await this._pilotAllows(userId))) return null;
         const gate = await this._locate(userId, ref);
         return gate ? this._card(gate, { userId: String(userId) }) : null;
     }
 
     /**
      * The open decision card behind one of this person's Inbox items, or
-     * null (no descriptor, already settled, or not theirs to decide). Called
-     * while listing the Inbox, so a failure is logged and never thrown.
+     * null (no descriptor, already settled, not theirs to decide, or the
+     * pilot gate does not include them). Called while listing the Inbox and
+     * Home, so a failure is logged and never thrown.
      * @param {{ userId: string, item: { id: number, sourceType: string|null, sourceId: string|null }, update?: Object|null }} params
      *   `update` is the item's canonical update as the Inbox presents it
      */
     async cardForInboxItem({ userId, item, update = null }) {
         try {
             if (!userId || !item || features.enforcedOff('assistant')) return null;
+            if (!(await this._pilotAllows(userId))) return null;
             let gate;
             if (update?.gate) {
                 if (!update.gateOpen || !this.gateDecisions.has(update.gate.kind)) return null;
@@ -248,6 +268,34 @@ class AssistantGateService {
         } catch (error) {
             logger.warn?.(`[assistant gates] decision card unavailable: ${error.message}`);
             return null;
+        }
+    }
+
+    /**
+     * A card in a conversation sits beside text a model wrote, so pressing
+     * it must prove a person saw this card: the receipt minted when it was
+     * rendered, bound to this request, occurrence, revision and content.
+     * Spent here, before the domain decides; a receipt is one press.
+     */
+    async _redeemChatReceipt(userId, shown, receipt) {
+        const confirmations = require('./assistantConfirmationService');
+        if (!receipt) {
+            throw new AssistantGateError(403, 'HUMAN_CONFIRMATION_REQUIRED',
+                'A decision in a conversation needs the confirmation from its card. Press it on the card, or decide from Home or the Inbox.');
+        }
+        try {
+            await confirmations.redeem({
+                userId,
+                receipt,
+                subject: 'gate',
+                id: shown.ref,
+                action: 'decide',
+                revision: confirmations.gateRevision(shown),
+                hash: confirmations.cardHash(shown),
+                surface: 'chat'
+            });
+        } catch (error) {
+            throw new AssistantGateError(error.status || 403, error.code || 'CONFIRMATION_INVALID', error.message);
         }
     }
 
@@ -279,9 +327,15 @@ class AssistantGateService {
      * @param {string|number} params.revision
      * @param {'home'|'inbox'|'chat'|'project'|'processes'} params.surface - where the person pressed it
      * @param {Object} [params.gateway] - for the domain's own notices
+     * @param {string} [params.receipt] - required for `chat`: the receipt minted when the card was rendered
+     * @throws {AssistantGateError} 403 `PILOT_ONLY` for anyone the pilot gate does not include, on any surface
      * @returns {Promise<{ decided: { ref: string, kind: string, option: string, message: string }, current: Object|null }>}
      */
-    async decide({ userId, userName = null, ref, option, occurrence, revision, surface, gateway = null }) {
+    async decide({ userId, userName = null, ref, option, occurrence, revision, surface, gateway = null, receipt = null }) {
+        if (modelCallScope.active()) {
+            throw new AssistantGateError(403, modelCallScope.HUMAN_ONLY,
+                'Only the person can decide a request, by pressing it themselves. A tool call is not a decision.');
+        }
         if (!userId) throw new AssistantGateError(400, 'INVALID_DECISION', 'A user id is required.');
         // The route is gated with the rest of the feature; this covers a caller that is not a route.
         if (features.enforcedOff('assistant')) {
@@ -289,6 +343,12 @@ class AssistantGateService {
         }
         if (!SURFACES.includes(surface)) {
             throw new AssistantGateError(400, 'INVALID_DECISION', `surface must be one of ${SURFACES.join(', ')}.`);
+        }
+        // The pilot gate, for every surface: nobody but the owner was offered a card.
+        if (!(await this._pilotAllows(userId))) {
+            throw new AssistantGateError(403, require('./assistantAccessService').REFUSAL_CODE,
+                'Deciding a request from its card is limited to the installation\'s owner until the pilot decision is recorded. Open the request and answer it where it lives.',
+                { capability: PILOT_CAPABILITY });
         }
         if (typeof option !== 'string' || !option) throw new AssistantGateError(400, 'INVALID_DECISION', 'option is required.');
         if (!Number.isSafeInteger(Number(occurrence)) || revision === undefined || revision === null || revision === '') {
@@ -310,6 +370,7 @@ class AssistantGateService {
         if (!shown.options.some(entry => entry.id === option)) {
             throw new AssistantGateError(400, 'INVALID_DECISION', `option must be one of ${shown.options.map(entry => entry.id).join(', ')}.`);
         }
+        if (surface === 'chat') await this._redeemChatReceipt(viewer.userId, shown, receipt);
 
         let outcome;
         try {
@@ -383,6 +444,10 @@ class AssistantGateService {
             userId: viewer,
             identityKeys: gateCards.filter(card => String(card.ownerId) === viewer).map(card => `${IDENTITY_PREFIX}${card.id}`)
         });
+        // Deciding from a card is a pilot capability on every surface: a
+        // person outside it still sees the request, linked to its plan and
+        // to the Inbox, and decides it there.
+        const mayDecideHere = gateCards.length > 0 && await this._pilotAllows(viewer);
         const cards = [];
         for (const card of board.cards || []) {
             if (!GATE_COLUMNS.has(card.column)) {
@@ -393,7 +458,7 @@ class AssistantGateService {
             const update = mine ? updates.get(`${IDENTITY_PREFIX}${card.id}`) : null;
             const open = Boolean(update?.gate && !update.gate.resolved);
             let decision = null;
-            if (open && this.gateDecisions.has(update.gate.kind)) {
+            if (open && mayDecideHere && this.gateDecisions.has(update.gate.kind)) {
                 try {
                     const described = await this._card({
                         ref: String(update.id),
@@ -589,3 +654,4 @@ module.exports.AssistantGateService = AssistantGateService;
 module.exports.AssistantGateError = AssistantGateError;
 module.exports.IDENTITY_PREFIX = IDENTITY_PREFIX;
 module.exports.SURFACES = SURFACES;
+module.exports.PILOT_CAPABILITY = PILOT_CAPABILITY;

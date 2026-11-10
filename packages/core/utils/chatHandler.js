@@ -538,6 +538,9 @@ async function runChatInteraction(interaction, thread = null) {
             functionDefs = functionDefs.filter(def => !isIncognitoToolBlocked(def.name, interaction));
             const personalPolicy = await require('../services/personalPolicyService').toolPolicy(interaction);
             functionDefs = functionDefs.filter(def => personalPolicy.allows(def.name));
+            // Tools that are one person's alone (the delegation tools,
+            // while the pilot is owner-only) are not shown to anyone else.
+            functionDefs = await toolsRegistry.offeredTo(functionDefs, interaction);
 
             // Progressive streaming: edit the deferred reply as text arrives.
             // Edits are throttled and chained so they never interleave.

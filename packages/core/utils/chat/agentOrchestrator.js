@@ -41,6 +41,7 @@
  */
 const aiService = require('../../services/aiService');
 const toolsRegistry = require('../toolsRegistry');
+const modelCallScope = require('../modelCallScope');
 const { PRIOR_RESULT_CHARS, PRIOR_BLOCK_CHARS } = require('../toolResultWindow');
 const { FEATURE_UNAVAILABLE } = require('../../features/gate');
 
@@ -267,7 +268,10 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
             try {
                 const parsedArgs = JSON.parse(call.arguments || '{}');
                 parsedArgs.interactionContext = interactionContext;
-                fnResult = await executeTool(call.name, parsedArgs);
+                // Whatever the executor is (the chat registry, a delegated
+                // run, a persona's tools), this is a model's call: operations
+                // only a person may take refuse inside it (ADR 0023).
+                fnResult = await modelCallScope.run(`loop:${call.name}`, () => executeTool(call.name, parsedArgs));
 
                 if (isFeatureUnavailable(fnResult)) {
                     unavailable = true;

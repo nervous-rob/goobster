@@ -388,6 +388,28 @@ describe('without a grant', () => {
         expect((await updateFor(task)).summary).toContain('but no run finished in the time allowed.');
     });
 
+    test('a model\'s tool call cannot answer for the person: approving and directing refuse inside one, and nothing is run', async () => {
+        const modelCallScope = require('@goobster/core/utils/modelCallScope');
+        const task = await automation('nightly import');
+        await failing(task);
+        await pass();
+        const offered = await latest(task);
+        const before = await db.get('SELECT nextRun FROM automations WHERE id = @id', { id: task.id });
+
+        await expect(modelCallScope.run('test:approve', () => repairs.approve({ userId: A, repairId: offered.id })))
+            .rejects.toMatchObject({ code: 'HUMAN_ONLY', status: 403 });
+        await expect(modelCallScope.run('test:direct', () => repairs.direct({ userId: A, repairId: offered.id, direction: 'leave' })))
+            .rejects.toMatchObject({ code: 'HUMAN_ONLY', status: 403 });
+        // The card refuses the same way, before it reaches the repair.
+        const update = await updateFor(task);
+        await expect(modelCallScope.run('test:decide', () => gates.decide({
+            userId: A, ref: String(update.id), option: 'approve', occurrence: Number(offered.id) * 2, revision: String(offered.revision), surface: 'processes'
+        }))).rejects.toMatchObject({ code: 'HUMAN_ONLY' });
+
+        expect(await latest(task)).toMatchObject({ status: 'PROPOSED', revision: offered.revision });
+        expect(await db.get('SELECT nextRun FROM automations WHERE id = @id', { id: task.id })).toEqual(before);
+    });
+
     test('declined, it is not offered again for the same problem', async () => {
         const task = await automation('nightly import');
         await failing(task);

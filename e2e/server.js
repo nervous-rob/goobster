@@ -754,6 +754,9 @@ async function main() {
             const updates = require('@goobster/core/services/assistantUpdateService');
             const steward = require('@goobster/core/services/assistantStewardService');
             await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Delegator' });
+            // The pilot gate: until the host decides otherwise only the owner is offered a
+            // decision card. `owner` makes this person one; give them an id no other journey uses.
+            if (req.body?.owner === true) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
             for (const [table, column] of [
                 ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
                 ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
@@ -982,6 +985,9 @@ async function main() {
             const missions = require('@goobster/core/services/projectMissionService');
             const name = String(req.body?.name || 'Asker');
             await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: name });
+            // The pilot gate: only the owner is offered a decision card until the host
+            // decides otherwise. `owner` makes this person one; give them an id no other journey uses.
+            if (req.body?.owner === true) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
             for (const [table, column] of [
                 ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
                 ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
@@ -1402,6 +1408,92 @@ async function main() {
             await db.run(`DELETE FROM friendships WHERE ${pair}`, { userId, fromId });
             const { request } = await friends.request({ userId: fromId, userName: req.body?.fromName || 'Ada', targetId: userId });
             res.json({ ok: true, requestId: request.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Delegating by conversation (assistantChatDelegation.spec.js): the owner,
+    // with Attention on and nothing delegated, and a scripted model for the
+    // person's next chat turns. Each entry of `rounds` is one round's tool
+    // calls; when they run out the model says `reply`. The turn, the tools,
+    // the cards and the confirmations are the real ones. No provider.
+    let delegationModel = null;
+    app.post('/e2e/fixtures/assistant-chat-delegation', express.json(), async (req, res) => {
+        try {
+            const aiService = require('@goobster/core/services/aiService');
+            if (delegationModel) {
+                aiService.chat = delegationModel.original;
+                aiService.generateText = delegationModel.generateText;
+                delegationModel = null;
+            }
+            if (req.body?.restore === true) return res.json({ ok: true });
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Owner' });
+            // The pilot gate: conversational delegation is the owner's until the host decides otherwise.
+            if (req.body?.owner !== false) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_confirmation_receipts', 'userId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const rounds = Array.isArray(req.body?.rounds) ? req.body.rounds.map((round) => round.map((call, index) => ({
+                id: `e2e-${Date.now()}-${index}`, name: String(call.name), arguments: call.arguments || {}
+            }))) : [];
+            // An argument of '$draft' is the person's newest responsibility when the
+            // call is made, so a scripted attempt names the real draft whatever ids
+            // an earlier spec or a retried journey left behind.
+            const play = async (round) => {
+                const newest = await db.get('SELECT MAX(id) AS id FROM assistant_responsibilities WHERE ownerUserId = @userId', { userId });
+                return round.map((call) => ({
+                    ...call,
+                    arguments: JSON.stringify(Object.fromEntries(Object.entries(call.arguments)
+                        .map(([key, value]) => [key, value === '$draft' ? Number(newest?.id) : value])))
+                }));
+            };
+            const reply = String(req.body?.reply || 'Done.');
+            delegationModel = { original: aiService.chat, generateText: aiService.generateText, rounds };
+            // The local provider has no web search of its own, so the turn first asks
+            // the model whether to search. With no model to ask, a keyword match
+            // ("current", "find") decides instead and the turn becomes a search
+            // approval. This model answers that one question: no.
+            const { generateText } = delegationModel;
+            aiService.generateText = async (prompt, ...rest) => (/requires a web search/.test(String(prompt))
+                ? 'false'
+                : generateText.call(aiService, prompt, ...rest));
+            aiService.chat = async (_messages, options = {}) => {
+                // A model call is never instant. When this answered at once,
+                // a new chat's turn sometimes ended within milliseconds of the
+                // chat being created and the room was left showing an empty
+                // conversation (about one run in four here; none with the
+                // pause). No provider is that fast, so the stand-in is not either.
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                const offered = (options.functions || []).map((definition) => definition.name);
+                const next = rounds[0];
+                // Only the agent loop is scripted, and only with tools it was really offered.
+                if (next && next.every((call) => offered.includes(call.name))) return { content: '', toolCalls: await play(rounds.shift()) };
+                if (typeof options.onDelta === 'function') options.onDelta(reply);
+                return { content: reply, toolCalls: [] };
+            };
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // What the database holds for that person, for the spec's own assertions.
+    app.get('/e2e/fixtures/assistant-chat-delegation/state', async (req, res) => {
+        try {
+            const userId = String(req.query.userId || '');
+            res.json({
+                // Scripted rounds the model has not played yet (0: every tool call was made).
+                unplayed: delegationModel ? delegationModel.rounds.length : 0,
+                responsibilities: await db.all(
+                    'SELECT id, title, status, revision, proposedBy, proposalKeptAt, activatedAt FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id', { userId }),
+                receipts: await db.all(
+                    'SELECT subjectKind, action, surface, consumedAt FROM assistant_confirmation_receipts WHERE userId = @userId ORDER BY id', { userId })
+            });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }

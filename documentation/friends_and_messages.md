@@ -133,6 +133,13 @@ addresseeId, addresseeName, actionable, respondedAt }`,
 Decline while the request is pending and states the outcome afterwards -
 the same pattern as an access request.
 
+The `friendships` row is reused when the same two people ask again, and each
+ask files its own notice. Only the newest "wants to be friends" notice is
+`actionable` and counts under Needs you (`friendService.staleNoticeIds`,
+and the same rule in the Inbox's needs-you query). An earlier notice, and an
+"accepted your friend request" note from a time the roles were reversed,
+stay in the Inbox as records with nothing to press.
+
 ## What friends can do
 
 - **See each other's presence.** `listFriends(userId, { presence: true })`

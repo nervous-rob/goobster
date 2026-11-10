@@ -57,11 +57,23 @@ test.describe('delegated delivery and interruption', () => {
         });
         expect(created.ok(), await created.text()).toBe(true);
         const { responsibility } = await created.json();
-        const activated = await page.request.post(`/api/app/assistant/responsibilities/${responsibility.id}/actions`, {
-            data: { action: 'activate', expectedRevision: responsibility.revision }
+        // Activating is confirmed with a receipt for what the person is shown
+        // (ADR 0023): a bare activate is refused before anything else is asked.
+        const actions = `/api/app/assistant/responsibilities/${responsibility.id}/actions`;
+        const bare = await page.request.post(actions, { data: { action: 'activate', expectedRevision: responsibility.revision } });
+        expect(bare.status()).toBe(403);
+        expect(JSON.stringify(await bare.json())).toContain('HUMAN_CONFIRMATION_REQUIRED');
+        const confirmation = await page.request.post('/api/app/assistant/confirmations', {
+            data: { subject: 'responsibility', id: responsibility.id, action: 'activate', revision: responsibility.revision, surface: 'portal' }
+        });
+        expect(confirmation.ok(), await confirmation.text()).toBe(true);
+        const activated = await page.request.post(actions, {
+            data: { action: 'activate', expectedRevision: responsibility.revision, receipt: (await confirmation.json()).receipt }
         });
         expect(activated.status()).toBe(409);
         expect((await activated.json()).error).toMatchObject({ code: 'PILOT_ONLY' });
+        const after = await page.request.get(`/api/app/assistant/responsibilities/${responsibility.id}`);
+        expect((await after.json()).responsibility.status).toBe('DRAFT');
     });
 
     test('the choice is made in the draft, restated before activation and shown on the row', async ({ page }) => {

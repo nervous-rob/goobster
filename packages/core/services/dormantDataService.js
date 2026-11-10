@@ -381,6 +381,10 @@ async function forgetAssistantResponsibilities(userId) {
     const processCleanups = (await db.run('DELETE FROM assistant_process_cleanups WHERE ownerUserId = @userId', { userId })).changes;
     const processRepairs = (await db.run('DELETE FROM assistant_process_repairs WHERE ownerUserId = @userId', { userId })).changes;
 
+    // Confirmation receipts are the person's own; none outlives its owner.
+    const confirmationReceipts = (await db.run(
+        'DELETE FROM assistant_confirmation_receipts WHERE userId = @userId', { userId }
+    )).changes;
     const revisions = (await db.run(
         `DELETE FROM assistant_responsibility_revisions
          WHERE responsibilityId IN (SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId)`,
@@ -466,7 +470,7 @@ async function forgetAssistantResponsibilities(userId) {
         responsibilities, revisions, anonymized: others.length,
         initiatives, cursors, proposalCounters, messageLabels, updates, receipts, processContracts, processObservations, incidents, incidentMembers,
         processLifecycle, processCleanups, processRepairs,
-        runs, runOperations, knowledgeChanges, digests
+        runs, runOperations, knowledgeChanges, confirmationReceipts, digests
     };
 }
 
@@ -506,6 +510,7 @@ async function countAssistantResponsibilities(userId) {
         knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId'),
         updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
         updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
+        confirmationReceipts: await count('SELECT COUNT(*) AS c FROM assistant_confirmation_receipts WHERE userId = @userId'),
         digests: await count('SELECT COUNT(*) AS c FROM assistant_digests WHERE userId = @userId'),
         processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
         processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId'),
@@ -547,6 +552,7 @@ async function auditAssistantResponsibilities(userId) {
             "SELECT COUNT(*) AS c FROM assistant_updates WHERE (audienceKind = 'user' AND audienceUserId = @userId) OR producerUserId = @userId"
         ),
         receipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
+        confirmationReceipts: await count('SELECT COUNT(*) AS c FROM assistant_confirmation_receipts WHERE userId = @userId'),
         digests: await count('SELECT COUNT(*) AS c FROM assistant_digests WHERE userId = @userId'),
         processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
         processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId'),

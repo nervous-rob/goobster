@@ -9,6 +9,13 @@
  * approved through a human receipt bound to the revision shown; a request
  * with no descriptor stays decided where it lives; and the gate service
  * never writes an outcome itself.
+ *
+ * Deciding in place is behind the pilot gate (owner decision 9): until the
+ * host records the pilot decision only the owner is offered a card or can
+ * decide through one, on Home and in the Inbox alike, and everyone else
+ * keeps the request where it lives. Most of this file runs with the pilot
+ * open to everyone, because it is about what a card does; "until the pilot
+ * decision is recorded" runs with it unset.
  */
 
 const path = require('node:path');
@@ -23,6 +30,9 @@ process.env.GOOBSTER_DB_PATH = TEST_DB;
 const db = require('@goobster/core/db');
 const gates = require('@goobster/core/services/assistantGateService');
 const { AssistantGateService } = require('@goobster/core/services/assistantGateService');
+const confirmations = require('@goobster/core/services/assistantConfirmationService');
+const access = require('@goobster/core/services/assistantAccessService');
+const instanceState = require('@goobster/core/services/instanceStateService');
 const home = require('@goobster/core/services/assistantHomeService');
 const updates = require('@goobster/core/services/assistantUpdateService');
 const inbox = require('@goobster/core/services/inboxService');
@@ -41,7 +51,7 @@ const B = '750000000000000002';
 const C = '750000000000000003';
 
 const TABLES = [
-    'assistant_update_receipts', 'assistant_updates', 'inbox_items', 'friendships', 'access_requests', 'operator_audit',
+    'assistant_confirmation_receipts', 'assistant_update_receipts', 'assistant_updates', 'inbox_items', 'friendships', 'access_requests', 'operator_audit',
     'project_mission_approval_receipts', 'project_mission_events', 'project_mission_steps', 'project_missions',
     'observatory_projects', 'web_sessions', 'web_rate_events', 'usage_reservations', 'auth_identities', 'app_accounts',
     'principals'
@@ -65,6 +75,9 @@ beforeEach(async () => {
     for (const [id, name] of [[A, 'Ada'], [B, 'Bo'], [C, 'Cy']]) {
         await identityService.ensureLegacyPrincipal({ discordId: id, displayName: name });
     }
+    // The pilot is open: these people are not the owner, and the cards are for everyone.
+    await instanceState.remove(access.KEY_PILOT);
+    await access.recordDecision({ scope: 'everyone' });
 });
 
 const needsYou = async (userId) => (await inbox.list({ userId, view: 'needs_you' })).items;
@@ -109,7 +122,15 @@ describe('one card on Home and in the Inbox', () => {
     test.each(['home', 'inbox', 'chat'])('a decision from %s reaches the same domain operation', async (surface) => {
         const respond = jest.spyOn(friends, 'respond');
         const { request, card } = await friendRequest();
-        const result = await decideCard(card, 'accept', { surface, userName: 'Ada' });
+        const extra = { surface, userName: 'Ada' };
+        if (surface === 'chat') {
+            // In chat the person's press is proved by a receipt for the card as shown (ADR 0023).
+            await identityService.grantAccount({ principalId: A, entitlement: 'bootstrap', role: 'operator' });
+            extra.receipt = (await confirmations.mint({
+                userId: A, subject: 'gate', id: card.ref, action: 'decide', occurrence: card.occurrence, revision: card.revision, surface: 'chat'
+            })).receipt;
+        }
+        const result = await decideCard(card, 'accept', extra);
         expect(respond).toHaveBeenCalledTimes(1);
         expect(respond).toHaveBeenCalledWith(expect.objectContaining({ userId: A, requestId: String(request.id), accept: true }));
         expect(result.decided).toEqual({ ref: card.ref, kind: 'friend_request', option: 'accept', message: 'You and Bo are friends now.' });
@@ -159,6 +180,55 @@ describe('a stale card', () => {
         // The current card, as returned, does decide it.
         await decideCard(error.details.current, 'accept');
         expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('accepted');
+    });
+
+    test('when they ask again, only the new notice is the request: the earlier one asks for nothing', async () => {
+        const { request, item: earlier, card: earlierCard } = await friendRequest();
+        // The first ask was a minute ago (the notice is keyed on when it was asked).
+        await db.run("UPDATE friendships SET createdAt = '2026-01-01 00:00:00' WHERE id = @id", { id: request.id });
+        await db.run('UPDATE inbox_items SET dedupeKey = @key WHERE id = @id',
+            { id: earlier.id, key: `friend_request:${request.id}:2026-01-01 00:00:00` });
+        await friends.cancel({ userId: B, requestId: request.id });
+        expect(await needsYou(A)).toEqual([]);
+
+        const again = await friends.request({ userId: B, targetId: A });
+        expect(again.request.id).toBe(request.id);
+        const waiting = await needsYou(A);
+        expect(waiting).toHaveLength(1);
+        expect(waiting[0].id).not.toBe(earlier.id);
+        expect(waiting[0]).toMatchObject({ needsAction: true, friend: { actionable: true }, decision: { state: 'open' } });
+        const view = await home.project({ userId: A });
+        expect(view.needsYou).toHaveLength(1);
+        expect(view.counts.needsAction).toBe(1);
+
+        // The earlier notice stays in the Inbox as a record, with nothing to press.
+        const all = (await inbox.list({ userId: A })).items;
+        expect(all.find(entry => entry.id === earlier.id)).toMatchObject({ needsAction: false, decision: null, friend: { actionable: false } });
+        expect(await gates.card({ userId: A, ref: earlierCard.ref })).toMatchObject({
+            state: 'resolved', options: [], outcome: 'This is an earlier notice. They asked again since: answer the newer request.'
+        });
+        const refused = await caught(decideCard({ ...earlierCard, revision: waiting[0].decision.revision }, 'accept'));
+        expect(refused).toMatchObject({ status: 409, code: 'STALE_GATE' });
+        expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('pending');
+
+        // The new notice decides it, once.
+        await decideCard(waiting[0].decision, 'accept');
+        expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('accepted');
+        expect(await needsYou(A)).toEqual([]);
+    });
+
+    test('an old "accepted your request" note does not become a request when the roles are reversed', async () => {
+        // A asked B, B accepted (A holds the acceptance note), they parted, and now B asks A.
+        const first = await friends.request({ userId: A, targetId: B });
+        await friends.respond({ userId: B, requestId: first.request.id, accept: true });
+        await friends.remove({ userId: A, friendId: B });
+        await db.run("UPDATE friendships SET createdAt = '2026-01-01 00:00:00' WHERE id = @id", { id: first.request.id });
+        await friends.request({ userId: B, targetId: A });
+        const waiting = await needsYou(A);
+        expect(waiting).toHaveLength(1);
+        expect(waiting[0]).toMatchObject({ kind: 'invite', title: 'Bo wants to be friends' });
+        const note = (await inbox.list({ userId: A })).items.find(entry => /accepted your friend request/.test(entry.title));
+        expect(note).toMatchObject({ needsAction: false, decision: null });
     });
 
     test('a domain refusal that means "changed under you" is reported the same way', async () => {
@@ -217,6 +287,99 @@ describe('who may decide', () => {
             return text.includes('assistantGateService') && /\.decide\s*\(/.test(text);
         });
         expect(offenders).toEqual([]);
+    });
+});
+
+describe('until the pilot decision is recorded', () => {
+    const status = async (request) => (await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status;
+    const makeOwner = (userId) => identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+
+    beforeEach(async () => {
+        await instanceState.remove(access.KEY_PILOT);
+    });
+
+    test.each(['home', 'inbox'])('someone who is not the owner is offered no card and cannot decide from %s; the request stays where it lives', async (surface) => {
+        const respond = jest.spyOn(friends, 'respond');
+        const { request } = await friends.request({ userId: B, targetId: A });
+        // Still a request waiting on them, on both surfaces, with the Inbox's own buttons.
+        const [item] = await needsYou(A);
+        expect(item).toMatchObject({ needsAction: true, decision: null, friend: { actionable: true, status: 'pending' } });
+        const view = await home.project({ userId: A });
+        expect(view.counts.needsAction).toBe(1);
+        expect(view.needsYou[0]).toMatchObject({ inboxItemId: item.id, request: 'friend_request', decision: null });
+        expect(await gates.card({ userId: A, ref: `inbox-${item.id}` })).toBeNull();
+
+        // Naming the card they were never shown decides nothing.
+        const refused = await caught(gates.decide({
+            userId: A, ref: `inbox-${item.id}`, option: 'accept', occurrence: 1, revision: request.createdAt, surface
+        }));
+        expect(refused).toMatchObject({ status: 403, code: 'PILOT_ONLY', details: { capability: 'conversation' } });
+        expect(respond).not.toHaveBeenCalled();
+        expect(await status(request)).toBe('pending');
+
+        // The Inbox's own operation is not the assistant's and still answers it.
+        await friends.respond({ userId: A, requestId: request.id, accept: true });
+        expect(await status(request)).toBe('accepted');
+        expect(await needsYou(A)).toEqual([]);
+    });
+
+    test.each(['home', 'inbox'])('the owner is offered the card on both and decides from %s', async (surface) => {
+        await makeOwner(A);
+        const respond = jest.spyOn(friends, 'respond');
+        const { request, item, card } = await friendRequest();
+        expect(card).toMatchObject({ ref: `inbox-${item.id}`, kind: 'friend_request', state: 'open' });
+        expect((await home.project({ userId: A })).needsYou[0].decision).toEqual(card);
+        expect(await gates.card({ userId: A, ref: card.ref })).toEqual(card);
+
+        const result = await decideCard(card, 'accept', { surface });
+        expect(result.decided).toMatchObject({ kind: 'friend_request', option: 'accept' });
+        expect(respond).toHaveBeenCalledTimes(1);
+        expect(await status(request)).toBe('accepted');
+    });
+
+    test('the refusal is the same for any reference, so it says nothing about another person\'s requests', async () => {
+        await makeOwner(A);
+        const { card } = await friendRequest();
+        const asC = (ref) => caught(gates.decide({ userId: C, ref, option: 'accept', occurrence: card.occurrence, revision: card.revision, surface: 'inbox' }));
+        expect(await asC(card.ref)).toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        expect(await asC('inbox-999999')).toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        expect(await gates.card({ userId: C, ref: card.ref })).toBeNull();
+    });
+
+    test('a plan to approve is still a request for someone who is not the owner, decided in the project', async () => {
+        await db.run("INSERT INTO observatory_projects (userId, slug, name) VALUES (@userId, 'garden', 'Garden')", { userId: A });
+        const mission = await missions.create({
+            userId: A, project: 'garden', owner: A, title: 'Plant the beds', objective: 'Get the beds planted before the first frost.',
+            successCriteria: ['Every bed is planted'], steps: [{ kind: 'human', title: 'Buy seedlings' }]
+        });
+        await gates.adoptProjectGates({ userId: A });
+        const [item] = await needsYou(A);
+        expect(item).toMatchObject({ needsAction: true, decision: null, update: { gate: { kind: 'project_approve' }, gateOpen: true } });
+        // Home and the Inbox keep the link to the project, where the plan is approved.
+        expect(item.update.actions).toEqual([{ kind: 'open_project', id: `${A}/garden` }]);
+        const [shown] = (await home.project({ userId: A })).needsYou;
+        expect(shown).toMatchObject({ decision: null });
+
+        const approve = jest.spyOn(missions, 'approve');
+        expect(await caught(gates.decide({
+            userId: A, ref: item.update.id, option: 'approve', occurrence: 1, revision: `plan:${mission.planRevision}`, surface: 'home'
+        }))).toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        expect(approve).not.toHaveBeenCalled();
+        expect((await missions.get({ userId: A, project: 'garden', owner: A, missionId: mission.id })).status).toBe('DRAFT');
+        expect(await db.all('SELECT id FROM project_mission_approval_receipts', {})).toEqual([]);
+    });
+
+    test('once the host opens the pilot the same request carries its card, and closing it takes the card away again', async () => {
+        const { request } = await friends.request({ userId: B, targetId: A });
+        expect((await needsYou(A))[0].decision).toBeNull();
+        await access.recordDecision({ scope: 'everyone' });
+        const [open] = await needsYou(A);
+        expect(open.decision).toMatchObject({ kind: 'friend_request', state: 'open' });
+        await access.recordDecision({ scope: 'owner' });
+        expect((await needsYou(A))[0].decision).toBeNull();
+        // A card shown while the pilot was open decides nothing once it is closed.
+        expect(await caught(decideCard(open.decision, 'accept'))).toMatchObject({ status: 403, code: 'PILOT_ONLY' });
+        expect(await status(request)).toBe('pending');
     });
 });
 
@@ -419,11 +582,11 @@ describe('the registry', () => {
             { id: 'apply', label: 'Apply repair', effect: 'Changes the source address.', danger: true },
             { id: 'dismiss', label: 'Dismiss', effect: null, danger: false }
         ]);
-        const result = await fresh.decide({ userId: A, ref: update.id, option: 'apply', occurrence: 1, revision: 'config:4', surface: 'chat' });
+        const result = await fresh.decide({ userId: A, ref: update.id, option: 'apply', occurrence: 1, revision: 'config:4', surface: 'home' });
         expect(result.decided).toEqual({ ref: String(update.id), kind: 'custom_review', option: 'apply', message: 'Applied.' });
         expect(calls).toEqual([{
             gate: 'automation:5', viewer: A, option: 'apply',
-            context: { occurrence: 1, revision: 'config:4', surface: 'chat', gateway: null }
+            context: { occurrence: 1, revision: 'config:4', surface: 'home', gateway: null }
         }]);
         // The owning domain resolves the gate; deciding does not.
         expect((await db.get('SELECT gateResolvedAt FROM assistant_updates WHERE id = @id', { id: update.id })).gateResolvedAt).toBeNull();
@@ -538,6 +701,50 @@ describe('POST /api/app/assistant/gates/:ref/decide', () => {
         expect(again.status).toBe(409);
         expect(again.json.error).toMatchObject({ code: 'STALE_GATE', details: { current: { state: 'resolved', outcome: 'You accepted this request.' } } });
         expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: asked.id })).status).toBe('accepted');
+    });
+
+    test('until the pilot decision is recorded the route offers and decides for the owner only; the Inbox\'s own route still decides', async () => {
+        await instanceState.remove(access.KEY_PILOT);
+        await identityService.grantAccount({ principalId: C, entitlement: 'bootstrap', role: 'operator' });
+        const ada = await session(A, 'Ada');
+        const cy = await session(C, 'Cy');
+        const { request: toAda } = await friends.request({ userId: B, targetId: A });
+        const { request: toCy } = await friends.request({ userId: B, targetId: C });
+        const status = async (id) => (await db.get('SELECT status FROM friendships WHERE id = @id', { id })).status;
+
+        // Ada is not the owner: the request is there, on both surfaces, without a card.
+        const listed = await request({ reqPath: '/api/app/inbox?view=needs_you', cookie: ada });
+        expect(listed.json.items).toHaveLength(1);
+        expect(listed.json.items[0]).toMatchObject({ needsAction: true, decision: null, friend: { actionable: true } });
+        const adaHome = await request({ reqPath: '/api/app/home', cookie: ada });
+        expect(adaHome.json.assistant.needsYou[0]).toMatchObject({ request: 'friend_request', decision: null });
+        const ref = `inbox-${listed.json.items[0].id}`;
+        expect((await request({ reqPath: `/api/app/assistant/gates/${ref}`, cookie: ada })).status).toBe(404);
+        for (const surface of ['home', 'inbox']) {
+            const refused = await request({
+                method: 'POST', reqPath: `/api/app/assistant/gates/${ref}/decide`, cookie: ada,
+                body: { option: 'accept', occurrence: 1, revision: toAda.createdAt, surface }
+            });
+            expect(refused.status).toBe(403);
+            expect(refused.json.error).toMatchObject({ code: 'PILOT_ONLY', details: { capability: 'conversation' } });
+        }
+        expect(await status(toAda.id)).toBe('pending');
+        const direct = await request({ method: 'POST', reqPath: `/api/app/friends/requests/${toAda.id}/accept`, cookie: ada, body: {} });
+        expect(direct.status).toBe(200);
+        expect(await status(toAda.id)).toBe('accepted');
+
+        // Cy is the owner: the card is on both, and it decides.
+        const cyInbox = await request({ reqPath: '/api/app/inbox?view=needs_you', cookie: cy });
+        const card = cyInbox.json.items[0].decision;
+        expect(card).toMatchObject({ kind: 'friend_request', state: 'open' });
+        const cyHome = await request({ reqPath: '/api/app/home', cookie: cy });
+        expect(cyHome.json.assistant.needsYou[0].decision).toEqual(card);
+        const decided = await request({
+            method: 'POST', reqPath: `/api/app/assistant/gates/${card.ref}/decide`, cookie: cy,
+            body: { option: 'accept', occurrence: card.occurrence, revision: card.revision, surface: 'home' }
+        });
+        expect(decided.status).toBe(200);
+        expect(await status(toCy.id)).toBe('accepted');
     });
 
     test('with the feature off the route is refused and the Inbox\'s own routes still decide', async () => {

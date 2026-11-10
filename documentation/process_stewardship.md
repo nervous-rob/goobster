@@ -622,7 +622,16 @@ incident, later, has its own attempts.
   the host records the pilot decision, only the installation's owner is
   offered repairs, has repair work proposed, or can have one applied; a
   `process.repair` grant cannot be activated by anyone else (`PILOT_ONLY`).
-  Incidents are still reported to everyone.
+  Incidents are still reported to everyone. A repair is answered from its
+  card, and deciding from a card is a pilot capability of its own
+  (`conversation`,
+  [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)).
+  The two open together, so whoever is offered a repair can answer it.
+- **Only you answer.** Approving a repair and answering the question at the
+  attempt limit are refused with `HUMAN_ONLY` inside a model's tool call, in
+  the repair service as well as on the card
+  ([delegated_conversation.md](delegated_conversation.md)). A delegated run
+  repairs only through `repairProcess`, under its grant.
 - **While the host has stopped delegated work**
   ([Stop all](delegated_operations.md#stop-all)), Goobster applies no repair,
   and a repair it had already applied waits exactly where it is: it is not

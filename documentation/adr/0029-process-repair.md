@@ -193,6 +193,13 @@ The plan fixed none of these. Each is the conservative reading.
   (`RERUN_POINTLESS`), so the instructions now say so and say that repeated
   failure is expected. The run still declines when the evidence shows only
   the person can fix it, and never repeats a repair that already failed.
+- A proposed repair has no route of its own: it is answered through the
+  gate, so it is behind the `conversation` pilot capability as well as
+  `repair` (ADR 0023). Both are opened by the same pilot decision, so nobody
+  is offered a repair they cannot answer; if the capabilities are ever
+  decided separately, repair needs a route on the Processes list the way
+  pausing has one. `approve` and `direct` also refuse inside a model's tool
+  call (`HUMAN_ONLY`).
 - `assistantGateService` accepts the surface `processes`, and a run tool's
   `available()` and context now see the initiative's `origin`.
 - `assistant_process_repairs` is per-person data and is in the transparency
