@@ -934,6 +934,23 @@ conversation attempts at 10 per responsibility. DA-8 adds `personal_chat`,
 model classification, `maxProposalsPerDay` and the other adapters; the
 explicit rule stays the floor.
 
+*Implemented (DA-8, ADR 0026):* four adapters - `chat_request` (the table's
+`conversation_request` row for `personal_chat`, a separate source kind so its
+cursor and open limit are its own), `followed_source`, `job_failure` and
+`ci_verdict` - each with `capability: 'sources'` (the pilot gate), a
+`read` grant checked through `permits()`, a baseline on first look and a
+`maxProposalsPerDay` of 3 (`assistant_proposal_counters`, one conditional
+UPDATE; excess coalesced into the cursor). Classification is a label cached in
+`assistant_message_labels` and charged under work kind
+`assistant_classification` (at most 10 percent of the responsibility's daily
+token budget). The failure cause is `hash(status, exit code, exception class,
+last own-file frame)`. Differences from the table above: `followed_source`
+proposes an entry the person *kept after activation* (an unkept entry is only
+observed); `ci_verdict` reads the stored verdict and proposes `failure` and
+the recovery after a `failure`, never skipped, and leaves `fix`-mode watches
+to the watch. See
+[delegated_opportunity_sources.md](delegated_opportunity_sources.md).
+
 Rules:
 
 - Classification of a conversation message is a bounded, cached decision

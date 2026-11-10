@@ -37,6 +37,8 @@ const { fingerprint } = require('./fingerprint');
 const rules = require('../conversationRequests');
 
 const KIND = 'conversation_request';
+/** The scopes it reads: it serves two. */
+const SCOPES = ['project_chat', 'parlor'];
 const STREAM_ID = 'messages';
 /** Messages examined in one pass; the rest wait for the next. */
 const SCAN_LIMIT = 200;
@@ -141,6 +143,7 @@ function describe(row) {
 
 module.exports = {
     KIND,
+    SCOPES,
     stream: true,
     STREAM_ID,
     OPEN_LIMIT,
@@ -207,6 +210,45 @@ module.exports = {
             });
         }
         return { sourceId: STREAM_ID, revision: String(revision), events };
+    },
+
+    /** What the owner sees before activating: requests of the last days, which count as history. */
+    async lookback(responsibility, { now = new Date() } = {}) {
+        const own = surfaces(responsibility);
+        if (!own.project && !own.parlor) return { sources: 0, ignored: 0, examples: [] };
+        const actor = responsibility.actingUserId || responsibility.ownerUserId;
+        const surface = surfaceFilter(responsibility, own);
+        const rows = await db.all(
+            `SELECT m.content, c.title, c.projectId
+             FROM parlor_messages m JOIN parlor_conversations c ON c.id = m.conversationId
+             WHERE m.role = 'user' AND m.userId = @actor AND m.createdAt >= @since
+               AND ${surface.sql} AND ${READABLE} AND ${SPOKEN_HERE}
+             ORDER BY m.id DESC LIMIT 500`,
+            { actor, since: utcText(new Date(now.getTime() - MAX_AGE_MS)), ...surface.params }
+        );
+        const caught = rows.filter(row => rules.parse(row.content).request);
+        return {
+            sources: Number(own.project) + Number(own.parlor),
+            ignored: caught.length,
+            examples: caught.slice(0, 3).map(row => describe({ ...row, id: 0, conversationId: 0 }).title)
+        };
+    },
+
+    /**
+     * The same words, in the same conversation, while an attempt from it is
+     * still open: asked twice, worked once.
+     */
+    async alreadyWork(responsibility, event) {
+        const same = await db.get(
+            `SELECT id FROM assistant_initiatives
+             WHERE ownerUserId = @owner AND sourceKind = @kind AND sourceId LIKE @conversation AND sourceRevision = @revision
+               AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') LIMIT 1`,
+            {
+                owner: responsibility.ownerUserId, kind: KIND,
+                conversation: `parlor:${Number(event.conversationId)}:%`, revision: event.revision
+            }
+        );
+        return Boolean(same);
     },
 
     /**

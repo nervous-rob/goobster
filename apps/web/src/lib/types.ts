@@ -462,7 +462,7 @@ export type ResponsibilityOperation = { operation: string; resource: { kind: str
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
     projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
-    /** `sources` names where it listens for requests: `project_chat`, `parlor` (delegated_conversation_requests.md). */
+    /** `sources` names where it notices work: `project_chat`, `parlor`, `personal_chat`, `followed_source`, `job_failure`, `ci_verdict` (delegated_conversation_requests.md, delegated_opportunity_sources.md). */
     scopes?: { sources?: string[]; audience?: string };
     budgets: Record<string, number>; rules?: { autoStart?: boolean; interruption?: string; stopCondition?: string }; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
     /** 'model' when it was drafted in a conversation: turning it on always takes the person's own confirmation. */
@@ -494,9 +494,25 @@ export type AssistantInitiative = {
     /** What replaced a superseded attempt: `parlor:<conversation>:<message>` or `plan:<plan id>`. */
     supersededBy?: string | null;
 };
-export type AssistantInitiativeOrigin = {
-    kind: 'parlor_message'; surface: 'project' | 'parlor'; conversationId: number; messageId: number;
-    available: boolean; conversationTitle: string | null; excerpt: string | null; link: string | null;
+export type AssistantInitiativeOrigin =
+    | {
+        kind: 'parlor_message'; surface: 'project' | 'parlor'; conversationId: number; messageId: number;
+        available: boolean; conversationTitle: string | null; excerpt: string | null; link: string | null;
+    }
+    | {
+        kind: 'chat_message'; conversationId?: number; messageId?: number; implied?: boolean;
+        available: boolean; conversationTitle?: string | null; excerpt?: string | null; link?: string | null;
+    }
+    | { kind: 'followed_source_entry'; available: boolean; sourceLabel?: string; entryTitle?: string; link?: string | null }
+    | { kind: 'ci_verdict'; available: boolean; repo?: string; branch?: string; state?: string; sha?: string; moved?: boolean; link?: string }
+    | { kind: 'job_failure'; available: boolean; jobId?: number; language?: string; status?: string; link?: string };
+
+/** What delegating would do with the wider sources a responsibility names (GET .../responsibilities/:id/sources). */
+export type ResponsibilitySources = {
+    cutoff: string;
+    locked: boolean;
+    sources: Array<{ sourceKind: string; scopes: string[]; locked: boolean; sources: number; ignored: number; examples: string[] }>;
+    today: Array<{ sourceKind: string; proposed: number; coalesced: number; cap: number }>;
 };
 
 /**

@@ -7,7 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { useMe } from '../hooks/useSession';
-import { describeGrants, describeListening, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from '../rooms/assistant/grants';
+import { describeGrants, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from '../rooms/assistant/grants';
 import { GateDecision } from './GateDecision';
 import type { Responsibility } from '../lib/types';
 
@@ -127,6 +127,7 @@ export function ProposalCard({ id }: { id: number }) {
     const grants = describeGrants(item.operations, projects);
     // Where it would take requests from is part of what is being turned on.
     const listening = describeListening(item, me.assistant.name);
+    const noticing = describeNoticing(item);
     const sharing = describeSharing(item);
     return frame(
         <>
@@ -136,6 +137,7 @@ export function ProposalCard({ id }: { id: number }) {
             <ul className="assistant-grants" data-testid="proposal-grants">
                 {grants.map((line) => <li key={line}>{line}</li>)}
                 {listening && <li data-testid="proposal-listens">{listening}; only your own messages are read for this</li>}
+                {noticing && <li data-testid="proposal-notices">{noticing}</li>}
                 {sharing && <li data-testid="proposal-shares">{sharing}</li>}
             </ul>
             <div className="hint">
