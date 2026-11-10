@@ -665,12 +665,12 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; five items are available** (answering a request on Home
+**Status: planned; six items are available** (answering a request on Home
 and in the Inbox; "Delegating and steering by conversation" in portal chat
 and DMs, apart from the items marked planned below, see
-[delegated_conversation.md](delegated_conversation.md); repository work;
-findings shared with a project; and "For the host" at the end of this
-section, each marked below); nothing else here is. Increments DA-7 through
+[delegated_conversation.md](delegated_conversation.md); "Reaching you";
+repository work; findings shared with a project; and "For the host" at the
+end of this section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -708,12 +708,19 @@ DA-12. The technical contracts are in
 
 ### Reaching you
 
+**Available** to the installation's owner, and to everyone once the host
+records the pilot decision
+([delegated_delivery.md](delegated_delivery.md)).
+
 - The overview updates while you look at it.
 - Each responsibility has an interruption setting: quietly on Home, in one
   daily digest, or immediately for requests that block its work.
 - Anything that reaches you outside the portal respects your Attention
   contact limit, cooldown and quiet hours. Findings never interrupt.
-- At most one digest a day, and none on a day with nothing in it.
+- At most one digest a day, and none on a day with nothing in it. You
+  choose its time in Settings; the default is 09:00.
+- Being told is not having looked: a notification or a digest leaves the
+  update highlighted on Home until you review it.
 
 ### Learning from you
 

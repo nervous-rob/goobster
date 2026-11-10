@@ -46,8 +46,11 @@ with the narrowest grant that covers it. What happens:
 - In portal chat a **proposal card** appears under the reply. The card reads
   the draft from the server with your session. It shows what was recorded:
   the title, each thing it would allow and on what, whether work would wait
-  for *Start*, and when it ends. It does not show Goobster's description of
-  it, so the card and the record cannot differ.
+  for *Start*, when it ends, and how it would reach you
+  ([delegated_delivery.md](delegated_delivery.md)). It does not show
+  Goobster's description of it, so the card and the record cannot differ.
+  A proposal always keeps updates on Home: asking for a digest or a contact
+  is your own choice, made by editing the draft.
 - Asking again for the same thing in the same conversation returns the same
   draft. At most 10 unanswered proposals are kept per person.
 

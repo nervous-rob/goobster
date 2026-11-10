@@ -21,6 +21,7 @@ const guildSettings = require('../utils/guildSettings');
 const userInstructions = require('../utils/userInstructions');
 const memeMode = require('../utils/memeMode');
 const attentionPolicyService = require('./attentionPolicyService');
+const attentionConfig = require('../config/attentionConfig');
 const userIntegrationService = require('./userIntegrationService');
 const aiService = require('./aiService');
 const instanceDefaults = require('./instanceDefaultsService');
@@ -286,6 +287,7 @@ class UserSettingsService {
                 contactCooldownMinutes: policy?.contactCooldownMinutes ?? 120,
                 quietStartMinute: policy?.quietStartMinute ?? null,
                 quietEndMinute: policy?.quietEndMinute ?? null,
+                digestMinute: policy?.digestMinute ?? null,
                 boundaries: policy?.boundaries || {},
                 ...initiativePrefs
             },
@@ -296,6 +298,9 @@ class UserSettingsService {
                 contactCooldownMinutes: policy?.contactCooldownMinutes ?? 120,
                 quietStartMinute: policy?.quietStartMinute ?? null,
                 quietEndMinute: policy?.quietEndMinute ?? null,
+                // The time the day's digest of delegated work goes out
+                // (documentation/delegated_delivery.md): 09:00 unless chosen.
+                digestMinute: policy?.digestMinute ?? attentionConfig.HEARTBEAT.digestMinute,
                 boundaries,
                 timezone: customPrefs.timezone,
                 ...initiativePrefs
@@ -308,7 +313,8 @@ class UserSettingsService {
             },
             appliesTo: SECTION_METADATA.initiative.appliesTo,
             categories: attentionPolicyService.categories,
-            initiativeLevels: attentionPolicyService.initiativeLevels
+            initiativeLevels: attentionPolicyService.initiativeLevels,
+            digestDefaultMinute: attentionConfig.HEARTBEAT.digestMinute
         };
 
         // --- 5. Memory & Privacy Section ---
@@ -954,6 +960,7 @@ class UserSettingsService {
                     contactCooldownMinutes: 120,
                     quietStartMinute: null,
                     quietEndMinute: null,
+                    digestMinute: null,
                     boundaries: {},
                     ...pickSectionPrefs(PREFERENCE_DEFAULTS, 'initiative')
                 };
@@ -1280,6 +1287,14 @@ class UserSettingsService {
             }
         }
 
+        if ('digestMinute' in changes && changes.digestMinute !== null) {
+            const d = changes.digestMinute;
+            if (typeof d !== 'number' || !Number.isInteger(d) || d < 0 || d > 1439) {
+                throw new UserSettingsError(400, 'BAD_DIGEST_TIME',
+                    'digestMinute must be an integer between 0 and 1439 (minutes from midnight), or null for the default.');
+            }
+        }
+
         if ('boundaries' in changes && changes.boundaries !== null) {
             if (typeof changes.boundaries !== 'object' || Array.isArray(changes.boundaries)) {
                 throw new UserSettingsError(400, 'BAD_BOUNDARY', 'Boundaries must be an object keyed by category.');
@@ -1325,6 +1340,9 @@ class UserSettingsService {
                     startMinute: changes.quietStartMinute ?? null,
                     endMinute: changes.quietEndMinute ?? null
                 });
+            }
+            if ('digestMinute' in changes) {
+                await attentionPolicyService.setDigestTime({ userId, minute: changes.digestMinute ?? null });
             }
             if ('boundaries' in changes) {
                 const entries = Object.entries(changes.boundaries || {});

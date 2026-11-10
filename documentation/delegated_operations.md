@@ -176,8 +176,14 @@ records the pilot decision, only the owner has them.**
   grant of `read` or `external.write` on an `external` resource is refused
   with `PILOT_ONLY` at activation and at dispatch for anyone but the owner,
   the tools are not offered to them and the connector card is not shown.
-  Everything else delegated runs can do today (reading,
-  generated notes, project files, sandbox runs, research) is not gated.
+  Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
+  too: for anyone but the owner, activating or resuming a responsibility
+  whose updates go in a digest or contact them is refused with `PILOT_ONLY`,
+  nothing is sent out for one that is already active, the digest time is
+  not offered in Settings, and the portal is not told of changes while it
+  is open.
+  Everything else delegated runs can do today (reading, generated notes,
+  project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated

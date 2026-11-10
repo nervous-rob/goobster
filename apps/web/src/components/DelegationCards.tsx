@@ -7,7 +7,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { useMe } from '../hooks/useSession';
-import { describeGrants, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from '../rooms/assistant/grants';
+import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from '../rooms/assistant/grants';
 import { GateDecision } from './GateDecision';
 import type { Responsibility } from '../lib/types';
 
@@ -145,6 +145,7 @@ export function ProposalCard({ id }: { id: number }) {
                 {reachesGitHub(item.operations) && `Pushes and pull requests would go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day. `}
                 {writesOutside(item.operations) && `Writes to outside services would be made as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} outside operations a day. `}
                 {item.expiresAt ? `It ends ${whenLabel(item.expiresAt)}.` : 'It has no end date.'}{' '}
+                <span data-testid="proposal-interruption">{describeInterruption(item.rules?.interruption)}.</span>{' '}
                 Nothing is running, and it allows nothing until you turn it on. You can pause or revoke it at any time.
             </div>
             <div className="tool-card-actions" role="group" aria-label={`Draft responsibility: ${item.title}`}>

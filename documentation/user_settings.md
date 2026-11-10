@@ -108,6 +108,7 @@ erasure already include it. New per-user stores must stay on that path.
 | PR07 | Learn new long-term memories | `learnMemories` gates private embeddings, model facts, durable-memory tools and consolidation; manual data editors remain explicit user actions |
 | PR08 | Use existing memories | `useMemories` gates private graph/artifact/vector retrieval and recall tools |
 | PR09 | Study chat-history retention | two-step preview/apply + hourly purge + access-time expiry across history, search, shares and file URLs |
+| AT13 | Daily digest time | `initiative.digestMinute` (minutes from midnight on the quiet-hours clock, 0–1439, or `null` for the default 09:00; else `BAD_DIGEST_TIME`) → `attention_policies.digestMinute` → the delegated assistant's daily digest ([delegated_delivery.md](delegated_delivery.md)). Shown only to an account with the delivery capability; the section also returns `digestDefaultMinute` |
 | CN03 | Connected-resource allowlists | `githubAllowlist` / canonical Notion page IDs enforced on tools and on project repository clones and pushes; policy lookup fails closed; empty = no extra restriction |
 | UI10 | New-expedition defaults | `expeditionDefaultDepth` / `expeditionDefaultLens` snapshotted at create |
 | UI11 | New-persona defaults | `parlorDefaultEmoji` / `parlorDefaultCharter` used only when create omits them |

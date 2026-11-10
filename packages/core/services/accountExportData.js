@@ -65,7 +65,7 @@ const INVENTORY = [
     ['followed_sources', 'userId = @userId'],
     ['followed_source_entries', 'sourceId IN (SELECT id FROM followed_sources WHERE userId = @userId)'],
     ...['followups', 'automations', 'attention_items', 'attention_notices', 'attention_feedback', 'attention_watches',
-        'attention_policies', 'inbox_items', 'web_applets'].map(t => [t, 'userId = @userId']),
+        'attention_policies', 'attention_contacts', 'inbox_items', 'web_applets'].map(t => [t, 'userId = @userId']),
     ...['tutorial_progress', 'tutorial_preferences', 'tutorial_feedback'].map(t => [t, 'accountId = @userId']),
     ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
     ['assistant_responsibilities', 'ownerUserId = @userId', '*', 'id'],
@@ -82,6 +82,7 @@ const INVENTORY = [
     // What the person confirmed and when; the secret's hash stays out of the archive.
     ['assistant_confirmation_receipts', 'userId = @userId',
         'id, userId, subjectKind, subjectId, action, revision, grantHash, surface, createdAt, expiresAt, consumedAt', 'id'],
+    ['assistant_digests', 'userId = @userId', '*', 'id'],
     ['assistant_process_contracts', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_observations', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_incidents', 'ownerUserId = @userId', '*', 'id'],

@@ -239,6 +239,14 @@ const COLUMN_MIGRATIONS = [
     ['parlor_messages', 'stepsJson', 'stepsJson TEXT'],
     // Process contracts: which of the person's processes this one cannot work without.
     ['assistant_process_contracts', 'dependsOnJson', 'dependsOnJson TEXT'],
+    // Delivery of delegated work (DA-9): the one time a revision or a gate
+    // occurrence left the portal, as a digest entry or a contact.
+    ['assistant_updates', 'outboundKind', 'outboundKind TEXT'],
+    ['assistant_updates', 'outboundRevision', 'outboundRevision INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_updates', 'outboundOccurrence', 'outboundOccurrence INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_updates', 'outboundAt', 'outboundAt TEXT'],
+    // When the day's digest may go out (minutes from midnight; NULL = 09:00).
+    ['attention_policies', 'digestMinute', 'digestMinute INTEGER'],
     // Process lifecycle (DA-5b): archived definitions stay in their own table,
     // and a watch (which has no on/off switch of its own) can be paused.
     ['automations', 'archivedAt', 'archivedAt TEXT'],

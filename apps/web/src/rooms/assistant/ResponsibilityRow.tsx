@@ -1,7 +1,7 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
 import { useMe } from '../../hooks/useSession';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './grants';
+import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './grants';
 import { SourcesPreview } from './SourcesPreview';
 import { WorkList } from './WorkList';
 
@@ -75,6 +75,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 <div className="row-meta">
                     {item.rules?.autoStart ? 'Starts proposed work automatically · ' : 'Each piece of work waits for Start · '}
                     {item.expiresAt ? `Ends ${whenLabel(item.expiresAt)}` : 'No end date'}
+                    {' · '}<span data-testid="responsibility-interruption-rule">{describeInterruption(item.rules?.interruption)}</span>
                     {' · '}revision {item.revision}
                 </div>
                 {reachesGitHub(item.operations) && (
