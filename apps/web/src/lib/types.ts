@@ -410,6 +410,11 @@ export type AssistantHome = {
     partial: string[];
 };
 
+/** `GET /api/app/assistant/access`: which capabilities still in the pilot this person has. */
+export type AssistantAccess = {
+    hostPaused: boolean; budgetDefaults: Record<string, number>;
+    pilot: string; capabilities: Record<string, boolean>; gatedOperations: string[];
+};
 export type ResponsibilityOperation = { operation: string; resource: { kind: string; ids?: string[]; paths?: string[]; projectId?: string; branches?: string[] } };
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
