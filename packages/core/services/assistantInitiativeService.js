@@ -42,6 +42,7 @@ const crypto = require('node:crypto');
 const db = require('../db');
 const { features } = require('../features/featureState');
 const attentionPolicyService = require('./attentionPolicyService');
+const modelCallScope = require('../utils/modelCallScope');
 
 const STATUSES = ['CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW', 'COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED'];
 const OPEN_STATUSES = ['CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW'];
@@ -49,6 +50,8 @@ const TERMINAL_STATUSES = ['COMPLETED', 'FAILED', 'CANCELLED', 'SUPERSEDED'];
 const WAIT_REASONS = ['dependency', 'budget', 'user_question', 'access', 'responsibility'];
 const OUTCOMES = ['DONE', 'NO_ACTION', 'ALREADY_KNOWN', 'NO_CHANGE'];
 const HUMAN_ACTIONS = ['queue', 'cancel', 'retry', 'accept', 'reject'];
+/** The actions that only stop work: the ones a model's tool call may take for the person. */
+const NARROWING_ACTIONS = new Set(['cancel', 'reject']);
 const LEASE_MS = 10 * 60 * 1000;
 const MAX_DEPTH = 3;
 const RECONCILE_BATCH = 50;
@@ -561,6 +564,12 @@ class AssistantInitiativeService {
     async act({ userId, id, action, expectedRevision }) {
         if (!HUMAN_ACTIONS.includes(action)) {
             throw new AssistantInitiativeError('INVALID_ACTION', `action must be one of ${HUMAN_ACTIONS.join(', ')}.`);
+        }
+        // Starting, restarting or accepting work is the owner's own decision.
+        // A model's tool call may only stop it (cancel, reject); ADR 0023.
+        if (!NARROWING_ACTIONS.has(action) && modelCallScope.active()) {
+            throw new AssistantInitiativeError(modelCallScope.HUMAN_ONLY,
+                'Only the person can start, retry or accept delegated work, from the portal.', 403);
         }
         return db.transaction(async () => {
             const row = await this._row(id);

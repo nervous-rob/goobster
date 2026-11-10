@@ -55,9 +55,16 @@ const OPEN_UPDATE_GATE = (snoozed) => `(i.sourceType = 'assistant_update' AND EX
 const OPEN_ACCESS_GATE = `(i.sourceType = 'access_request' AND EXISTS (
     SELECT 1 FROM access_requests a
     WHERE CAST(a.id AS TEXT) = i.sourceId AND a.status = 'pending' AND a.principalId <> i.userId))`;
-const OPEN_FRIEND_GATE = `(i.sourceType = 'friend_request' AND EXISTS (
+// A friendship row is reused when the same two people ask again and each ask
+// files its own notice: only the newest one stands for the open request
+// (friendService.staleNoticeIds is the same rule for one page of items).
+const OPEN_FRIEND_GATE = `(i.sourceType = 'friend_request' AND i.kind = 'invite' AND EXISTS (
     SELECT 1 FROM friendships f
-    WHERE CAST(f.id AS TEXT) = i.sourceId AND f.status = 'pending' AND f.addresseeId = i.userId))`;
+    WHERE CAST(f.id AS TEXT) = i.sourceId AND f.status = 'pending' AND f.addresseeId = i.userId)
+    AND NOT EXISTS (
+    SELECT 1 FROM inbox_items newer
+    WHERE newer.userId = i.userId AND newer.sourceType = i.sourceType AND newer.sourceId = i.sourceId
+      AND newer.kind = 'invite' AND newer.id > i.id))`;
 const NEEDS_YOU_SQL = `(${OPEN_UPDATE_GATE(false)} OR ${OPEN_ACCESS_GATE} OR ${OPEN_FRIEND_GATE})`;
 const SNOOZED_SQL = OPEN_UPDATE_GATE(true);
 /** Informational: not a request at all, open or resolved. */
@@ -404,8 +411,12 @@ class InboxService {
      */
     async _friendByIdForRows(rows) {
         const friendService = require('./friendService');
-        if (!rows.some(row => row.sourceType === friendService.SOURCE_TYPE)) return new Map();
-        return friendService.describeForRows(rows);
+        const mine = rows.filter(row => row.sourceType === friendService.SOURCE_TYPE);
+        if (mine.length === 0) return new Map();
+        const byId = await friendService.describeForRows(rows);
+        // Earlier notices of a request that was asked again answer nothing.
+        byId.staleNotices = await friendService.staleNoticeIds({ userId: mine[0].userId, itemIds: mine.map(row => row.id) });
+        return byId;
     }
 
     _presentFriend(row, friendById) {
@@ -422,9 +433,10 @@ class InboxService {
             requesterAvatar: request.requesterAvatar,
             addresseeId: request.addresseeId,
             addresseeName: request.addresseeName,
-            // Only the addressee's copy offers Accept / Decline, and only
-            // while the request is still open.
-            actionable: request.status === 'pending' && request.addresseeId === row.userId,
+            // Only the addressee's copy offers Accept / Decline, only while
+            // the request is still open, and only on its current notice.
+            actionable: request.status === 'pending' && request.addresseeId === row.userId
+                && !friendById.staleNotices?.has(Number(row.id)),
             respondedAt: request.respondedAt
         };
     }

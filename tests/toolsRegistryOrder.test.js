@@ -18,8 +18,10 @@ describe('toolsRegistry catalog', () => {
         expect(TOOL_ORDER[TOOL_ORDER.length - 1]).toBe('executePlan');
         expect(TOOL_ORDER).toContain('consultDocs');
         expect(TOOL_ORDER).toContain('noteCapabilityGap');
-        expect(TOOL_ORDER).toHaveLength(54);
-        expect(new Set(TOOL_ORDER).size).toBe(54);
+        expect(TOOL_ORDER.slice(TOOL_ORDER.indexOf('watchFor') + 1, TOOL_ORDER.indexOf('watchFor') + 4))
+            .toEqual(['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork']);
+        expect(TOOL_ORDER).toHaveLength(57);
+        expect(new Set(TOOL_ORDER).size).toBe(57);
     });
 
     test('getDefinitions preserves that order after gating', async () => {

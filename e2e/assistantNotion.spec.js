@@ -42,8 +42,13 @@ async function granted(page, link) {
     });
     expect(drafted.ok(), await drafted.text()).toBe(true);
     const { responsibility } = await drafted.json();
+    // Turning it on takes the person's confirmation receipt for the revision shown (ADR 0023).
+    const confirmation = await page.request.post('/api/app/assistant/confirmations', {
+        data: { subject: 'responsibility', id: responsibility.id, action: 'activate', revision: responsibility.revision, surface: 'portal' }
+    });
+    expect(confirmation.ok(), await confirmation.text()).toBe(true);
     const activated = await page.request.post(`/api/app/assistant/responsibilities/${responsibility.id}/actions`, {
-        data: { action: 'activate', expectedRevision: responsibility.revision }
+        data: { action: 'activate', expectedRevision: responsibility.revision, receipt: (await confirmation.json()).receipt }
     });
     expect(activated.ok(), await activated.text()).toBe(true);
     return responsibility;

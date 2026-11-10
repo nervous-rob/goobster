@@ -397,7 +397,7 @@ const GROUPS = [
             'notionService',
             'assistantControlService',
             'assistantEvaluation',
-            'assistantGateDecisions',
+            'assistantGateDecisions', 'assistantConversation',
             'assistantDeliveryService',
             'assistantHomeService',
             'assistantIncidentService',

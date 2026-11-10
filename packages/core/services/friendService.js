@@ -27,6 +27,8 @@ const identityConfig = require('../config/identityConfig');
 const { discord } = require('../utils/optionalModule');
 
 const SOURCE_TYPE = 'friend_request';
+/** The Inbox kind of the addressee's "wants to be friends" notice. */
+const NOTICE_KIND = 'invite';
 const BUTTON_TYPE = 'friendreq';
 const STATUSES = ['pending', 'accepted', 'declined', 'cancelled', 'removed'];
 const MAX_NAME_LENGTH = 64;
@@ -585,6 +587,33 @@ class FriendService {
         return map;
     }
 
+    /**
+     * Of one person's Inbox items, the ids that are not a request's current
+     * notice. The friendship row is reused when the same two people ask
+     * again, and each ask files its own notice, so only the newest "wants to
+     * be friends" item stands for the open request; an earlier one, and the
+     * "accepted your request" note from a time the roles were reversed, do not.
+     * @returns {Promise<Set<number>>}
+     */
+    async staleNoticeIds({ userId, itemIds }) {
+        const ids = [...new Set((itemIds || []).map(Number).filter(Number.isInteger))];
+        const stale = new Set();
+        if (!userId || ids.length === 0) return stale;
+        const params = { userId: String(userId), sourceType: SOURCE_TYPE, kind: NOTICE_KIND };
+        const marks = ids.map((id, index) => { params[`id${index}`] = id; return `@id${index}`; });
+        const rows = await db.all(
+            `SELECT o.id FROM inbox_items o
+             WHERE o.userId = @userId AND o.sourceType = @sourceType AND o.id IN (${marks.join(', ')})
+               AND (o.kind <> @kind OR EXISTS (
+                   SELECT 1 FROM inbox_items n
+                   WHERE n.userId = o.userId AND n.sourceType = o.sourceType AND n.sourceId = o.sourceId
+                     AND n.kind = @kind AND n.id > o.id))`,
+            params
+        );
+        for (const row of rows) stale.add(Number(row.id));
+        return stale;
+    }
+
     // --- Discord buttons ------------------------------------------------------
 
     /**
@@ -866,7 +895,7 @@ class FriendService {
         try {
             const delivery = await require('./inboxService').deliver({
                 userId: row.addresseeId,
-                kind: 'invite',
+                kind: NOTICE_KIND,
                 title: `${requesterName} wants to be friends`,
                 body: 'Accept and you will see each other in the portal and can send each other messages. '
                     + 'Decline and they are not told.',

@@ -665,10 +665,12 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; five items are available** (answering a request on Home
-and in the Inbox, "Reaching you", repository work, findings shared with a
-project, and "For the host" at the end of this section, each marked below);
-nothing else here is. Increments DA-7 through
+**Status: planned; six items are available** (answering a request on Home
+and in the Inbox; "Delegating and steering by conversation" in portal chat
+and DMs, apart from the items marked planned below, see
+[delegated_conversation.md](delegated_conversation.md); "Reaching you";
+repository work; findings shared with a project; and "For the host" at the
+end of this section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -677,7 +679,9 @@ DA-12. The technical contracts are in
 - Saying what you want looked after, in chat or by voice, produces a
   **draft** shown back to you: what it would look after, exactly what it
   could do, until when, and whether it would start work by itself. Nothing
-  is active until you confirm that card.
+  is active until you confirm that card. **Available in chat**; the card
+  and its confirmation are in the portal (a Discord DM is pointed there),
+  and by voice is planned.
 - The assistant asks for the narrowest authority that covers the request
   and says what it left out ("I have not asked to edit files").
 - You can ask what it is working on, why it did something, what it changed,
@@ -689,8 +693,8 @@ DA-12. The technical contracts are in
   what it will change. **Available on Home and in the Inbox** for a friend
   request, a request to join, a mission plan to approve or start and a
   process that may no longer be needed
-  ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown));
-  the notification and chat are planned.
+  ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)),
+  **and from a card in portal chat**; the notification is planned.
 - A spoken briefing tells you what needs you and what changed. Hearing it
   does not mark anything reviewed.
 

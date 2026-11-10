@@ -762,6 +762,7 @@ class PrivacyService {
             counts.assistantMessageLabels = forgottenResponsibilities.messageLabels;
             counts.assistantUpdates = forgottenResponsibilities.updates;
             counts.assistantUpdateReceipts = forgottenResponsibilities.receipts;
+            counts.assistantConfirmationReceipts = forgottenResponsibilities.confirmationReceipts;
             counts.processContracts = forgottenResponsibilities.processContracts;
             counts.processObservations = forgottenResponsibilities.processObservations;
             // Process incidents and the processes named in them.
@@ -1314,6 +1315,7 @@ class PrivacyService {
             assistant_source_cursors: responsibilities.cursors,
             assistant_updates: responsibilities.updates,
             assistant_update_receipts: responsibilities.receipts,
+            assistant_confirmation_receipts: responsibilities.confirmationReceipts,
             assistant_process_contracts: responsibilities.processContracts,
             assistant_process_observations: responsibilities.processObservations,
             assistant_process_incidents: responsibilities.incidents,
