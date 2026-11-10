@@ -6,6 +6,7 @@ import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, Respons
 import type { AdminAssistantView, AssistantCapField } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 import type { GateDecisionCard, GateDecisionResult, GateSurface } from './types';
+import type { AssistantAccess } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -437,6 +438,8 @@ export const api = {
         request<{ responsibility: Responsibility }>('/api/app/assistant/responsibilities', { method: 'POST', body }),
     responsibilityAction: (id: number, action: string, expectedRevision: number) =>
         request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
+    /** What the host's policy means for this person: pilot capabilities and budget defaults. */
+    assistantAccess: () => request<AssistantAccess>('/api/app/assistant/access'),
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),
     initiativeAction: (id: number, action: string, expectedRevision: number) =>
         request<{ initiative: AssistantInitiative }>(`/api/app/assistant/initiatives/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),

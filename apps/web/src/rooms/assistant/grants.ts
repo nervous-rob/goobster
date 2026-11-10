@@ -41,6 +41,21 @@ function describeResource(entry: ResponsibilityOperation, projects: Map<string, 
     }
 }
 
+/** Pushes and pull requests a day when a responsibility sets no `externalOperations` (delegated_runs.md). */
+export const DEFAULT_EXTERNAL_OPERATIONS = 2;
+export const MAX_EXTERNAL_OPERATIONS = 20;
+
+/** True when the grant lets work leave this installation (a push, a pull request). */
+export function reachesGitHub(operations: ResponsibilityOperation[]): boolean {
+    return operations.some((entry) => entry.operation === 'repo.push' || entry.operation === 'pr.create');
+}
+
+/** How many pushes and pull requests a day the responsibility allows. */
+export function externalOperationsPerDay(budgets: Record<string, number> | undefined): number {
+    const set = budgets?.externalOperations;
+    return Number.isInteger(set) ? Math.min(set as number, MAX_EXTERNAL_OPERATIONS) : DEFAULT_EXTERNAL_OPERATIONS;
+}
+
 /** "read, research the web · add generated notes in your knowledge" */
 export function describeGrants(operations: ResponsibilityOperation[], projects: Map<string, Project>): string[] {
     const byResource = new Map<string, string[]>();
