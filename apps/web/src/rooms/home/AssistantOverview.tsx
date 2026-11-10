@@ -7,6 +7,7 @@ import { formatRelativeTime } from '../../lib/atmosphere';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
+import { GateDecision } from '../../components/GateDecision';
 import type {
     AssistantAction, AssistantBriefItem, AssistantComponent, AssistantHome, AssistantNeedsYouItem
 } from '../../lib/types';
@@ -17,9 +18,12 @@ import type {
  * Everything here is read from records: the status line is derived from
  * counts, never generated. Loading or scrolling this marks nothing read;
  * "Mark reviewed" acknowledges exactly the revisions it lists and never
- * resolves a request. Unseen updates, open requests, running work and
- * blocked processes are separate, separately-labelled numbers. A count the
- * server could not read is shown as unknown, not as zero.
+ * resolves a request. A request whose kind can be decided in place carries
+ * its decision card, rendered by <GateDecision> exactly as the Inbox renders
+ * it; any other request links to where it is decided. Unseen updates, open
+ * requests, running work and blocked processes are separate,
+ * separately-labelled numbers. A count the server could not read is shown as
+ * unknown, not as zero.
  */
 
 const COMPONENT_META: Record<AssistantComponent['id'], { label: string; mark: string; to: string; what: string }> = {
@@ -103,7 +107,9 @@ function NeedsYouRow({ item }: { item: AssistantNeedsYouItem }) {
                 <span className="badge">{(item.request && REQUEST_LABEL[item.request]) || 'Needs you'}</span>{' '}
                 <strong>{item.title}</strong>
                 {!item.read && <span className="inbox-dot" aria-label="unread" />}
-                {item.body && <div className="hint">{item.body}</div>}
+                {/* A decision states what it changes; the notice's own text would say it twice. */}
+                {item.body && !item.decision?.detail && <div className="hint">{item.body}</div>}
+                {item.decision && <GateDecision card={item.decision} surface="home" />}
             </div>
             <div className="assistant-row-actions">
                 {target && <Link to={target as never} className="btn subtle">Open →</Link>}

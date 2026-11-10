@@ -353,6 +353,7 @@ All routes act as the signed-in person. Another person's responsibility answers
 | `GET /api/app/assistant/updates` | Updates you can see, newest first (`?component=`, `?responsibilityId=`, `?limit=` up to 50, `?cursor=`). The first page also returns `counts` (`unseen`, `needsAction`, `complete`) and per-component counts. A cursor belongs to the person it was issued to. |
 | `POST /api/app/assistant/updates/acknowledge` | `{ items: [{ id, revision }] }`, up to 100 items. Each result is `acknowledged`, `older_revision` or `not_found`. |
 | `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
+| `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface }`: decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
 | `GET /api/app/assistant/processes` | Your recurring processes and whether each has a contract. |
 | `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations and existing delivery history. |
 | `PUT /api/app/assistant/processes/:kind/:id/contract` | Create or replace its contract (`expectedRevision` to replace). |

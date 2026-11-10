@@ -523,6 +523,15 @@ class AssistantUpdateService {
     }
 
     /**
+     * The stored row of one update this person can see, or null. For
+     * services that act on the update's gate (assistantGateService).
+     */
+    async rowFor({ userId, id }) {
+        const clean = positiveId(id);
+        return userId && clean ? this._visibleRow(userId, clean) : null;
+    }
+
+    /**
      * Acknowledge exact revisions. Idempotent; acknowledging an older
      * revision never clears a newer one; an id the person cannot see is
      * reported as not found, never acknowledged.

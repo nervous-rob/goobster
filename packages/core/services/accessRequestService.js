@@ -143,7 +143,7 @@ class AccessRequestService {
 
     /**
      * Approve: grant the account, close the request, tell the person.
-     * @param {{ id: number|string, resolvedBy: string, gateway?: object|null, via?: 'host'|'inbox'|'discord' }} params
+     * @param {{ id: number|string, resolvedBy: string, gateway?: object|null, via?: 'host'|'inbox'|'home'|'chat'|'discord' }} params
      */
     async approve({ id, resolvedBy, gateway = null, via = 'host' }) {
         const identity = require('./identityService');
