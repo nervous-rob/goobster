@@ -35,6 +35,7 @@ the responsibility:
 | Start one research expedition (`startResearch`) | `research` on `web` **and** `kg.generated.add` on `knowledge` |
 | Search Goobster's public documentation (`consultDocs`) | nothing |
 | Report its result (`finish`) | nothing |
+| Report the result of a plan step (`reportStepResult`, only in a run that carries out a plan step, where it replaces `finish`) | `plan.step.execute` on that `project` |
 
 Before each call the run asks `authorize()` whether the responsibility
 covers it, as you, right now. A call that is not covered is refused and
@@ -69,6 +70,21 @@ anything, push to a repository or change a note you wrote.
   project's history.
 - A sandbox run is an ordinary project job (no network), visible under the
   project's Runs with `startedBy = assistant`.
+
+- **Private knowledge does not flow into a shared project.** Once a run
+  has read your private knowledge (`lookupNotes`, `listGeneratedNotes`), a
+  call that writes into the project (`writeProjectFile`, `runProjectFile`)
+  is refused with `PRIVATE_CONTEXT`, unless the project is yours alone (you
+  own it, it has no members and no share link).
+
+### Plan steps
+
+A responsibility that grants `plan.step.execute` on its project carries out
+the *assistant* steps of that project's plan, once a person has approved and
+started the plan. Such a run is told the plan and the one step, ends with
+`reportStepResult`, and the step is marked done only after the files it had
+to produce were checked. It never approves, starts or completes a plan. See
+[delegated_plan_steps.md](delegated_plan_steps.md).
 
 ### Research expeditions
 
@@ -138,6 +154,7 @@ for model capacity.
 | waiting (`CHILD_PENDING`) | Its research expedition is still working. |
 | waiting (`ASSISTANT_PAUSED`) | The host stopped all delegated work. It continues when they resume it. |
 | needs review (`OPERATION_UNCERTAIN`) | After an interruption, a file write or sandbox run may or may not have happened and the run could not tell. Check the project, then *Try again* or dismiss. |
+| failed (`INTERRUPTED_BY_RESTORE`) | The installation was restored from a backup while the run was working. It is not resumed. A step in progress may or may not have happened: check, then *Try again* starts a new attempt. |
 
 **A crash or restart does not repeat work.** Every step is written to a
 journal before and after it happens. The interrupted work goes back to
@@ -151,6 +168,20 @@ from the journal instead of doing them again. For a step that was in flight:
   being written it counts as done, otherwise the run stops for your review;
 - a sandbox run and an expedition carry the step's id: if a job or
   expedition with that id exists it is adopted, never started twice.
+
+**A restore from a backup is different: it never resumes work.** A run that
+was working when the backup was taken comes back *failed* with
+`INTERRUPTED_BY_RESTORE`, together with its piece of work, and gets one
+failure record in the work ledger (`assistant_run`, code only). That covers
+a run in flight, a run waiting to resume after a restart, and work a runner
+had claimed but not yet opened. Nothing requeues it: the lease is cleared,
+and only your own *Try again* starts a new attempt with a new journal. Work
+that was queued, proposed or waiting (on a budget, an expedition, the host's
+stop or you) was not in flight and is left as it was; it continues once the
+host resumes the paused installation
+([backup_and_restore.md](backup_and_restore.md)) and, for work the host's
+stop-all had halted, delegated work
+([delegated_operations.md](delegated_operations.md)).
 
 ## What is stored
 
@@ -173,7 +204,8 @@ finished. Failure records in the work ledger hold a code only.
 - `POST /api/app/assistant/initiatives/:id/actions` -
   `{ action: queue | cancel | retry, expectedRevision }` (unchanged).
 
-Design and reasons: [ADR 0018](adr/0018-delegated-runs.md).
+Design and reasons: [ADR 0018](adr/0018-delegated-runs.md); for plan steps,
+[ADR 0019](adr/0019-delegated-plan-steps.md).
 
 ## Measuring a model
 
@@ -189,7 +221,9 @@ the model did, with that version and the model used. It is not part of
 
 Editing notes you saved, connecting or archiving notes, repository work
 (commit, push, pull requests), acting on processes, findings shared with a
-project's members, and work that carries a project plan forward (DA-4).
+project's members, and work recognized by a model from what was said in a
+conversation. Requests you address to Goobster in a conversation are built:
+see [delegated_conversation_requests.md](delegated_conversation_requests.md).
 When repository work, saved-note edits and outside connectors arrive they
 start with the installation's owner only
 ([the pilot gate](delegated_operations.md#the-pilot-gate)).

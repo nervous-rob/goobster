@@ -10,6 +10,7 @@ import { useMe } from '../hooks/useSession';
 import { Markdown } from '../components/Markdown';
 import { MenuButton } from '../shell/MenuButton';
 import { failureKindLabel } from '../components/WorkLedger';
+import { GateDecision } from '../components/GateDecision';
 import type { InboxItem, InboxKind } from '../lib/types';
 
 /**
@@ -120,7 +121,9 @@ function FailureLink({ item }: { item: InboxItem }) {
  * The host's copy of "X is asking to join": Approve grants the account in
  * one click (the same click as the Discord DM button); Decline closes it.
  * Once resolved - here, from the DM, or from Host -> Accounts - the row
- * shows the outcome instead.
+ * shows the outcome instead. When the item carries a decision card the
+ * buttons come from <GateDecision>; these are the ones an installation
+ * without the Delegated assistant feature keeps.
  */
 function AccessDecision({ item, onResolved }: { item: InboxItem; onResolved: () => Promise<unknown> }) {
     const toast = useToast();
@@ -148,6 +151,7 @@ function AccessDecision({ item, onResolved }: { item: InboxItem; onResolved: () 
     }
 
     if (access.actionable) {
+        if (item.decision) return null;
         return (
             <div className="inbox-access" data-testid="inbox-access-decision" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <button type="button" className="btn primary small" disabled={busy !== null} onClick={() => void resolve('approve')}>
@@ -201,6 +205,7 @@ function FriendDecision({ item, onResolved }: { item: InboxItem; onResolved: () 
     }
 
     if (friend.actionable) {
+        if (item.decision) return null;
         return (
             <div className="inbox-access" data-testid="inbox-friend-decision" style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                 <button type="button" className="btn primary small" disabled={busy !== null} onClick={() => void resolve('accept')}>
@@ -418,6 +423,7 @@ export function InboxRoom() {
                                         </div>)}
                                         <AttentionDelivery item={item} />
                                         <FailureLink item={item} />
+                                        {item.decision && <GateDecision card={item.decision} surface="inbox" />}
                                         <AccessDecision item={item} onResolved={async () => {
                                             await invalidate();
                                             await queryClient.invalidateQueries({ queryKey: ['admin-accounts'] });

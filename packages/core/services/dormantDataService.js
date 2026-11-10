@@ -101,7 +101,24 @@ async function forgetProjectMissions(userId) {
     const missions = (await db.run(
         'DELETE FROM project_missions WHERE userId = @userId', { userId }
     )).changes;
-    return { missions, decisions };
+    // What the person's delegated assistant left on plans they do not own
+    // (ADR 0019): the evidence links of its runs go with the runs, and the
+    // steps it carried out lose the link to the person, the run and the
+    // grant. A step it still held goes back to READY.
+    const delegatedEvidence = (await db.run(
+        "DELETE FROM project_mission_evidence WHERE userId = @userId AND kind = 'agent_run'", { userId }
+    )).changes;
+    const delegatedSteps = (await db.run(
+        `UPDATE project_mission_steps
+         SET status = CASE WHEN status IN ('STARTING', 'RUNNING') THEN 'READY' ELSE status END,
+             startedAt = CASE WHEN status IN ('STARTING', 'RUNNING') THEN NULL ELSE startedAt END,
+             authorizationKind = CASE WHEN status IN ('STARTING', 'RUNNING') THEN NULL ELSE authorizationKind END,
+             executionAttemptId = NULL, startedByUserId = NULL, agentRunId = NULL,
+             grantResponsibilityId = NULL, grantRevision = NULL, updatedAt = datetime('now')
+         WHERE authorizationKind = 'delegated' AND startedByUserId = @userId`,
+        { userId }
+    )).changes;
+    return { missions, decisions, delegatedSteps, delegatedEvidence };
 }
 
 /**
@@ -371,9 +388,11 @@ async function forgetAssistantResponsibilities(userId) {
              WHERE responsibilityId = @id AND (actingUserId = @userId OR payerUserId = @userId)`,
             { id: row.id, userId }
         );
+        // The origin of a conversation request names its speaker, the acting person.
         await db.run(
             `UPDATE assistant_initiatives SET
                 actingUserId = CASE WHEN actingUserId = @userId THEN NULL ELSE actingUserId END,
+                originJson = CASE WHEN actingUserId = @userId THEN NULL ELSE originJson END,
                 status = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'CANCELLED' ELSE status END,
                 stopCode = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN 'PRINCIPAL_ERASED' ELSE stopCode END,
                 endedAt = CASE WHEN status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') THEN @now ELSE endedAt END,

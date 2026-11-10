@@ -205,6 +205,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Updating an installation (the update policy, staged apply, the handoff, schema fingerprint, rollback and recovery, `goobster-manager update`) | `documentation/manager_update.md` |
 | Operator runbooks (install, first owner, features, service ownership, ports, backup and restore, migration and rollback, update, uninstall; the open owner decisions) | `documentation/operator_runbooks.md` |
 | Installing with the installers: Linux (`.run`, AppImage, systemd, adopting a Pi), Windows (NSIS `.exe`, the Windows service), macOS (`.pkg`, per-user archive, launchd) | `documentation/linux_install.md`, `documentation/windows_install.md`, `documentation/macos_install.md` |
+| Pinned bootstrap build tools (appimagetool, the AppImage runtime, WinSW): Goobster's mirror, taking a newer upstream build, rolling back | `documentation/bootstrap_tools.md` |
 | The manager (states, store, setup engine, recovery, adoption), install/adopt/repair/uninstall kinds and the headless CLI, the wizard and the Host room pages | `documentation/manager.md`, `documentation/manager_install.md`, `documentation/setup_wizard.md`, `documentation/host_operations.md` |
 | Feature catalog (every feature, its dependencies, keys and system tools), feature state (`data/features.json`), configuration reference | `documentation/features.md`, `documentation/feature_state.md`, `documentation/config_reference.md` |
 | Choosing SQLite or PostgreSQL, connecting an existing server, PostgreSQL in Docker or native on the host, both owned by the installer | `documentation/database_connection.md`, `documentation/docker_postgres.md`, `documentation/native_postgres.md` |
@@ -596,7 +597,7 @@ notification webhook, whether to require green CI before deploying). See
 triggers for near-instant deploys.
 
 **Production should set `GOOBSTER_REQUIRE_CI=true`.** Combined with a
-GitHub ruleset that requires both `test (sqlite)` and `test (postgres)`
+GitHub ruleset that requires the `both engines` check
 on `main`, that is the difference between “merged” and “merged and
 green on both engines.” The script defaults to off so an unconfigured
 box still deploys; the default is not a recommendation.
@@ -660,9 +661,11 @@ npm run docs:check        # every doc parses for the self-knowledge corpus
 npm run typecheck:web && npm run build:web
 ```
 
-CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck, the web
-build, and the named Jest groups on **both** engines, plus a separate
-`test (playwright)` job. A change must pass on both database engines. Live
+CI (`.github/workflows/ci.yml`) runs lint, smoke, typecheck and the web
+build once, and the named Jest groups on **both** engines in parallel
+shards, plus the Playwright journeys in parallel shards (reported together
+as `test (playwright)`). A change must pass on both database engines; the
+`both engines` check covers every shard. Live
 provider tests run on trusted `main` pushes and manual dispatch; they
 skip when secrets are absent and never replace mocked coverage.
 

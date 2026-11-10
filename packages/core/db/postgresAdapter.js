@@ -168,6 +168,23 @@ const CONSTRAINT_MIGRATIONS = [
         add: `CHECK (status IN ('PENDING', 'READY', 'STARTING', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED'))`
     },
     {
+        // ADR 0019: steps a delegated run carries out.
+        table: 'project_mission_steps',
+        reason: 'the agent step kind',
+        type: 'c',
+        matches: def => def.includes("'expedition'") && def.includes("'human'"),
+        isCurrent: def => def.includes("'agent'"),
+        add: `CHECK (kind IN ('expedition', 'job', 'watch', 'human', 'agent'))`
+    },
+    {
+        table: 'project_mission_evidence',
+        reason: 'the agent_run evidence kind',
+        type: 'c',
+        matches: def => def.includes("'claim'") && def.includes("'artifact'"),
+        isCurrent: def => def.includes("'agent_run'"),
+        add: `CHECK (kind IN ('claim', 'note', 'job', 'artifact', 'agent_run'))`
+    },
+    {
         table: 'pending_integration_actions',
         reason: 'the EXECUTING approval status',
         type: 'c',

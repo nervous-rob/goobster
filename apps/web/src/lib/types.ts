@@ -369,6 +369,12 @@ export type InboxItem = {
     update?: InboxUpdateRef | null;
     /** A typed, still-open request for this person. Independent of `read`. */
     needsAction?: boolean;
+    /**
+     * What this person can decide right here, when the request's kind can be
+     * decided in place. Null when it is decided where it lives, is settled,
+     * or the Delegated assistant feature is off.
+     */
+    decision?: GateDecisionCard | null;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -388,6 +394,23 @@ export type InboxUpdateRef = {
     gate: AssistantGate | null; gateOpen: boolean; snoozedUntil: string | null;
 };
 
+/**
+ * The decision card of one request (documentation/assistant_home.md, "Deciding
+ * a request where it is shown"). Home, the Inbox and a chat card render the
+ * same card and post the same decision; `occurrence` and `revision` name the
+ * card, so one that has changed is refused instead of applied.
+ */
+export type GateDecisionOption = { id: string; label: string; effect: string | null; danger: boolean };
+export type GateDecisionCard = {
+    ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
+    occurrence: number; revision: string; options: GateDecisionOption[];
+};
+export type GateSurface = 'home' | 'inbox' | 'chat' | 'project';
+export type GateDecisionResult = {
+    decided: { ref: string; kind: string; option: string; message: string };
+    current: GateDecisionCard | null;
+};
+
 export type AssistantComponentState = 'needs_you' | 'blocked' | 'working' | 'updates' | 'quiet' | 'unknown' | 'unavailable';
 export type AssistantComponent = {
     id: 'knowledge' | 'research' | 'projects' | 'processes' | 'conversations';
@@ -403,6 +426,7 @@ export type AssistantHomeResponsibility = {
 export type AssistantNeedsYouItem = {
     inboxItemId: number; kind: InboxKind; title: string; body: string | null; link: string | null; read: boolean;
     createdAt: string; update: InboxUpdateRef | null; request: string | null;
+    decision: GateDecisionCard | null;
 };
 export type AssistantBriefItem = {
     id: number; revision: number; kind: string; title: string; summary: string | null; componentIds: string[];
@@ -428,6 +452,8 @@ export type ResponsibilityOperation = { operation: string; resource: { kind: str
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
     projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
+    /** `sources` names where it listens for requests: `project_chat`, `parlor` (delegated_conversation_requests.md). */
+    scopes?: { sources?: string[]; audience?: string };
     budgets: Record<string, number>; rules?: { autoStart?: boolean; interruption?: string; stopCondition?: string }; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
 };
 export type AssistantRun = {
@@ -438,7 +464,46 @@ export type AssistantInitiative = {
     id: number; responsibilityId: number; title: string; reason: string | null; status: string; waitReason: string | null;
     outcome: string | null; stopCode: string | null; revision: number; attempt: number; recheckAfter: string | null;
     createdAt: string; updatedAt: string; run: AssistantRun | null;
+    /** Set when this work carries out an agent step of a project plan (ADR 0019). */
+    planStep?: { id: number; planRevision: number } | null;
+    /**
+     * Set when the person asked for this in a conversation. The excerpt and
+     * link are read under their current access: `available` is false once
+     * the message or the conversation is out of their reach.
+     */
+    origin?: AssistantInitiativeOrigin | null;
+    /** What replaced a superseded attempt: `parlor:<conversation>:<message>` or `plan:<plan id>`. */
+    supersededBy?: string | null;
 };
+export type AssistantInitiativeOrigin = {
+    kind: 'parlor_message'; surface: 'project' | 'parlor'; conversationId: number; messageId: number;
+    available: boolean; conversationTitle: string | null; excerpt: string | null; link: string | null;
+};
+
+/**
+ * One card of a project's Needs-you board (documentation/assistant_home.md,
+ * "Project boards"). `mine` is false for a request addressed to the
+ * project's owner; `gate` and `decision` are the same reference and card
+ * Home and the Inbox carry, present once the request is in the Inbox.
+ */
+export type ProjectBoardCard = {
+    id: string;
+    column: 'approve' | 'answer' | 'unblock' | 'review' | 'assistant' | 'setup' | string;
+    title: string;
+    detail?: string | null;
+    projectSlug?: string;
+    projectName?: string;
+    ownerId?: string;
+    choices?: Array<{ id: string; label: string }>;
+    mine?: boolean;
+    waitingOn?: 'owner' | null;
+    gate?: { ref: string; inboxItemId: number | null; unseen: boolean; snoozedUntil: string | null } | null;
+    decision?: GateDecisionCard | null;
+    /** Assistant plan steps only. */
+    state?: 'proposed' | 'waiting' | 'undelegated';
+    initiativeId?: number | null;
+};
+export type ProjectBoard = { cards: ProjectBoardCard[]; text: string; canonical?: boolean };
 export type ResponsibilityVocabulary = {
     statuses: string[]; actions: string[];
     operations: Array<{ id: string; resourceKinds: string[]; action: string }>;

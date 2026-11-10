@@ -158,7 +158,12 @@ stored — they are derived from disk + assets. Portal:
 approve a draft mission, answer multiple-choice human steps, unblock
 failed steps, complete a review, and setup findings. Portal Observatory
 list shows a **Needs you** board (filterable); tool action `needs-you`
-returns the same cards. Human steps may carry
+returns the same cards. With the delegated assistant installed the board is
+a read over the same requests Home and the Inbox show: a plan approval can
+be decided on the card, a request addressed to a project's owner is shown to
+its members as waiting on the owner, and ready assistant steps that wait on
+you have their own column
+([assistant_home.md](assistant_home.md#project-boards)). Human steps may carry
 `actionParams.choices` (portal radios / `selectedId` on complete). This
 stays on Missions + Observatory — not a new room.
 
@@ -1004,7 +1009,9 @@ the `observatory` tool's `mission` and `run` actions, `MissionTab` and the
 - **Now** (Overview, `GET /api/app/projects/:slug/now`) gathers what is
   happening and what needs a person in one read: running runs, the latest
   settled run when it failed (with its stderr tail, Ask Goobster why and
-  Run again), needs-you items for this project, each clone's branch, sync,
+  Run again), needs-you items for this project (the same board, filtered to
+  the project, with the decision buttons where a request has them), each
+  clone's branch, sync,
   any merge or rebase stopped on conflicts, CI and open pull request (a few
   seconds at most per clone, best effort), whether `GOOBSTER.md` exists,
   and the last thing Goobster said in the project's conversations. Each
@@ -1339,6 +1346,7 @@ identifier stays `mission` everywhere below; only the visible word is Plan.
 - Tool: observatory action `mission` (`missionAction`: propose / get /
   update / add_step / start_step / complete_step / add_evidence /
   review / cancel). Approval, start, and complete are human-only.
+  `stepKind=agent` with `artifacts=` adds an assistant step.
 - Portal: the **Plan** view on a project (`/projects/:owner/:slug/plan`;
   the older `mission` segment still opens it), plus the open plan and its
   next action on Overview
@@ -1363,7 +1371,18 @@ the slot.
   predicate); a zero-row update throws so `addStep` cannot race
   `start()`. Adding or editing steps after approval clears the
   approval and returns the mission to `DRAFT`.
-- Steps of four kinds: `expedition`, `job`, `watch`, `human`. Execution
+- Steps of five kinds: `expedition`, `job`, `watch`, `human`, `agent`.
+  An `agent` step (shown as *assistant*) is never started by a person
+  (`AGENT_STEP_DELEGATED`): a delegated responsibility that grants
+  `plan.step.execute` on the project carries it out, only in the plan
+  revision a person approved and started, and it is marked done only
+  after the files it names were checked. Its child is an
+  `assistant_runs` row (`agentRunId`, attempt key `assistant_run:<id>`),
+  its authorization is recorded on the step (`authorizationKind`,
+  `grantResponsibilityId`, `grantRevision`), never as a confirmation
+  receipt, and its budget is `maxAgentRuns` (default 3). See
+  [delegated_plan_steps.md](delegated_plan_steps.md) and
+  [ADR 0019](adr/0019-delegated-plan-steps.md). For the other kinds, execution
   is `READY → STARTING → RUNNING` with an attempt key written onto the
   child job / expedition / watch. Expeditions are created as `DRAFT`,
   linked, then dispatched. `reconcileStartingSteps` runs on bot/api
@@ -1375,7 +1394,9 @@ the slot.
   linked child as its launching owner (project membership already
   authorized the mission action).
 - Evidence links to claims, project notes, jobs, and assets (`for` /
-  `against` / `neutral`, optionally tied to a criterion). Automatic
+  `against` / `neutral`, optionally tied to a criterion). A delegated
+  step links its own kind, `agent_run`, always `neutral`; people and the
+  chat tool cannot link that kind. Automatic
   rollup is `supported` / `contested` / `unassessed` (deduped links;
   claims must be on this project unless explicitly imported).
   `met` / `unmet` / `mixed` are reserved for the human review.

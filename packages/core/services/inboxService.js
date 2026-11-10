@@ -444,6 +444,13 @@ class InboxService {
         };
     }
 
+    /** The open decision card for an item whose request is still waiting on this person. */
+    async _decisionFor(row, update) {
+        const gates = requireOptional('./assistantGateService', { feature: 'assistant' });
+        if (!gates) return null;
+        return gates.cardForInboxItem({ userId: row.userId, item: row, update });
+    }
+
     async _publicItem(row, noticeById = null, failureById = null, accessById = null, friendById = null, updateByItem = null) {
         let attention = null;
         if (row.sourceType === activityCorrelation.SOURCE_TYPE) {
@@ -454,6 +461,9 @@ class InboxService {
         const access = this._presentAccess(row, accessById || await this._accessByIdForRows([row]));
         const friend = this._presentFriend(row, friendById || await this._friendByIdForRows([row]));
         const update = this._presentUpdate(row, updateByItem || await this._updatesByItemForRows([row], row.userId), utcNow());
+        const decision = (update?.gateOpen || access?.actionable || friend?.actionable)
+            ? await this._decisionFor(row, update)
+            : null;
         return {
             id: row.id,
             kind: row.kind,
@@ -482,6 +492,12 @@ class InboxService {
             // from the domain record, never from read state. A snoozed gate
             // is still open; it only leaves the default Needs-you view.
             needsAction: Boolean((update?.gateOpen && !update.snoozedUntil) || access?.actionable || friend?.actionable),
+            // What this person can decide right here, when the request's kind
+            // has a decision descriptor (assistantGateService): the options,
+            // what each changes, and the occurrence and revision a decision
+            // must carry. Null when the request is decided where it lives, is
+            // settled, or the Delegated assistant feature is off.
+            decision,
             ask: await require('./conversationContextService').describeItem(row),
             attachments: await this._attachmentsForItem(row),
             read: Boolean(row.readAt),

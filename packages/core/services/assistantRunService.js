@@ -3,9 +3,10 @@
  * shared agent loop, under the responsibility's grant.
  *
  * What makes a run safe to leave unattended:
- *  - The model is offered a fixed, explicit set of tools (TOOLS below). Each
- *    one names the operation and resource it needs, and `authorize()` is
- *    asked before every call. A tool that is not in the table does not run.
+ *  - The model is offered a fixed, explicit set of tools (TOOLS, one module
+ *    per capability under ./assistant/runTools). Each one names the
+ *    operation and resource it needs, and `authorize()` is asked before
+ *    every call. A tool that is not in the table does not run.
  *  - Every call is journaled in `assistant_run_operations` before it is
  *    dispatched and after it returns. A resumed run replays finished calls
  *    from the journal instead of repeating them; a write left in flight by a
@@ -19,6 +20,14 @@
  *    default, never unlimited. An exhausted budget parks the run until the
  *    window resets; it does not poll.
  *
+ *  - A run that has read the person's private knowledge does not write
+ *    into a project other people can read (`PRIVATE_CONTEXT`).
+ *  - A run dispatched for an `agent` step of a project plan (ADR 0019)
+ *    claims the step only inside the plan revision a person approved and
+ *    started, and the step is marked done only after its reported result
+ *    is verified against the journal and the workspace. See
+ *    ./assistant/planStepRun.js.
+ *
  * It never takes the foreground chat claim (`web_live_turns`).
  * Spec: documentation/delegated_runs.md.
  */
@@ -31,6 +40,7 @@ const workFailureService = require('./workFailureService');
 const assistantConfig = require('../config/assistantConfig');
 const control = require('./assistantControlService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
+const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
 
 /**
  * Used when the responsibility sets no budget of its own (per UTC day), and
@@ -45,14 +55,8 @@ const DEFAULT_BUDGETS = Object.freeze({
 const MAX_ROUNDS = 8;
 const RUN_DEADLINE_MS = 10 * 60 * 1000;
 const REPLY_TOKENS = 1200;
-const RESULT_CHARS = 16_000;
-const SUMMARY_CHARS = 2000;
-const FILE_CHARS = 12_000;
-const WRITE_CHARS = 200_000;
 /** How soon a run waiting on its expedition looks again (events usually wake it sooner). */
 const CHILD_RECHECK_MS = 5 * 60 * 1000;
-
-const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 /** authorize() codes after which the run cannot continue at all. */
 const STOP_CODES = new Set([
@@ -79,11 +83,6 @@ function nextDay(now = new Date()) {
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 5));
 }
 
-function clip(text, max) {
-    const value = String(text ?? '');
-    return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
-
 /** Stable hash of a tool's arguments (key order does not matter). */
 function argsHash(args) {
     const sorted = (value) => {
@@ -97,373 +96,10 @@ function argsHash(args) {
 }
 
 /**
- * The tools a run may be offered. `needs(args, ctx)` returns the operation
- * and resource `authorize()` must allow, or null for a tool that touches
- * nothing of the person's (public docs, the run's own report). `effect`
- * decides crash recovery: a read is safe to repeat, a write is not - unless
- * it is `atomic`: a write to our own database that commits in the same
- * transaction as its journal row, so "in flight" means "did not happen".
+ * The tools a run may be offered: one module per capability under
+ * ./assistant/runTools (the spec contract is described in its index).
  */
-const TOOLS = {
-    searchWeb: {
-        effect: 'read',
-        budget: 'searches',
-        definition: {
-            name: 'searchWeb',
-            description: 'Search the web and return a short sourced summary. Each search counts against a small daily budget; search only for what the task needs.',
-            parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to search for.' } }, required: ['query'] }
-        },
-        needs: () => ({ operation: 'read', resource: { kind: 'web' } }),
-        async run({ query }) {
-            if (!query || typeof query !== 'string') return 'A search query is required.';
-            return require('./perplexityService').search(query);
-        }
-    },
-    lookupNotes: {
-        effect: 'read',
-        definition: {
-            name: 'lookupNotes',
-            description: 'Look up what is already in the person\'s own notes, memories and saved files about a topic.',
-            parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to look up.' } }, required: ['query'] }
-        },
-        needs: () => ({ operation: 'read', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run({ query }, ctx) {
-            return require('../utils/toolsRegistry').execute('lookupNotes', {
-                query: String(query || ''), about: 'me', interactionContext: ctx.interactionContext
-            });
-        }
-    },
-    listProjectFiles: {
-        effect: 'read',
-        definition: {
-            name: 'listProjectFiles',
-            description: 'List one folder of the linked project\'s workspace ("" is the top folder).',
-            parameters: { type: 'object', properties: { dir: { type: 'string', description: 'Workspace-relative folder.' } } }
-        },
-        needs: ({ dir }, ctx) => (ctx.project
-            ? { operation: 'read', resource: { kind: 'project', id: String(ctx.project.id), path: String(dir || '').replace(/\/+$/, '') || undefined } }
-            : { refuse: 'NO_PROJECT' }),
-        async run({ dir }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Projects are not available on this installation.';
-            const listing = await projects.listFiles({
-                userId: ctx.actor, project: ctx.project.slug, owner: ctx.project.ownerId, path: String(dir || '')
-            });
-            const entries = (listing.files || listing.entries || []).slice(0, 200);
-            return entries.length
-                ? entries.map(entry => `${entry.kind === 'directory' ? 'dir ' : 'file'} ${entry.path}${entry.kind === 'directory' ? '/' : ` (${entry.size} bytes)`}`).join('\n')
-                : 'That folder is empty.';
-        }
-    },
-    readProjectFile: {
-        effect: 'read',
-        definition: {
-            name: 'readProjectFile',
-            description: 'Read one text file from the linked project\'s workspace.',
-            parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative file path.' } }, required: ['path'] }
-        },
-        needs: ({ path }, ctx) => (ctx.project
-            ? { operation: 'read', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
-            : { refuse: 'NO_PROJECT' }),
-        async run({ path }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Projects are not available on this installation.';
-            const file = await projects.readWorkspaceFile({
-                userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), purpose: 'portal'
-            });
-            ctx.fileHashes.set(String(path), sha(file.bytes));
-            if (!/^text\/|json|xml|yaml|javascript|markdown/.test(file.mime)) return `That file is ${file.mime}, not text (${file.size} bytes).`;
-            return clip(file.bytes.toString('utf8'), FILE_CHARS);
-        }
-    },
-    writeProjectFile: {
-        effect: 'write',
-        component: 'projects',
-        definition: {
-            name: 'writeProjectFile',
-            description: 'Create or replace one text file in the linked project\'s workspace. To change an existing file, read it with readProjectFile first in this same task; a file that changed since you read it is refused. The previous version stays in the project\'s history.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Workspace-relative file path.' },
-                    content: { type: 'string', description: 'The whole new file.' }
-                },
-                required: ['path', 'content']
-            }
-        },
-        needs: ({ path }, ctx) => (ctx.project
-            ? { operation: 'file.edit', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
-            : { refuse: 'NO_PROJECT' }),
-        async _current(path, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return { missing: true };
-            try {
-                const file = await projects.readWorkspaceFile({
-                    userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), purpose: 'portal'
-                });
-                return { hash: sha(file.bytes) };
-            } catch (error) {
-                if (error?.code === 'NOT_FOUND') return { missing: true };
-                throw error;
-            }
-        },
-        /** After a crash: the file holding exactly this content means the write happened. */
-        async reconcile({ path, content }, ctx) {
-            const current = await this._current(path, ctx);
-            if (!current.missing && current.hash === sha(Buffer.from(String(content ?? '')))) {
-                return { state: 'done', result: `Wrote ${String(path)}.` };
-            }
-            return { state: 'unknown' };
-        },
-        async run({ path, content }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Not written: projects are not available on this installation.';
-            const text = String(content ?? '');
-            if (text.length > WRITE_CHARS) return `Not written: the file is longer than ${WRITE_CHARS} characters.`;
-            const current = await this._current(path, ctx);
-            if (!current.missing) {
-                const seen = ctx.fileHashes.get(String(path));
-                if (!seen) return 'Not written: that file exists. Read it with readProjectFile first.';
-                if (seen !== current.hash) return 'Not written: the file changed since you read it. Read it again before deciding.';
-            }
-            await projects.writeWorkspaceFile({
-                userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), bytes: Buffer.from(text)
-            });
-            ctx.fileHashes.set(String(path), sha(Buffer.from(text)));
-            return `Wrote ${String(path)}.`;
-        }
-    },
-    runProjectFile: {
-        effect: 'write',
-        budget: 'computeSeconds',
-        component: 'projects',
-        definition: {
-            name: 'runProjectFile',
-            description: 'Run one .py, .js or .sh file from the linked project in the sandbox (no network) and return its output. Each run counts against a small daily compute budget.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Workspace-relative file to run.' },
-                    args: { type: 'array', items: { type: 'string' } }
-                },
-                required: ['path']
-            }
-        },
-        needs: ({ path }, ctx) => (ctx.project
-            ? { operation: 'sandbox.run', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
-            : { refuse: 'NO_PROJECT' }),
-        _attempt: (ctx) => `assistant_run:${ctx.run.id}:${ctx.opId}`,
-        /** After a crash: the job row with this attempt id says whether it ran. */
-        async reconcile(_args, ctx) {
-            const job = await db.get(
-                'SELECT id, status, exitCode FROM observatory_jobs WHERE executionAttemptId = @attempt', { attempt: this._attempt(ctx) }
-            );
-            if (!job) return { state: 'absent' };
-            if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status)) {
-                return { state: 'done', result: `Ran as job #${job.id}: ${String(job.status).toLowerCase()} (exit ${job.exitCode ?? '?'}). Its output is in the project's Runs.` };
-            }
-            return { state: 'unknown' };
-        },
-        async run({ path, args }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Not run: projects are not available on this installation.';
-            const started = Date.now();
-            try {
-                const outcome = await projects.runFile({
-                    userId: ctx.actor, project: ctx.project.slug, owner: ctx.project.ownerId, path: String(path || ''),
-                    args: Array.isArray(args) ? args.map(String) : [], background: false,
-                    startedBy: 'assistant', executionAttemptId: this._attempt(ctx)
-                });
-                const result = outcome.result || {};
-                return clip(
-                    `Ran ${String(path)} as job #${outcome.jobId ?? '?'}: ${result.ok ? 'ok' : 'failed'} (exit ${result.exitCode ?? '?'}).\n`
-                    + `stdout:\n${result.stdout || ''}\nstderr:\n${result.stderr || ''}`, RESULT_CHARS
-                );
-            } finally {
-                ctx.compute += Math.max(1, Math.round((Date.now() - started) / 1000));
-            }
-        }
-    },
-    startResearch: {
-        effect: 'write',
-        component: 'research',
-        definition: {
-            name: 'startResearch',
-            description: 'Start one focused research expedition on a topic: it reads sources over several minutes and writes sourced, generated notes. Use it only when a few web searches are not enough. This task pauses until it finishes and then continues with its findings. At most one per task.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    topic: { type: 'string', description: 'What to research (under 200 characters).' },
-                    intent: { type: 'string', description: 'What the person needs to learn from it.' }
-                },
-                required: ['topic']
-            }
-        },
-        // It searches and it writes notes: both must be delegated.
-        needs: () => ({
-            operation: 'research', resource: { kind: 'web' },
-            also: [{ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }]
-        }),
-        _attempt: (ctx) => `assistant_run:${ctx.run.id}:${ctx.opId}`,
-        async _find(attempt) {
-            return db.get(
-                'SELECT id, status, summary, stopReason FROM spitball_expeditions WHERE executionAttemptId = @attempt', { attempt }
-            );
-        },
-        _describe(expedition) {
-            if (expedition.status === 'COMPLETED') {
-                return `Research expedition #${expedition.id} finished. ${clip(expedition.summary || 'It wrote its notes; use lookupNotes to read them.', 3000)}`;
-            }
-            if (expedition.status === 'FAILED' || expedition.status === 'CANCELLED') {
-                return `Research expedition #${expedition.id} ${expedition.status.toLowerCase()} without a result.`;
-            }
-            return `Started research expedition #${expedition.id}. This task pauses until it finishes.`;
-        },
-        /** After a crash: an expedition carrying this attempt id means it was started. */
-        async reconcile(_args, ctx) {
-            const expedition = await this._find(this._attempt(ctx));
-            if (!expedition) return { state: 'absent' };
-            ctx.child = expedition;
-            return { state: 'done', result: this._describe(expedition) };
-        },
-        /** On a resumed run: say how the expedition ended, not that it started. */
-        async replay(prior, ctx) {
-            const expedition = await this._find(`assistant_run:${ctx.run.id}:${prior.id}`);
-            if (!expedition) return prior.resultText || '';
-            ctx.child = expedition;
-            return this._describe(expedition);
-        },
-        async run({ topic, intent }, ctx) {
-            if (ctx.child) return 'Not started: this task already ran its one research expedition.';
-            const expeditions = requireOptional('./spitballExpeditionService', { feature: 'expeditions' });
-            if (!expeditions) return 'Not started: research expeditions are not available on this installation.';
-            const expedition = await expeditions.createExpedition({
-                userId: ctx.actor, seed: String(topic || ''), intent: intent ? String(intent) : null,
-                depth: 'focused', executionAttemptId: this._attempt(ctx)
-            });
-            ctx.child = { id: expedition.id, status: 'QUEUED' };
-            return this._describe(ctx.child);
-        }
-    },
-    listGeneratedNotes: {
-        effect: 'read',
-        definition: {
-            name: 'listGeneratedNotes',
-            description: 'List the notes you (not the person) wrote earlier and may still amend, with their id and revision.',
-            parameters: { type: 'object', properties: {} }
-        },
-        needs: () => ({ operation: 'read', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run(_args, ctx) {
-            const notes = await require('./knowledgeGraphService').listGeneratedNotes({ guildId: ctx.scope, userId: ctx.actor });
-            return notes.length
-                ? notes.map(note => `#${note.id} (revision ${note.revision}) ${note.label}: ${clip(note.content || '', 400)}`).join('\n')
-                : 'There are no generated notes yet.';
-        }
-    },
-    addGeneratedNote: {
-        effect: 'write',
-        atomic: true,
-        component: 'knowledge',
-        definition: {
-            name: 'addGeneratedNote',
-            description: 'Add one new note to the person\'s knowledge, marked as generated by you. Only for something sourced and worth keeping. It never replaces an existing note: a title that exists is refused.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    title: { type: 'string', description: 'A short, specific title.' },
-                    content: { type: 'string', description: 'The note, with where it came from.' }
-                },
-                required: ['title', 'content']
-            }
-        },
-        needs: () => ({ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run({ title, content }, ctx) {
-            const added = await require('./knowledgeGraphService').addGeneratedNote({
-                guildId: ctx.scope, userId: ctx.actor, label: title, content, originRunId: ctx.run.id
-            });
-            if (!added.ok) {
-                return {
-                    EXISTS: 'Not added: a note with that title already exists. Do not overwrite it.',
-                    CAPACITY: 'Not added: the person\'s knowledge is full. Report the finding instead.',
-                    BAD_REQUEST: 'Not added: a title and content are required.'
-                }[added.code];
-            }
-            return `Added as note #${added.id}.`;
-        }
-    },
-    amendGeneratedNote: {
-        effect: 'write',
-        atomic: true,
-        component: 'knowledge',
-        definition: {
-            name: 'amendGeneratedNote',
-            description: 'Replace the text of a note you generated earlier. Pass the id and revision from listGeneratedNotes. A note the person has edited or saved is theirs and cannot be amended.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    id: { type: 'integer' },
-                    revision: { type: 'integer', description: 'The revision you read.' },
-                    content: { type: 'string', description: 'The full new text.' }
-                },
-                required: ['id', 'revision', 'content']
-            }
-        },
-        needs: () => ({ operation: 'kg.generated.amend', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run({ id, revision, content }, ctx) {
-            const amended = await require('./knowledgeGraphService').amendGeneratedNote({
-                guildId: ctx.scope, userId: ctx.actor, nodeId: id, content, expectedRevision: revision
-            });
-            if (!amended.ok) {
-                return {
-                    NOT_FOUND: 'Not amended: no such note.',
-                    NOT_GENERATED: 'Not amended: the person has edited or saved that note, so it is theirs. Report your suggestion instead.',
-                    REVISION_CONFLICT: 'Not amended: the note changed since you read it. Read it again before deciding.',
-                    BAD_REQUEST: 'Not amended: content and the revision you read are required.'
-                }[amended.code];
-            }
-            return `Amended; it is now revision ${amended.revision}.`;
-        }
-    },
-    consultDocs: {
-        effect: 'read',
-        definition: {
-            name: 'consultDocs',
-            description: 'Search Goobster\'s own public documentation.',
-            parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
-        },
-        needs: () => null,
-        async run({ query }, ctx) {
-            return require('../utils/toolsRegistry').execute('consultDocs', {
-                action: 'search', query: String(query || ''), interactionContext: ctx.interactionContext
-            });
-        }
-    },
-    finish: {
-        effect: 'read',
-        definition: {
-            name: 'finish',
-            description: 'Report the result and end the task. outcome "finding" = there is something the person should know; "no_change" = you checked and nothing needs their attention. Call this exactly once, last.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    outcome: { type: 'string', enum: ['finding', 'no_change'] },
-                    title: { type: 'string', description: 'One specific sentence: the result.' },
-                    summary: { type: 'string', description: 'Why it matters for this responsibility, what you checked and the sources. Plain text.' }
-                },
-                required: ['outcome', 'title']
-            }
-        },
-        needs: () => null,
-        async run(args, ctx) {
-            ctx.result = {
-                outcome: args.outcome === 'no_change' ? 'NO_CHANGE' : 'DONE',
-                title: clip(String(args.title || '').trim(), 200),
-                summary: clip(String(args.summary || '').trim(), SUMMARY_CHARS)
-            };
-            return 'Recorded. Stop now.';
-        }
-    }
-};
+const TOOLS = require('./assistant/runTools');
 
 class AssistantRunService {
     constructor() {
@@ -684,7 +320,8 @@ class AssistantRunService {
                 { runId: ctx.run.id, tool: name, hash, seq }
             );
             if (prior?.status === 'SUCCEEDED') {
-                if (name === 'finish') await spec.run(args, ctx);
+                if (spec.final) await spec.run(args, ctx);
+                if (spec.source === 'private') ctx.privateRead = true;
                 if (typeof spec.replay === 'function') return spec.replay(prior, ctx);
                 return prior.resultText || '';
             }
@@ -732,8 +369,16 @@ class AssistantRunService {
                 });
                 if (!verdict.ok) {
                     if (STOP_CODES.has(verdict.code)) ctx.halt(verdict.code);
+                    // A plan step is project work: without the project there is nothing left to do.
+                    if (ctx.planStep && verdict.code === 'RESOURCE_UNAVAILABLE' && required.resource?.kind === 'project') ctx.halt(verdict.code);
                     return refuse(verdict.code);
                 }
+            }
+            if (spec.publishes === 'project' && ctx.privateRead) {
+                // What it read from the person's private knowledge may be in
+                // what it writes: only a project nobody else reads may take it.
+                const allowed = await require('./knowledgeTransferService').privateContextAllowed({ userId: ctx.actor, project: ctx.project });
+                if (!allowed) return refuse('PRIVATE_CONTEXT');
             }
             if (spec.budget === 'searches') {
                 if (ctx.used.searches + ctx.searches >= ctx.budgets.searches) return refuse('SEARCH_BUDGET');
@@ -766,6 +411,7 @@ class AssistantRunService {
                 return `That did not work (${error?.code || 'ERROR'}).`;
             }
             await mark(id, 'SUCCEEDED', result);
+            if (spec.source === 'private') ctx.privateRead = true;
             await ctx.account();
             ctx.childPending();
             return result;
@@ -791,16 +437,31 @@ class AssistantRunService {
         const budgets = this.budgets(responsibility, await control.budgetDefaults());
         const used = await this._usedToday(responsibility.id, run.id, now);
         const { features } = require('../features/featureState');
+        const planStep = initiative.planStep || null;
+        const steps = planStep ? require('./assistant/planStepRun') : null;
+        // Private knowledge this run already read (a resumed run remembers).
+        const journaled = await db.all(
+            "SELECT DISTINCT tool FROM assistant_run_operations WHERE runId = @runId AND status = 'SUCCEEDED'", { runId: run.id }
+        );
+        // Can anyone but the person read what is written into the project?
+        const sharedProject = project
+            ? !(await require('./knowledgeTransferService').privateContextAllowed({ userId: actor, project }))
+            : false;
+        // Each tool says when it is on offer (a linked project, a feature
+        // that is on, a plan-step run). A plan step in a project other
+        // people read is not offered the person's private knowledge at all.
         const offered = new Set(Object.keys(TOOLS).filter((name) => {
-            if (name.includes('Project') && !project) return false;
-            if (name === 'runProjectFile' && features.enforcedOff('sandbox')) return false;
-            if (name.includes('GeneratedNote') && features.enforcedOff('knowledge')) return false;
-            if (name === 'startResearch' && (features.enforcedOff('expeditions') || features.enforcedOff('knowledge'))) return false;
-            return true;
+            const spec = TOOLS[name];
+            if (typeof spec.available === 'function' && !spec.available({ project, features, planStep })) return false;
+            return !(planStep && sharedProject && spec.source === 'private');
         }));
 
         const ctx = {
             run, actor, project, budgets, used, offered,
+            // The agent plan step this run carries out, once dispatched.
+            planStep: null,
+            stepReport: null,
+            privateRead: journaled.some(row => TOOLS[row.tool]?.source === 'private'),
             searches: Number(run.searches || 0),
             compute: Number(run.computeSeconds || 0),
             fileHashes: new Map(),
@@ -862,6 +523,48 @@ class AssistantRunService {
         // Nothing is spent when today's budget is already gone.
         if (used.tokens >= budgets.modelTokens) return park('budget', 'TOKEN_BUDGET', nextDay(now));
 
+        // A plan step: authorized and claimed before any model call.
+        let stepWork = null;
+        if (planStep) {
+            const dispatched = await steps.dispatch({ initiative, run, responsibility, actor, project });
+            if (!dispatched.ok) return this._planStepRefused({ dispatched, steps, run, initiative, leaseToken, actor, now, park, finishRun });
+            stepWork = { step: dispatched.step, mission: dispatched.mission };
+            ctx.planStep = { id: dispatched.step.id, missionId: dispatched.mission.id };
+            if (dispatched.settled) {
+                // A crash after the step was settled: finish the bookkeeping, do no work again.
+                return this._planStepAlreadySettled({
+                    settledAs: dispatched.settled, stepWork, run, initiative, leaseToken, responsibility, project, actor, finishRun
+                });
+            }
+        }
+        const releaseStep = async (code) => {
+            if (stepWork) await steps.release({ runId: run.id, stepId: stepWork.step.id, code });
+        };
+
+        // A request made in a conversation (ADR 0021): read it again now, as
+        // the person. Deleted, out of reach or no longer covered ends the
+        // attempt here, before any model call.
+        let request = null;
+        const requests = !planStep && initiative.origin?.kind === 'parlor_message'
+            ? require('./assistant/conversationRequestRun') : null;
+        if (requests) {
+            const loaded = await requests.load({ initiative, responsibility });
+            if (!loaded.ok) {
+                const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: loaded.code });
+                await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? loaded.code : 'LEASE_LOST' });
+                return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: loaded.code, runId: run.id };
+            }
+            request = loaded.source;
+        }
+        // The lease is gone: cancelled, parked, revoked, or stopped by a
+        // change of direction, whose update is brought up to date now that
+        // the run has actually stopped.
+        const leaseLost = async () => {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            await require('./assistant/steering').afterRunStopped({ initiativeId: initiative.id });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        };
+
         let loop = null;
         let failure = null;
         try {
@@ -869,7 +572,11 @@ class AssistantRunService {
             loop = await workContext.run(
                 { kind: 'assistant_run', id: run.id, actor, payer: run.payerUserId || actor },
                 () => runAgentLoop({
-                    messages: this._messages({ responsibility, initiative, project, tools: [...offered] }),
+                    messages: stepWork
+                        ? steps.messages({ responsibility, project, tools: [...offered], ...stepWork })
+                        : request
+                            ? requests.messages({ responsibility, project, tools: [...offered], source: request })
+                            : this._messages({ responsibility, initiative, project, tools: [...offered] }),
                     chatOptions: {
                         max_tokens: REPLY_TOKENS,
                         background: true,
@@ -901,6 +608,8 @@ class AssistantRunService {
             await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'run', code });
             if (code === 'ACCOUNT_BUDGET') return park('budget', code, nextDay(now));
             if (code === 'NO_PROVIDER') return park('dependency', code, new Date(now.getTime() + 60 * 60 * 1000));
+            // The step did not fail, the provider did: it goes back for a later attempt.
+            await releaseStep(code);
             const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'FAILED', stopCode: code });
             await finishRun({ status: settled.ok ? 'FAILED' : 'CANCELLED', stopCode: settled.ok ? code : 'LEASE_LOST' });
             logger.warn?.(`[assistant run] run ${run.id} failed: ${code}`);
@@ -908,11 +617,16 @@ class AssistantRunService {
         }
 
         if (ctx.stop === 'LEASE_LOST') {
-            // Cancelled, parked or revoked while working: no result is written.
-            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
-            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+            // Cancelled, parked, revoked or superseded while working: no result is written.
+            await releaseStep('LEASE_LOST');
+            return leaseLost();
         }
         if (ctx.stop === 'OPERATION_UNCERTAIN') {
+            // A write that may or may not have happened is a blocker on the plan too.
+            if (stepWork) {
+                const closed = await steps.settle({ ctx, step: stepWork.step, ok: false, code: ctx.stop });
+                if (!closed.ok) await releaseStep(closed.code);
+            }
             const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'REVIEW', stopCode: ctx.stop });
             await finishRun({ status: settled.ok ? 'REVIEW' : 'CANCELLED', stopCode: ctx.stop });
             return { status: 'REVIEW', stopCode: ctx.stop, runId: run.id };
@@ -928,8 +642,15 @@ class AssistantRunService {
         // Stopped by the host: it waits, and a resume puts it back in the queue.
         if (ctx.stop === control.PAUSED_CODE && !ctx.result) return park('dependency', control.PAUSED_CODE, null);
         if (ctx.stop && !ctx.result) {
-            // The grant stopped covering the work (paused, revoked, expired, edited).
-            return park('responsibility', ctx.stop, null);
+            // The grant stopped covering the work (paused, revoked, expired,
+            // edited), or the person lost the project of a plan step.
+            await releaseStep(ctx.stop);
+            return park(ctx.stop === 'RESOURCE_UNAVAILABLE' ? 'access' : 'responsibility', ctx.stop, null);
+        }
+        if (stepWork) {
+            return this._finishPlanStep({
+                ctx, steps, stepWork, loop, run, initiative, leaseToken, responsibility, project, actor, park, finishRun
+            });
         }
 
         // What the run actually changed, read from its journal (not from
@@ -956,10 +677,7 @@ class AssistantRunService {
             id: initiative.id, leaseToken, status: 'COMPLETED', outcome: result.outcome,
             recheckAfter: result.outcome === 'NO_CHANGE' ? new Date(now.getTime() + 24 * 60 * 60 * 1000) : null
         });
-        if (!settled.ok) {
-            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
-            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
-        }
+        if (!settled.ok) return leaseLost();
         let updateId = null;
         if (result.outcome === 'DONE') {
             try {
@@ -969,9 +687,13 @@ class AssistantRunService {
                     kind: 'finding',
                     title: result.title || clip(initiative.title, 200),
                     summary: result.summary || null,
-                    components: [...new Set([...(project ? ['projects'] : []), 'research', ...applied.components])],
+                    components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
                     source: { kind: 'initiative', id: initiative.id },
-                    actions: [{ kind: 'open_initiative', id: String(initiative.id) }],
+                    // A result of something asked in a conversation links back to it.
+                    actions: [
+                        { kind: 'open_initiative', id: String(initiative.id) },
+                        ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                    ],
                     responsibilityId: responsibility.id,
                     initiativeId: initiative.id,
                     producerUserId: actor,
@@ -985,6 +707,171 @@ class AssistantRunService {
         }
         await finishRun({ status: 'COMPLETED', outcome: result.outcome, title: result.title || null, summary: result.summary || null, updateId });
         return { status: 'COMPLETED', outcome: result.outcome, runId: run.id, updateId };
+    }
+
+    // --- Plan-step runs (ADR 0019) -----------------------------------------------------
+
+    /** Tell the person, privately, how their plan-step run ended. Never throws. */
+    async _publishPlanStepUpdate({ run, initiative, responsibility, project, actor, title, summary, components = [] }) {
+        try {
+            const published = await require('./assistantUpdateService').publish({
+                audience: { userId: responsibility.ownerUserId },
+                identityKey: `initiative:${initiative.id}`,
+                kind: 'progress',
+                title,
+                summary: summary || null,
+                components: [...new Set(['projects', ...components])],
+                source: { kind: 'initiative', id: initiative.id },
+                actions: [{ kind: 'open_initiative', id: String(initiative.id) }, { kind: 'open_project', id: String(project.id) }],
+                responsibilityId: responsibility.id,
+                initiativeId: initiative.id,
+                producerUserId: actor,
+                deliver: true
+            });
+            return published.update.id;
+        } catch (error) {
+            logger.warn?.(`[assistant run] run ${run.id} finished but its update could not be filed: ${error.message}`);
+            await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'publish', code: 'UPDATE_FAILED' });
+            return null;
+        }
+    }
+
+    /** The step could not be dispatched: nothing was claimed and no model was called. */
+    async _planStepRefused({ dispatched, steps, run, initiative, leaseToken, actor, now, park, finishRun }) {
+        const initiatives = require('./assistantInitiativeService');
+        const code = dispatched.code;
+        // A resumed run may still hold the step from before.
+        await steps.release({ runId: run.id, stepId: initiative.planStep.id, code });
+        if (dispatched.authorize) {
+            // The grant no longer covers it, or the person lost the project.
+            return park(code === 'RESOURCE_UNAVAILABLE' ? 'access' : 'responsibility', code, null);
+        }
+        if (code === 'RESOURCE_UNAVAILABLE') return park('access', code, null);
+        if (code === 'PLAN_BLOCKED') {
+            // Another step failed: wait for the people on the project to unblock the plan.
+            return park('dependency', code, new Date(now.getTime() + steps.BLOCKED_RECHECK_MS));
+        }
+        if (steps.SUPERSEDING.has(code)) {
+            // The plan moved on, or someone else has the step: this attempt is void.
+            const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: code });
+            await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? code : 'LEASE_LOST' });
+            return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: code, runId: run.id };
+        }
+        await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'dispatch', code });
+        const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'FAILED', stopCode: code });
+        await finishRun({ status: settled.ok ? 'FAILED' : 'CANCELLED', stopCode: settled.ok ? code : 'LEASE_LOST' });
+        return { status: 'FAILED', stopCode: code, runId: run.id };
+    }
+
+    /** A resumed run whose step was settled before the crash: close the attempt to match. */
+    async _planStepAlreadySettled({ settledAs, stepWork, run, initiative, leaseToken, responsibility, project, actor, finishRun }) {
+        const initiatives = require('./assistantInitiativeService');
+        const done = settledAs === 'DONE';
+        const settled = await initiatives.settle({
+            id: initiative.id, leaseToken, status: done ? 'COMPLETED' : 'FAILED', outcome: done ? 'DONE' : null,
+            stopCode: done ? null : 'STEP_FAILED'
+        });
+        if (!settled.ok) {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        }
+        const title = clip(`${done ? 'Plan step done' : 'Plan step blocked'}: ${stepWork.step.title}`, 200);
+        const updateId = await this._publishPlanStepUpdate({ run, initiative, responsibility, project, actor, title, summary: null });
+        await finishRun({
+            status: done ? 'COMPLETED' : 'FAILED', outcome: done ? 'DONE' : null, stopCode: done ? null : 'STEP_FAILED', title, updateId
+        });
+        return { status: done ? 'COMPLETED' : 'FAILED', outcome: done ? 'DONE' : undefined, stopCode: done ? undefined : 'STEP_FAILED', runId: run.id, updateId };
+    }
+
+    /**
+     * The end of a plan-step run: verify what was reported, then settle the
+     * step, then the attempt, then tell the person. The step comes first so
+     * a crash in between resumes into _planStepAlreadySettled instead of
+     * doing the work twice.
+     */
+    async _finishPlanStep({ ctx, steps, stepWork, loop, run, initiative, leaseToken, responsibility, project, actor, park, finishRun }) {
+        const initiatives = require('./assistantInitiativeService');
+        const { step, mission } = stepWork;
+        const lost = async () => {
+            await steps.release({ runId: run.id, stepId: step.id, code: 'LEASE_LOST' });
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        };
+        // Nothing is written for work that no longer holds its lease.
+        if (!(await initiatives.renewLease({ id: initiative.id, leaseToken }))) return lost();
+
+        const stopped = async (code) => {
+            await steps.release({ runId: run.id, stepId: step.id, code });
+            return park(code === 'RESOURCE_UNAVAILABLE' ? 'access' : 'responsibility', code, null);
+        };
+        let verified = await steps.verify({ ctx, step, mission });
+        if (!verified.ok && verified.authorize) return stopped(verified.code);
+
+        let closed;
+        if (verified.ok) {
+            closed = await steps.settle({ ctx, step, ok: true, verified });
+            if (!closed.ok && closed.code === 'EVIDENCE_LIMIT') verified = { ok: false, code: 'VERIFICATION_FAILED', detail: 'EVIDENCE_LIMIT' };
+        }
+        if (!verified.ok) closed = await steps.settle({ ctx, step, ok: false, code: verified.code });
+        if (!closed.ok) {
+            if (closed.code === 'RESOURCE_UNAVAILABLE' || closed.code === 'FEATURE_UNAVAILABLE') return stopped(closed.code);
+            // A person closed the step, or the plan ended, while the run worked.
+            const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: 'PLAN_STEP_CLOSED' });
+            await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? 'PLAN_STEP_CLOSED' : 'LEASE_LOST' });
+            return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: 'PLAN_STEP_CLOSED', runId: run.id };
+        }
+
+        const applied = await this._applied(run.id);
+        // The headline is the code's (what was verified); the model's own words follow it.
+        const reported = [ctx.result?.title, ctx.result?.summary].filter(Boolean).join('\n')
+            || clip(String(loop?.content || '').trim(), SUMMARY_CHARS);
+        if (verified.ok) {
+            const title = clip(`Plan step done: ${step.title}`, 200);
+            const summary = clip(
+                `${reported ? `${reported}\n\n` : ''}Files: ${verified.artifacts.map(a => a.path).join(', ')}.`, SUMMARY_CHARS
+            );
+            const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'COMPLETED', outcome: 'DONE' });
+            if (!settled.ok) {
+                await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+                return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+            }
+            const updateId = await this._publishPlanStepUpdate({
+                run, initiative, responsibility, project, actor, title, summary, components: applied.components
+            });
+            await finishRun({ status: 'COMPLETED', outcome: 'DONE', title, summary, updateId });
+            return { status: 'COMPLETED', outcome: 'DONE', runId: run.id, updateId };
+        }
+
+        // Not verified: a blocker on the plan, never a completed objective.
+        const code = verified.code;
+        await workFailureService.note({ kind: 'assistant_run', workId: run.id, actor, phase: 'verify', code: verified.detail || code });
+        const title = clip(`Plan step blocked: ${step.title}`, 200);
+        const why = {
+            STEP_BLOCKED: 'It reported that it could not finish the step.',
+            NO_STEP_REPORT: 'It ended without reporting a result.',
+            VERIFICATION_FAILED: {
+                NO_ARTIFACT: 'It reported the step done but named no file holding the result.',
+                ARTIFACT_NOT_WRITTEN: 'A file the step needs was not written by this run.',
+                ARTIFACT_MISSING: 'A file it reported is not in the project.',
+                ARTIFACT_EMPTY: 'A file it reported is empty.',
+                EVIDENCE_LIMIT: 'The plan cannot hold more evidence links.'
+            }[verified.detail] || 'Its result could not be verified.'
+        }[code];
+        const summary = clip(
+            `${why} The step is marked failed and the plan is blocked until someone retries or skips it.`
+            + `${reported ? `\n\n${reported}` : ''}${applied.lines.length ? `\n\nChanged: ${applied.lines.join(' ')}` : ''}`,
+            SUMMARY_CHARS
+        );
+        const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'FAILED', stopCode: code });
+        if (!settled.ok) {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        }
+        const updateId = await this._publishPlanStepUpdate({
+            run, initiative, responsibility, project, actor, title, summary, components: applied.components
+        });
+        await finishRun({ status: 'FAILED', stopCode: code, title, summary, updateId });
+        return { status: 'FAILED', stopCode: code, runId: run.id, updateId };
     }
 
     /** Expeditions this run started, by the attempt id its journal row gives them. */

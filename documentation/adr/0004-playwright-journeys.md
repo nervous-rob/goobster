@@ -34,7 +34,8 @@ dev-session form and walk Spitball, Parlor, Observatory, and Noticed.
 
 Jest is restricted to `tests/*.test.js` so `e2e/*.spec.js` never join
 `npm test`. Chromium is installed in the `test (playwright)` CI job
-(`npx playwright install --with-deps chromium`); it is not a merge
+(`npx playwright install --with-deps chromium`, or the same packages from
+a cache: `scripts/ci-playwright-chromium.sh`, ADR 0007); it is not a merge
 blocker on `both engines` (that aggregator remains the dual-DB gate —
 see ADR 0006).
 
@@ -45,3 +46,17 @@ breaking a tab's fetch now fails a browser spec without re-running the
 pipeline. Operators who want Playwright required on `main` can add
 `test (playwright)` to the GitHub ruleset independently of the engine
 gate.
+
+Since ADR 0007's shard amendment the journeys run as parallel jobs
+(`test (playwright, n/5)`), each with its own server and throwaway
+database, and `test (playwright)` is the job that waits on all of them.
+`npm run test:e2e` still runs everything in one process. A spec file must
+not depend on state left by another spec file.
+
+The journeys of one shard share one `e2e/server.js`. On the push that
+merged #415 a journey timed out, its retry seeded the same project fixture
+again, the fixture route rejected with `DUPLICATE_PROJECT`, the unhandled
+rejection ended the server, and the 158 journeys after it failed with a
+refused connection. Fixture routes now pass a rejection to Express and the
+project fixtures reuse the project of an earlier attempt
+(`e2e/harness.spec.js`).

@@ -3511,9 +3511,21 @@ class ObservatoryService {
         }
 
         try {
-            const board = await require('./projectMissionService').listNeedsYou({ userId, project: row.slug, owner: row.ownerId });
+            // The same read as the Needs-you board: over the canonical gates
+            // when the delegated assistant is installed, so a card here says
+            // whether it waits on this person or on the project's owner.
+            const params = { userId, project: row.slug, owner: row.ownerId };
+            const gates = requireOptional('./assistantGateService', { feature: 'assistant' });
+            const board = gates ? await gates.projectBoard(params) : await require('./projectMissionService').listNeedsYou(params);
             const cards = board?.cards || [];
-            out.needsYou = { count: cards.length, cards: cards.slice(0, 5).map(card => ({ id: card.id, column: card.column, title: card.title, detail: card.detail || null })) };
+            out.needsYou = {
+                count: cards.length,
+                cards: cards.slice(0, 5).map(card => ({
+                    id: card.id, column: card.column, title: card.title, detail: card.detail || null,
+                    mine: card.mine !== false, waitingOn: card.waitingOn || null,
+                    gate: card.gate || null, decision: card.decision || null
+                }))
+            };
         } catch { /* missions are optional here */ }
 
         const found = this.readInstructions(row);

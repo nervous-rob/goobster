@@ -6,7 +6,15 @@ on:
   pull_request:
   workflow_dispatch:
 
-# Shared by both engine jobs: Node + lockfile npm cache + a static ffmpeg
+# A new push to a pull request cancels the run for the push before it, so a
+# branch never holds runners for a commit nobody will merge. Runs on main and
+# manual runs each get their own group and always finish: the updater's CI
+# gate (scripts/auto-update.sh) reads a cancelled check run as a failed commit.
+concurrency:
+  group: ci-${{ github.event_name == 'pull_request' && github.ref || github.run_id }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# Shared by the unit jobs: Node + lockfile npm cache + a static ffmpeg
 # binary (./.github/actions/setup-ffmpeg — the Observatory render tests stitch
 # real PNGs into an mp4, and ffmpeg is not on the runner image). Do NOT
 # apt-get install ffmpeg here — that pulls ~80 media libraries and has hung
@@ -17,10 +25,12 @@ env:
   NODE_VERSION: '22'
 
 jobs:
-  test-sqlite:
-    name: test (sqlite)
+  # Everything that does not depend on the database engine, once. It is its
+  # own job so a lint error and a failing test both show up from one push.
+  static-checks:
+    name: static checks
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
@@ -46,49 +56,104 @@ jobs:
       - name: Build React client
         run: npm run build:web
 
-      # Named groups are ordinary job steps on purpose. A composite action
-      # collapses to one "Unit tests" parent in the Actions step list, which
-      # hid names, statuses, and timings. Shared runners: scripts/run-test-group.js.
+      # Every spec in exactly one group, every group in exactly one shard of
+      # each engine job below (tests/ciGroups.js audits this file).
       - name: Inventory test groups
         run: node scripts/check-test-groups.js
 
+  # Each engine runs every named group, split across parallel shards sized
+  # from measured durations (ADR 0007). A shard is a matrix entry: `groups`
+  # is what it runs, `shard` is only its label. The two engines are split
+  # differently because Postgres is slower. To move a group, move its id
+  # between the `groups` lists of one engine job; the inventory fails if a
+  # group is in no shard of an engine, or in two.
+  #
+  # Named groups stay ordinary job steps on purpose. A composite action
+  # collapses to one "Unit tests" parent in the Actions step list, which hid
+  # names, statuses, and timings. A step whose group belongs to another shard
+  # shows as skipped. Shared runners: scripts/run-test-group.js.
+  test-sqlite:
+    name: test (sqlite, ${{ matrix.shard }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: install
+            groups: [install]
+          - shard: core + domains
+            groups: [core, chat, portal, knowledge, projects, voice, games, privacy]
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - uses: ./.github/actions/setup-ffmpeg
+
+      - name: Install dependencies
+        run: npm ci --no-audit --no-fund
+
+      # frontendChunks (portal) reads the real build. It can build for itself,
+      # as it does on Postgres, but then a build error only skips its checks.
+      - name: Build React client
+        if: contains(matrix.groups, 'portal')
+        run: npm run build:web
+
       - name: Core infrastructure
         id: core
+        if: contains(matrix.groups, 'core')
         continue-on-error: true
         run: node scripts/run-test-group.js core
 
+      - name: Installer and lifecycle
+        id: install
+        if: contains(matrix.groups, 'install')
+        continue-on-error: true
+        run: node scripts/run-test-group.js install
+
       - name: Chat and AI
         id: chat
+        if: contains(matrix.groups, 'chat')
         continue-on-error: true
         run: node scripts/run-test-group.js chat
 
       - name: Portal and collaboration
         id: portal
+        if: contains(matrix.groups, 'portal')
         continue-on-error: true
         run: node scripts/run-test-group.js portal
 
       - name: Knowledge and memory
         id: knowledge
+        if: contains(matrix.groups, 'knowledge')
         continue-on-error: true
         run: node scripts/run-test-group.js knowledge
 
       - name: Projects and autonomy
         id: projects
+        if: contains(matrix.groups, 'projects')
         continue-on-error: true
         run: node scripts/run-test-group.js projects
 
       - name: Voice and media
         id: voice
+        if: contains(matrix.groups, 'voice')
         continue-on-error: true
         run: node scripts/run-test-group.js voice
 
       - name: Games and economy
         id: games
+        if: contains(matrix.groups, 'games')
         continue-on-error: true
         run: node scripts/run-test-group.js games
 
       - name: Privacy and execution safety
         id: privacy
+        if: contains(matrix.groups, 'privacy')
         continue-on-error: true
         run: node scripts/run-test-group.js privacy
 
@@ -98,29 +163,24 @@ jobs:
 
       - name: Fail if any unit group failed
         if: always()
-        run: |
-          set -euo pipefail
-          echo "core=${{ steps.core.outcome }}"
-          echo "chat=${{ steps.chat.outcome }}"
-          echo "portal=${{ steps.portal.outcome }}"
-          echo "knowledge=${{ steps.knowledge.outcome }}"
-          echo "projects=${{ steps.projects.outcome }}"
-          echo "voice=${{ steps.voice.outcome }}"
-          echo "games=${{ steps.games.outcome }}"
-          echo "privacy=${{ steps.privacy.outcome }}"
-          test "${{ steps.core.outcome }}" = success
-          test "${{ steps.chat.outcome }}" = success
-          test "${{ steps.portal.outcome }}" = success
-          test "${{ steps.knowledge.outcome }}" = success
-          test "${{ steps.projects.outcome }}" = success
-          test "${{ steps.voice.outcome }}" = success
-          test "${{ steps.games.outcome }}" = success
-          test "${{ steps.privacy.outcome }}" = success
+        run: node scripts/require-test-groups.js ${{ join(matrix.groups, ' ') }}
 
   test-postgres:
-    name: test (postgres)
+    name: test (postgres, ${{ matrix.shard }})
     runs-on: ubuntu-latest
-    timeout-minutes: 25
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - shard: core
+            groups: [core]
+          - shard: install
+            groups: [install]
+          - shard: portal + projects
+            groups: [portal, projects]
+          - shard: privacy + chat + knowledge + voice + games
+            groups: [privacy, chat, knowledge, voice, games]
     env:
       # 127.0.0.1, not localhost: the service container publishes IPv4 only,
       # and a dual-stack connect that fails reports a blank AggregateError.
@@ -137,9 +197,9 @@ jobs:
           - 5432:5432
         options: >-
           --health-cmd "pg_isready -U goobster -d goobster"
-          --health-interval 5s
+          --health-interval 2s
           --health-timeout 5s
-          --health-retries 10
+          --health-retries 30
     steps:
       - uses: actions/checkout@v5
 
@@ -154,65 +214,108 @@ jobs:
       # refuse a server of a newer major version. The runner image ships the
       # Ubuntu default (16); the service container is 17, so install the
       # matching client and put its bin dir first on PATH (pg_wrapper would
-      # otherwise pick the runner's own cluster version). Small package,
-      # pgdg repo is already configured on ubuntu-latest.
+      # otherwise pick the runner's own cluster version).
+      #
+      # The runner already has the pgdg signing key (postgresql-common) but
+      # not the source, so the quick path writes the source and refreshes only
+      # that one index. A full `apt-get update` ran three times here before
+      # (ours, the pgdg script's, ours again) and cost 15-20s per job. If the
+      # quick path does not produce pg_dump 17, the original steps still run.
       - name: Install PostgreSQL 17 client tools
         run: |
-          if ! ls /etc/apt/sources.list.d/pgdg* >/dev/null 2>&1; then
+          pg17=/usr/lib/postgresql/17/bin
+          keyring=/usr/share/postgresql-common/pgdg/apt.postgresql.org.gpg
+          quick() {
+            [ -f "$keyring" ] || return 1
+            codename="$(. /etc/os-release && echo "$VERSION_CODENAME")"
+            echo "deb [signed-by=$keyring] https://apt.postgresql.org/pub/repos/apt $codename-pgdg main" \
+              | sudo tee /etc/apt/sources.list.d/pgdg-ci.list >/dev/null
+            sudo apt-get update -o Dir::Etc::sourcelist=sources.list.d/pgdg-ci.list \
+              -o Dir::Etc::sourceparts=- -o APT::Get::List-Cleanup=0 || return 1
+            sudo apt-get install -y --no-install-recommends postgresql-client-17 || return 1
+            [ -x "$pg17/pg_dump" ]
+          }
+          if ! quick; then
+            echo "::notice::quick pgdg path did not work; using the full apt path"
+            sudo rm -f /etc/apt/sources.list.d/pgdg-ci.list
+            if ! ls /etc/apt/sources.list.d/pgdg* >/dev/null 2>&1; then
+              sudo apt-get update
+              sudo apt-get install -y --no-install-recommends postgresql-common
+              sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            fi
             sudo apt-get update
-            sudo apt-get install -y --no-install-recommends postgresql-common
-            sudo /usr/share/postgresql-common/pgdg/apt.postgresql.org.sh -y
+            sudo apt-get install -y --no-install-recommends postgresql-client-17
           fi
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends postgresql-client-17
-          echo "/usr/lib/postgresql/17/bin" >> "$GITHUB_PATH"
-          /usr/lib/postgresql/17/bin/pg_dump --version
+          echo "$pg17" >> "$GITHUB_PATH"
+          "$pg17/pg_dump" --version
+
+      # The service database is thrown away with the job, so nothing needs to
+      # survive a crash. Every suite applies the whole schema to its own
+      # Postgres schema, which is commit-heavy DDL. Best effort: a refusal
+      # only means the suites run at the default speed.
+      - name: Turn off durability on the throwaway database
+        run: |
+          /usr/lib/postgresql/17/bin/psql "$GOOBSTER_DB_URL" -v ON_ERROR_STOP=1 \
+            -c "ALTER SYSTEM SET fsync = off" \
+            -c "ALTER SYSTEM SET synchronous_commit = off" \
+            -c "ALTER SYSTEM SET full_page_writes = off" \
+            -c "SELECT pg_reload_conf()" \
+            || echo "::warning::could not turn off durability; the suites run at the default speed"
 
       - name: Install dependencies
         run: npm ci --no-audit --no-fund
 
-      # Same named steps as test (sqlite): GitHub only shows group names,
-      # statuses, and timings when they are ordinary job steps.
-      - name: Inventory test groups
-        run: node scripts/check-test-groups.js
-
       - name: Core infrastructure
         id: core
+        if: contains(matrix.groups, 'core')
         continue-on-error: true
         run: node scripts/run-test-group.js core
 
+      - name: Installer and lifecycle
+        id: install
+        if: contains(matrix.groups, 'install')
+        continue-on-error: true
+        run: node scripts/run-test-group.js install
+
       - name: Chat and AI
         id: chat
+        if: contains(matrix.groups, 'chat')
         continue-on-error: true
         run: node scripts/run-test-group.js chat
 
       - name: Portal and collaboration
         id: portal
+        if: contains(matrix.groups, 'portal')
         continue-on-error: true
         run: node scripts/run-test-group.js portal
 
       - name: Knowledge and memory
         id: knowledge
+        if: contains(matrix.groups, 'knowledge')
         continue-on-error: true
         run: node scripts/run-test-group.js knowledge
 
       - name: Projects and autonomy
         id: projects
+        if: contains(matrix.groups, 'projects')
         continue-on-error: true
         run: node scripts/run-test-group.js projects
 
       - name: Voice and media
         id: voice
+        if: contains(matrix.groups, 'voice')
         continue-on-error: true
         run: node scripts/run-test-group.js voice
 
       - name: Games and economy
         id: games
+        if: contains(matrix.groups, 'games')
         continue-on-error: true
         run: node scripts/run-test-group.js games
 
       - name: Privacy and execution safety
         id: privacy
+        if: contains(matrix.groups, 'privacy')
         continue-on-error: true
         run: node scripts/run-test-group.js privacy
 
@@ -222,24 +325,7 @@ jobs:
 
       - name: Fail if any unit group failed
         if: always()
-        run: |
-          set -euo pipefail
-          echo "core=${{ steps.core.outcome }}"
-          echo "chat=${{ steps.chat.outcome }}"
-          echo "portal=${{ steps.portal.outcome }}"
-          echo "knowledge=${{ steps.knowledge.outcome }}"
-          echo "projects=${{ steps.projects.outcome }}"
-          echo "voice=${{ steps.voice.outcome }}"
-          echo "games=${{ steps.games.outcome }}"
-          echo "privacy=${{ steps.privacy.outcome }}"
-          test "${{ steps.core.outcome }}" = success
-          test "${{ steps.chat.outcome }}" = success
-          test "${{ steps.portal.outcome }}" = success
-          test "${{ steps.knowledge.outcome }}" = success
-          test "${{ steps.projects.outcome }}" = success
-          test "${{ steps.voice.outcome }}" = success
-          test "${{ steps.games.outcome }}" = success
-          test "${{ steps.privacy.outcome }}" = success
+        run: node scripts/require-test-groups.js ${{ join(matrix.groups, ' ') }}
 
   # Optional live provider checks. Mocked provider suites always run in the
   # unit jobs above. This job never disables that coverage: missing secrets
@@ -334,10 +420,21 @@ jobs:
   # Browser journeys against createWebAppApp in webapp.devMode. Separate
   # from both-engines (that aggregator is the dual-DB gate; see ADR 0006).
   # Chromium is installed here so the job is self-contained.
+  #
+  # The journeys run one worker against one server, about 17 minutes end to
+  # end, so they are split into shards that run as parallel jobs, each with
+  # its own server and throwaway database. scripts/e2e-shard.js plans the
+  # split from the spec files on disk and e2e/shard-durations.json, so a new
+  # spec is picked up with no registration and every spec runs in exactly one
+  # shard. To change the shard count, change the list below and nothing else.
   test-e2e:
-    name: test (playwright)
+    name: test (playwright, ${{ matrix.shard }}/${{ strategy.job-total }})
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4, 5]
     steps:
       - uses: actions/checkout@v5
 
@@ -352,11 +449,73 @@ jobs:
       - name: Build React client
         run: npm run build:web
 
+      # Chromium's system packages on this image are nine font packages
+      # (21 MB) from the runner's Ubuntu mirror, which now and then serves
+      # them at 100 kB/s and turns a 25-second step into four minutes. They
+      # are kept in a cache keyed on the runner image and the Playwright
+      # version. scripts/ci-playwright-chromium.sh installs them from there
+      # and lets Playwright confirm nothing is missing; with no cache, or if
+      # anything about it is off, it runs the same
+      # `npx playwright install --with-deps chromium` this step always ran.
+      # The cache steps may fail without failing the shard.
+      - name: Chromium system packages cache key
+        id: debs-key
+        run: |
+          playwright="$(node -p "require('@playwright/test/package.json').version")"
+          echo "key=playwright-debs-v1-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-image}-${ImageVersion:-unknown}-pw${playwright}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Chromium system packages
+        id: debs
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/playwright-debs
+          key: ${{ steps.debs-key.outputs.key }}
+
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        id: chromium
+        run: bash scripts/ci-playwright-chromium.sh "$HOME/.cache/playwright-debs"
+
+      # One shard saves, so five jobs do not race to write the same key.
+      - name: Save Chromium system packages
+        if: matrix.shard == 1 && steps.chromium.outputs.harvested == 'true' && steps.debs.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/playwright-debs
+          key: ${{ steps.debs-key.outputs.key }}
 
       - name: Portal journeys
-        run: npm run test:e2e
+        env:
+          # A shard takes about 4 minutes of journeys today. Past 8 it warns,
+          # well before the job limit, so a shard is added in time.
+          E2E_SHARD_WARN_SECONDS: '480'
+        run: node scripts/e2e-shard.js ${{ matrix.shard }} ${{ strategy.job-total }}
+
+      - name: Keep the traces of a failed shard
+        if: failure() || cancelled()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-shard-${{ matrix.shard }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # One check for the journeys as a whole, under the name the single job had,
+  # so a ruleset (ADR 0004) or a person waiting on CI has one thing to watch.
+  e2e:
+    name: test (playwright)
+    if: always()
+    needs: [test-e2e]
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Every journey shard must succeed
+        run: |
+          echo "test (playwright, shards)=${{ needs.test-e2e.result }}"
+          test "${{ needs.test-e2e.result }}" = success
 
   # Installer #339: the Docker-managed Postgres option against a real daemon
   # and the pinned pgvector image (documentation/docker_postgres.md). The fake
@@ -412,20 +571,24 @@ jobs:
   # Single required check so main cannot advance when one engine is still
   # running or the sandbox image isolation smoke has not passed. PR #201
   # merged while test (postgres) was unfinished; requiring this job closes
-  # that window. See ADR 0006. Live integrations are extra coverage and are
-  # not part of this aggregator (ADR 0007).
+  # that window. See ADR 0006. A matrix job's result is success only when
+  # every shard succeeded. `if: always()` is deliberate: a cancelled run must
+  # report this check as failed, never as skipped. Live integrations are
+  # extra coverage and are not part of this aggregator (ADR 0007).
   both-engines:
     name: both engines
     if: always()
-    needs: [test-sqlite, test-postgres, sandbox-isolation]
+    needs: [static-checks, test-sqlite, test-postgres, sandbox-isolation]
     runs-on: ubuntu-latest
     timeout-minutes: 2
     steps:
-      - name: Engine jobs and isolation smoke must succeed
+      - name: Static checks, engine jobs and isolation smoke must succeed
         run: |
+          echo "static checks=${{ needs.static-checks.result }}"
           echo "test (sqlite)=${{ needs.test-sqlite.result }}"
           echo "test (postgres)=${{ needs.test-postgres.result }}"
           echo "sandbox isolation=${{ needs.sandbox-isolation.result }}"
+          test "${{ needs.static-checks.result }}" = success
           test "${{ needs.test-sqlite.result }}" = success
           test "${{ needs.test-postgres.result }}" = success
           test "${{ needs.sandbox-isolation.result }}" = success

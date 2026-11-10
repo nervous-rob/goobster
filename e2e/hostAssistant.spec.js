@@ -10,7 +10,7 @@ const C = require('./constants');
 
 // One of the dedicated operator identities e2e/server.js grants an account.
 const OPERATOR = '99000000000000391';
-const DELEGATOR = '99000000000000431';
+const DELEGATOR = '99000000000000418';
 const DELEGATOR_NAME = 'Stopped delegator';
 
 const reset = async (request) => {

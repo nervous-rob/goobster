@@ -33,6 +33,8 @@ const control = require('@goobster/core/services/assistantControlService');
 const access = require('@goobster/core/services/assistantAccessService');
 const home = require('@goobster/core/services/assistantHomeService');
 const policies = require('@goobster/core/services/attentionPolicyService');
+const missions = require('@goobster/core/services/projectMissionService');
+const projects = require('@goobster/core/services/projectService');
 const identityService = require('@goobster/core/services/identityService');
 const instanceState = require('@goobster/core/services/instanceStateService');
 const operatorAudit = require('@goobster/core/services/operatorAuditService');
@@ -65,7 +67,9 @@ beforeEach(async () => {
     for (const table of [
         'assistant_run_operations', 'assistant_runs', 'assistant_initiatives', 'assistant_source_cursors',
         'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions', 'assistant_responsibilities',
-        'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures', 'operator_audit', 'kg_nodes'
+        'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures', 'operator_audit', 'kg_nodes',
+        'project_mission_approval_receipts', 'project_mission_events', 'project_mission_evidence', 'project_mission_steps',
+        'project_missions', 'observatory_projects'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -241,6 +245,70 @@ describe('stopping all delegated work', () => {
         expect(await control.isPaused()).toBe(true);
         expect((await initiativeRow(initiative.id)).status).toBe('COMPLETED');
         expect((await db.get('SELECT resultTitle FROM assistant_runs', {})).resultTitle).toBe('Frost on the 14th');
+    });
+
+    test('a plan step stopped part-way keeps its step, and finishes it once after the resume', async () => {
+        const files = new Map();
+        jest.spyOn(projects, 'readWorkspaceFile').mockImplementation(async ({ relativePath }) => {
+            if (!files.has(relativePath)) throw Object.assign(new Error('No such file.'), { code: 'NOT_FOUND', status: 404 });
+            const bytes = Buffer.from(files.get(relativePath));
+            return { relativePath, name: relativePath, mime: 'text/markdown', bytes, size: bytes.length };
+        });
+        jest.spyOn(projects, 'writeWorkspaceFile').mockImplementation(async ({ relativePath, bytes }) => {
+            // The host stops everything while the step's file is being written.
+            await control.pauseAll();
+            files.set(relativePath, bytes.toString('utf8'));
+            return { relativePath };
+        });
+        const pid = await db.insert("INSERT INTO observatory_projects (userId, slug, name) VALUES (@u, 'lab', 'Lab')", { u: A });
+        const args = { userId: A, project: 'lab' };
+        await missions.create({
+            ...args, title: 'Choose a charting library', objective: 'Decide between X and Y.',
+            successCriteria: ['A written comparison exists'],
+            steps: [{ kind: 'agent', title: 'Write the comparison report', actionParams: { artifacts: ['docs/report.md'] } }]
+        });
+        const receipt = await missions.mintApprovalReceipt({ ...args, origin: 'portal' });
+        await missions.approve({ ...args, receiptId: receipt.id, nonce: receipt.nonce });
+        const stepId = (await missions.start(args)).steps[0].id;
+        const stepStatus = async () => (await db.get('SELECT status FROM project_mission_steps WHERE id = @id', { id: stepId })).status;
+
+        await policies.enroll({ userId: A, initiative: 'assist' });
+        const { responsibility } = await responsibilities.create({
+            userId: A,
+            body: {
+                title: 'Carry the charting plan forward', projectId: pid,
+                operations: [
+                    { operation: 'read', resource: { kind: 'project', ids: [String(pid)] } },
+                    { operation: 'file.edit', resource: { kind: 'project', ids: [String(pid)], paths: ['docs'] } },
+                    { operation: 'plan.step.execute', resource: { kind: 'project', ids: [String(pid)] } }
+                ]
+            }
+        });
+        const active = (await responsibilities.act({ userId: A, id: responsibility.id, action: 'activate', expectedRevision: responsibility.revision })).responsibility;
+        const [proposed] = await db.all('SELECT id FROM assistant_initiatives WHERE responsibilityId = @id', { id: active.id });
+        const row = await initiatives.get({ userId: A, id: Number(proposed.id) });
+        const { initiative } = await initiatives.act({ userId: A, id: row.id, action: 'queue', expectedRevision: row.revision });
+
+        const write = call('writeProjectFile', { path: 'docs/report.md', content: '# Comparison\nLibrary X is faster.' });
+        const report = call('reportStepResult', { outcome: 'done', title: 'Wrote the comparison', summary: 'Compared X and Y.', artifacts: ['docs/report.md'] });
+        const chat = script([write], [report]);
+        const { results } = await runner.tick({ wait: true });
+        expect(results[0]).toMatchObject({ status: 'WAITING', stopCode: 'ASSISTANT_PAUSED' });
+        expect(chat).toHaveBeenCalledTimes(1);
+        // The step is still this run's: not failed, not done, and nobody else's to take.
+        const held = await stepStatus();
+        expect(['DONE', 'FAILED', 'READY']).not.toContain(held);
+        expect(Number((await db.get('SELECT COUNT(*) AS n FROM project_mission_evidence', {})).n)).toBe(0);
+        expect(await initiativeRow(initiative.id)).toMatchObject({ status: 'WAITING', stopCode: 'ASSISTANT_PAUSED', recheckAfter: null });
+
+        expect(await control.resumeAll()).toMatchObject({ requeued: 1 });
+        script([write], [report]);
+        expect((await runner.tick({ wait: true })).results[0]).toMatchObject({ status: 'COMPLETED', outcome: 'DONE' });
+        expect(await stepStatus()).toBe('DONE');
+        // The file write was replayed from the journal, and the step has one piece of evidence.
+        expect(projects.writeWorkspaceFile).toHaveBeenCalledTimes(1);
+        expect(Number((await db.get('SELECT COUNT(*) AS n FROM project_mission_evidence', {})).n)).toBe(1);
+        expect(Number((await db.get('SELECT COUNT(*) AS n FROM assistant_runs', {})).n)).toBe(1);
     });
 
     test('authorize refuses every dispatch while stopped, with one reason', async () => {

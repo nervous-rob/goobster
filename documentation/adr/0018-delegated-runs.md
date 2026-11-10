@@ -11,7 +11,8 @@ grant) and [ADR 0017](0017-initiatives-updates-processes.md) (initiatives
 and updates). Behaviour is documented in
 [delegated_runs.md](../delegated_runs.md). The services are
 `assistantRunService.js` and `assistantRunnerService.js` under
-`packages/core/services/`.
+`packages/core/services/`. The entries of the tool table live one module per
+capability under `packages/core/services/assistant/runTools/`.
 
 ## Context
 
@@ -41,7 +42,13 @@ Two observations shaped the design:
    it was planned under and the acting person before every call. A name that
    is not in the table is refused and never reaches the registry. Adding a
    delegated capability is therefore an explicit entry, never a side effect
-   of adding a chat tool.
+   of adding a chat tool. The table is assembled in
+   `services/assistant/runTools/index.js` from one module per capability
+   (`searchWeb`, `lookupNotes`, `projectFiles`, `runProjectFile`,
+   `startResearch`, `generatedNotes`, `consultDocs`, `finish`); a new
+   capability is a new module and one line in that index. An entry may also
+   say when it is on offer (`available({ project, features })`: a linked
+   project, a feature that is on).
 
 2. **The checkpoint is an operation journal, not a transcript.**
    `assistant_run_operations` records each call before dispatch (`PREPARED`,
@@ -100,8 +107,8 @@ Two observations shaped the design:
    summary) and `assistant_run_operations` (retrieved text) are in the
    account export, the transparency audit and `/forget-me`, and are pruned
    with finished initiatives at 180 days. The work ledger gets codes only
-   (`assistant_run` failures: `PROVIDER_ERROR`, `UPDATE_FAILED`), never a
-   provider's message.
+   (`assistant_run` failures: `PROVIDER_ERROR`, `UPDATE_FAILED`,
+   `INTERRUPTED_BY_RESTORE`), never a provider's message.
 
 9. **Knowledge is hardened before it is written to.**
    - Capacity pruning (`_pruneNodes`) and the low-confidence orphan prune
@@ -139,12 +146,29 @@ Two observations shaped the design:
     default, shown at activation, and an authority change like any other
     rule (pause to edit).
 
+13. **A restore ends in-flight runs; it never resumes them.** Crash
+    recovery (decision 2) trusts the journal because the journal and the
+    world it describes moved together. After a restore from a backup they
+    did not, so `backupService.interruptInFlightWork()` marks every
+    `RUNNING` run `FAILED` with `INTERRUPTED_BY_RESTORE`, together with its
+    initiative when that is `RUNNING`, `QUEUED` or `WAITING` (a run left
+    `RUNNING` under a requeued initiative was about to resume from its
+    journal), and every `RUNNING` initiative whose run had not opened. The
+    lease is cleared and each gets one `work_failures` row. Lease reaping,
+    the requeue pass and the runner take only `RUNNING`, `WAITING` and
+    `QUEUED` work, so none of it is picked up again; the owner's *Try
+    again* starts a new attempt with a new journal. Initiatives that were
+    only queued, proposed or parked are left as they were.
+
 ## What is deliberately not here
 
 - **Editing saved notes, edges and archiving** (`kg.saved.amend`, `kg.edge`,
   `kg.archive`): edges have no evidence or retraction history yet.
 - **Repository operations** (`repo.commit`, `repo.push`, `pr.create`).
-- **Process actions** (DA-5) and **plan-driven project work** (DA-4).
+- **Process actions** (DA-5). **Plan-driven project work** was added by
+  DA-4a in [ADR 0019](0019-delegated-plan-steps.md), which also adds
+  `available({ planStep })`, `final`, `source: 'private'` and
+  `publishes: 'project'` to the tool spec.
 - **Project audiences.** A run's finding goes to the owner only.
 
 ## Consequences
