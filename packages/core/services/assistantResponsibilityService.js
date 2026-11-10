@@ -611,8 +611,9 @@ class AssistantResponsibilityService {
             }
         }
         const gatedSources = (parseJson(row.scopesJson, {}).sources || []).filter(source => GATED_SOURCE_SCOPES.includes(source));
-        if (gatedSources.length && !(await pilotAccess.allows(row.ownerUserId, 'sources'))) {
-            throw new AssistantResponsibilityError(pilotAccess.REFUSAL_CODE,
+        const pilot = gatedSources.length ? require('./assistantAccessService') : null;
+        if (pilot && !(await pilot.allows(row.ownerUserId, 'sources'))) {
+            throw new AssistantResponsibilityError(pilot.REFUSAL_CODE,
                 `Noticing work from ${gatedSources.join(', ')} is limited to the installation's owner until the pilot decision is recorded.`, 409,
                 { capability: 'sources', sources: gatedSources });
         }
