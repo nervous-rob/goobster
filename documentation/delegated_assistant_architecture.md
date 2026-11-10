@@ -843,7 +843,8 @@ As built, three things differ from the proposal above them:
 - `surface` (`home`, `inbox`, `chat`) is required. The chat card posts to the
   same route with `surface: 'chat'` and a confirmation receipt for the card;
   `decide` is deliberately not a model tool, refuses inside a model tool
-  call, and a test fails if a file under `utils/tools/` calls it.
+  call, and a test fails if a chat tool (`utils/tools/`) or a run tool
+  (`services/assistant/runTools/`) calls it.
 
 Mission approval still mints the mission's own human approval receipt
 (section 7) inside the descriptor, bound to the plan revision on the card.

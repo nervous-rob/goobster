@@ -262,11 +262,12 @@ describe('who may decide', () => {
         expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('pending');
     });
 
-    test('no chat tool reaches decide(): a model call is never a confirmation', () => {
-        const root = path.join(__dirname, '..', 'packages', 'core', 'utils');
-        const sources = [path.join(root, 'toolsRegistry.js')];
-        const toolsDir = path.join(root, 'tools');
-        if (fs.existsSync(toolsDir)) {
+    test('no chat tool or run tool reaches decide(): a model call is never a confirmation', () => {
+        const core = path.join(__dirname, '..', 'packages', 'core');
+        const sources = [path.join(core, 'utils', 'toolsRegistry.js')];
+        // Chat tools, and the tools a delegated run may call.
+        for (const toolsDir of [path.join(core, 'utils', 'tools'), path.join(core, 'services', 'assistant', 'runTools')]) {
+            expect(fs.existsSync(toolsDir)).toBe(true);
             for (const name of fs.readdirSync(toolsDir)) if (name.endsWith('.js')) sources.push(path.join(toolsDir, name));
         }
         const offenders = sources.filter((file) => {
