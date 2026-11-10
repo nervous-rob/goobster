@@ -74,7 +74,7 @@ increment done because its proposal exists.
 | DA-0: baseline and decisions | Done: [ADR 0016](adr/0016-delegated-responsibilities.md) (pilot numbers still to be recorded by the owner) | None | Revalidated source inventory; exact schema/API/feature choices and recorded pilot policy |
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
 | DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Still open: briefing feedback, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
-| DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
+| DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, project-audience findings (repository operations shipped with DA-11a) | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
 | DA-4: project continuity | In progress. Done (DA-4a): the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). Planned (DA-4b): opportunities derived from conversations, supersession when a person steers, project boards reading the canonical gates | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
@@ -82,13 +82,14 @@ increment done because its proposal exists.
 | DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
-| DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
+| DA-11: extended reach | In progress. Done (DA-11a): repository work in a clone of the linked project (`commitProjectRepo`, `pushProjectRepo`, `openPullRequest`), on the grant's branch patterns and never on the base, default or a protected branch, never forced, reconciled against GitHub after a crash, capped by `externalOperations`, refused after a private read, owner-only behind the pilot gate, and grantable from the draft form ([delegated_runs.md](delegated_runs.md#repository-work), ADR 0018 and ADR 0015 amendments). Planned: saved-note edits, connections and archiving (DA-11b), findings for a project's members (DA-11c), outside connectors (DA-11d) | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
 | DA-12: operator controls and model evaluation | Planned | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
 in mind; only the first part of DA-7 (DA-7a, deciding a request where it is
-shown) is implemented. Their contracts are in
+shown), the plan steps of DA-4a and the repository work of DA-11 (DA-11a)
+are implemented. Their contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
 DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4
@@ -465,6 +466,13 @@ entries in the run's tool table (ADR 0018), never by exposing a chat tool:
 - **Repository work** (`repo.commit`, `repo.push`, `pr.create`) through
   `projectRepoService` and sealed git, on the acting person's own GitHub
   connection, on named branches only, never forced, never the default branch.
+  **Shipped in DA-11a** ([delegated_runs.md](delegated_runs.md#repository-work)):
+  the three run tools, the base / default / protected branch refusal,
+  reconciliation of a commit, a push and a pull request after a crash, the
+  `externalOperations` cap (default 2 a day, ceiling 20), the rule that
+  nothing is pushed after a private read, and repository grants in the draft
+  form. Left for a later increment: pulling, merging or rebasing a work
+  branch, a host-set cap, and watching a pull request's checks.
 - **Saved notes, connections and archiving** (`kg.saved.amend`, `kg.edge`,
   `kg.archive`) after edges gain evidence and retraction history and merge
   and archive are reversible. Saved-note edits are proposals a person
@@ -480,7 +488,9 @@ entries in the run's tool table (ADR 0018), never by exposing a chat tool:
 Exit scenarios:
 
 - A push after a crash is reconciled against the remote before any retry.
+  (DA-11a: `tests/assistantRepoTools.test.js`, "after a crash".)
 - A run cannot push to a branch outside its patterns or to a protected one.
+  (DA-11a: the same spec, "cannot work outside its branch patterns".)
 - A saved-note proposal shows a diff; applying it is the person's action.
 - An archived note is restorable with its connections.
 - A member who leaves a project stops receiving its findings at once.

@@ -119,6 +119,35 @@ same rules (host-side sealed git, the person's own token, never forced):
   `.../repos/:name/{branches,compare,ci,pulls}` (GET), `POST .../pulls`; the
   portal gains a per-clone detail view.
 
+## Amendment: use by delegated runs (DA-11a)
+
+A [delegated run](../delegated_runs.md#repository-work) may commit, push and
+open a pull request in a clone, inside a responsibility its owner activated
+([ADR 0018](0018-delegated-runs.md), amendment). It calls this service and
+nothing else, so every rule above holds unchanged: host-side sealed git, the
+acting person's own token through the per-call credential helper, their
+allowlist, never forced, a snapshot before the branch switch, an
+`integration_audit` row for each push and pull request. The service gained
+only what unattended work needs to ask first and to prove afterwards:
+
+- `commit({ onBranch, trailers })` and `push({ onBranch })`. `onBranch`
+  refuses with `BRANCH_CHANGED`, inside the clone's serial queue, unless the
+  clone is on that branch at that moment: the clone is one working copy
+  shared with the person, who may switch it between a run's steps.
+  `trailers` are validated `Key: value` lines appended after the message is
+  cut to length.
+- `branchPolicy()` reads the repository's default branch and one branch's
+  protection from GitHub and throws `BRANCH_UNVERIFIED` when GitHub cannot
+  say. `remoteHead()` reads where a branch is on origin (`git ls-remote`,
+  nothing fetched) and whether that commit is already in the local branch.
+  `findCommitByTrailer()` and `openPullRequestFor()` answer "did this
+  happen" for a commit and a pull request.
+- A push refused by a repository rule (`GH013`) is reported as
+  `PROTECTED_BRANCH`, like a classic protected branch (`GH006`).
+
+No chat tool and no route was added for these, and no operation that
+rewrites history, deletes a branch or forces a push exists anywhere.
+
 ## Consequences
 
 - New table `project_repos`; new config `observatory.reposEnabled`

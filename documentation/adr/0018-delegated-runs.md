@@ -164,12 +164,80 @@ Two observations shaped the design:
 
 - **Editing saved notes, edges and archiving** (`kg.saved.amend`, `kg.edge`,
   `kg.archive`): edges have no evidence or retraction history yet.
-- **Repository operations** (`repo.commit`, `repo.push`, `pr.create`).
+- **Repository operations** (`repo.commit`, `repo.push`, `pr.create`) were
+  added by DA-11a; see the amendment below.
 - **Process actions** (DA-5). **Plan-driven project work** was added by
   DA-4a in [ADR 0019](0019-delegated-plan-steps.md), which also adds
   `available({ planStep })`, `final`, `source: 'private'` and
   `publishes: 'project'` to the tool spec.
 - **Project audiences.** A run's finding goes to the owner only.
+
+## Amendment (DA-11a): repository work, a guard after authorization, and a cap on what leaves
+
+DA-11a adds `commitProjectRepo`, `pushProjectRepo` and `openPullRequest`
+(`runTools/projectRepos.js`) through `projectRepoService`
+([ADR 0015](0015-project-repositories.md), amended for this). A push and a
+pull request are the first run effects that leave the installation and
+cannot be undone, which needed four additions to the tool contract.
+
+1. **`needs` may be async.** The repository a call means is found by the
+   clone's folder name in the linked project (`project_repos`), so `needs`
+   reads our own database. It still never reads the outside world.
+
+2. **`guard(args, ctx)` runs after `authorize()` and before the call is
+   journaled as dispatched.** Whether a branch is the default branch or is
+   protected is known only to GitHub, and asking uses the person's token, so
+   it must not be asked until the grant has allowed the call. A guard
+   returns a refusal code or null; one that throws refuses. The repository
+   guard also checks the pilot gate
+   (`assistantAccessService.allows(owner, 'reach')`), so the capability is
+   checked where it is dispatched as well as where it is granted. It fails
+   closed: if GitHub cannot say whether a branch is protected the call is
+   refused with `BRANCH_UNVERIFIED`. The alternative, checking inside `run`,
+   would journal a refused call as a dispatched write.
+
+3. **`publishes: 'external'` is refused after any private read.** ADR 0019
+   lets a run that read private knowledge write into a project only the
+   person reads. A repository on GitHub has an audience nobody here knows,
+   so a push or a pull request after `lookupNotes` or `listGeneratedNotes`
+   is refused with `PRIVATE_CONTEXT` whoever can read the project. A commit
+   is `publishes: 'project'`: it stays in the clone. The rule is per run. It
+   does not track text across runs or text a person put in the clone.
+
+4. **`budget: 'externalOperations'` is counted from the journal.** The cap
+   is per responsibility per UTC day: the grant's own number up to a fixed
+   ceiling of 20, and 2 when unset. The count is rows of tools with this
+   budget that are `PREPARED`, `DISPATCHED`, `UNCERTAIN` or `FAILED`, or
+   `SUCCEEDED` with a result that does not begin "Not ". An attempt whose
+   outcome is unknown counts; a refusal or a declined call does not. The
+   check runs after the call's own `PREPARED` row is inserted and counts
+   only rows with a smaller id, so two runs racing for the last one cannot
+   both take it. No counter column was added: the journal already is the
+   record, and a crash cannot lose a count. Over the cap is `EXTERNAL_BUDGET`,
+   a refusal the run reports; it does not park the work.
+
+`available()` now also receives the responsibility's granted operations and
+the owner's pilot capabilities. The repository tools are offered only when
+the grant names the operation on a repository of the linked project, so a
+run without such a grant gets the same tool list, and the same prompt, as
+before.
+
+Reconciliation after a crash (decision 2 of this ADR), by tool:
+
+| Tool | Asked | Done | Absent | Unknown (review) |
+| --- | --- | --- | --- | --- |
+| `commitProjectRepo` | The last 50 commits of the local branch | One carries the trailer `Goobster-Operation: <run>:<op>` | None does | The clone cannot be read |
+| `pushProjectRepo` | `git ls-remote` for the branch, with the person's token | GitHub's head is the local commit | The branch is not on GitHub, or GitHub's head is an ancestor of the local commit | GitHub's head is some other commit, or no answer |
+| `openPullRequest` | The open pull request whose head is the branch | One exists (adopted when its description carries the operation's marker, else reported as already open) | None exists | No answer |
+
+Refusing the branch the clone started from as well as the default branch
+is deliberate: a clone can be made from a non-default branch, and that
+branch is the base every pull request goes into.
+
+Not added: a way to pull, merge or rebase a work branch (a rejected push is
+a result the person resolves), a host-wide cap on `externalOperations`
+(the ceiling is a constant), and a report when a run stops before filing
+its result (the step is in the journal and in `integration_audit`).
 
 ## Consequences
 

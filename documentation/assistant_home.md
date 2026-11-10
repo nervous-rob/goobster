@@ -214,6 +214,15 @@ what a responsibility is and how each action is checked.
   a research expedition, and in one of your projects: read it, edit its
   files under folders you name, run code in the sandbox), when it ends, and
   whether proposed work starts automatically. A draft grants nothing.
+- **Repository work.** When the chosen project has a repository cloned into
+  it, the form also offers: commit there, push to GitHub, and open pull
+  requests, on the branches you name (`goobster/*` to start with), with how
+  many pushes and pull requests a day (2 to start with). The form, the
+  responsibility's row and the activation dialog each say that a push or a
+  pull request cannot be undone from here. While repository work is in the
+  pilot this part of the form is shown only to the installation's owner
+  (`GET /api/app/assistant/access`, `capabilities.reach`). See
+  [delegated_runs.md](delegated_runs.md#repository-work).
 - **Activate** shows exactly what will be granted, as you, and until when,
   and needs your confirmation. Activation requires Attention to be on.
 - **Pause / Resume / Mark complete / Revoke / Archive** follow the lifecycle;
@@ -224,8 +233,8 @@ Under each responsibility is its work: proposed items with *Start* and
 *Dismiss*, running and waiting items with *Cancel*, and finished items with
 their result. See [delegated_runs.md](delegated_runs.md).
 
-Grants the form cannot express yet (repositories, processes, budgets) can be
-created through the API.
+Grants the form cannot express yet (processes, the other budgets, more
+than one repository) can be created through the API.
 
 ## API
 
