@@ -45,6 +45,10 @@ const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20, computeSeconds: 12
 const MAX_ROUNDS = 8;
 const RUN_DEADLINE_MS = 10 * 60 * 1000;
 const REPLY_TOKENS = 1200;
+/** Pushes and pull requests per responsibility per UTC day when the grant sets no `externalOperations`. */
+const DEFAULT_EXTERNAL_OPERATIONS = 2;
+/** The most a grant's own `externalOperations` can allow in a day. */
+const MAX_EXTERNAL_OPERATIONS = 20;
 /** How soon a run waiting on its expedition looks again (events usually wake it sooner). */
 const CHILD_RECHECK_MS = 5 * 60 * 1000;
 
@@ -153,6 +157,61 @@ class AssistantRunService {
         try { stored = JSON.parse(responsibility.budgetsJson || '{}') || {}; } catch { stored = {}; }
         const pick = (key) => (Number.isSafeInteger(stored[key]) ? stored[key] : DEFAULT_BUDGETS[key]);
         return { modelTokens: pick('modelTokens'), searches: pick('searches'), computeSeconds: pick('computeSeconds') };
+    }
+
+    /**
+     * The grant's daily cap on operations that leave this installation
+     * (a push, a pull request): its own number up to the ceiling, or a
+     * small default when unset. Never unlimited.
+     */
+    externalBudget(responsibility) {
+        let stored;
+        try { stored = JSON.parse(responsibility.budgetsJson || '{}') || {}; } catch { stored = {}; }
+        return Number.isSafeInteger(stored.externalOperations)
+            ? Math.min(stored.externalOperations, MAX_EXTERNAL_OPERATIONS)
+            : DEFAULT_EXTERNAL_OPERATIONS;
+    }
+
+    /**
+     * Outside operations the responsibility's runs made today (UTC), or may
+     * have made, before journal row `beforeId`: read from the journal, so a
+     * crash loses none. A call that was refused, or that answered "Not ...",
+     * reached nothing and is not counted.
+     */
+    async _externalUsed(responsibilityId, beforeId, now = new Date()) {
+        const tools = Object.keys(TOOLS).filter(name => TOOLS[name].budget === 'externalOperations');
+        if (!tools.length) return 0;
+        const params = { rid: responsibilityId, before: beforeId, day: dayStart(now) };
+        const marks = tools.map((name, index) => { params[`t${index}`] = name; return `@t${index}`; });
+        const row = await db.get(
+            `SELECT COUNT(*) AS n FROM assistant_run_operations o
+             JOIN assistant_runs r ON r.id = o.runId
+             WHERE r.responsibilityId = @rid AND o.id < @before AND o.createdAt >= @day
+               AND o.tool IN (${marks.join(', ')})
+               AND (o.status IN ('PREPARED', 'DISPATCHED', 'UNCERTAIN', 'FAILED')
+                    OR (o.status = 'SUCCEEDED' AND COALESCE(o.resultText, '') NOT LIKE 'Not %'))`,
+            params
+        );
+        return Number(row?.n || 0);
+    }
+
+    /** The operations the responsibility grants, for a tool deciding whether it is on offer. */
+    _grants(responsibility) {
+        try {
+            const parsed = JSON.parse(responsibility.operationsJson || '[]');
+            return Array.isArray(parsed) ? parsed : [];
+        } catch {
+            return [];
+        }
+    }
+
+    /** Which capabilities still in the pilot the responsibility's owner has (assistantAccessService). */
+    async _capabilities(responsibility) {
+        try {
+            return (await require('./assistantAccessService').describe(responsibility.ownerUserId)).capabilities || {};
+        } catch {
+            return {};
+        }
     }
 
     /** Tokens this run has reserved or spent so far (the work ledger's own rows). */
@@ -305,7 +364,7 @@ class AssistantRunService {
                 return 'This task has been stopped for review.';
             }
 
-            const need = spec.needs(args, ctx);
+            const need = await spec.needs(args, ctx);
             const base = {
                 tool: name, hash, seq, effect: spec.effect,
                 operation: need?.operation || null,
@@ -339,6 +398,8 @@ class AssistantRunService {
                 const allowed = await require('./knowledgeTransferService').privateContextAllowed({ userId: ctx.actor, project: ctx.project });
                 if (!allowed) return refuse('PRIVATE_CONTEXT');
             }
+            // Outside this installation nobody's audience is known: never after a private read.
+            if (spec.publishes === 'external' && ctx.privateRead) return refuse('PRIVATE_CONTEXT');
             if (spec.budget === 'searches') {
                 if (ctx.used.searches + ctx.searches >= ctx.budgets.searches) return refuse('SEARCH_BUDGET');
                 ctx.searches += 1;
@@ -346,9 +407,25 @@ class AssistantRunService {
             if (spec.budget === 'computeSeconds' && ctx.used.compute + ctx.compute >= ctx.budgets.computeSeconds) {
                 return refuse('COMPUTE_BUDGET');
             }
+            if (typeof spec.guard === 'function') {
+                // Allowed by the grant; now what only the world can say (a protected branch).
+                let blocked = 'GUARD_FAILED';
+                try { blocked = await spec.guard(args, ctx); } catch { /* could not be checked: refused */ }
+                if (blocked) return refuse(blocked);
+            }
 
             const id = prior ? prior.id : await journal({ ...base, status: 'PREPARED' });
             ctx.opId = id;
+            if (spec.budget === 'externalOperations'
+                && await this._externalUsed(ctx.run.responsibilityId, id) >= ctx.externalBudget) {
+                // Counted after its own row exists, so calls racing for the
+                // last one cannot both take it: the later row sees the earlier.
+                await db.run(
+                    "UPDATE assistant_run_operations SET status = 'REFUSED', refusalCode = 'EXTERNAL_BUDGET', updatedAt = @now WHERE id = @id",
+                    { id, now: utcText() }
+                );
+                return 'Not allowed (EXTERNAL_BUDGET).';
+            }
             await mark(id, 'DISPATCHED');
             let result;
             try {
@@ -407,16 +484,19 @@ class AssistantRunService {
             ? !(await require('./knowledgeTransferService').privateContextAllowed({ userId: actor, project }))
             : false;
         // Each tool says when it is on offer (a linked project, a feature
-        // that is on, a plan-step run). A plan step in a project other
+        // that is on, a plan-step run, an operation the grant names, a
+        // capability still in the pilot). A plan step in a project other
         // people read is not offered the person's private knowledge at all.
+        const offer = { project, features, planStep, grants: this._grants(responsibility), capabilities: await this._capabilities(responsibility) };
         const offered = new Set(Object.keys(TOOLS).filter((name) => {
             const spec = TOOLS[name];
-            if (typeof spec.available === 'function' && !spec.available({ project, features, planStep })) return false;
+            if (typeof spec.available === 'function' && !spec.available(offer)) return false;
             return !(planStep && sharedProject && spec.source === 'private');
         }));
 
         const ctx = {
             run, actor, project, budgets, used, offered,
+            externalBudget: this.externalBudget(responsibility),
             // The agent plan step this run carries out, once dispatched.
             planStep: null,
             stepReport: null,
@@ -879,4 +959,6 @@ module.exports = new AssistantRunService();
 module.exports.AssistantRunService = AssistantRunService;
 module.exports.TOOLS = TOOLS;
 module.exports.DEFAULT_BUDGETS = DEFAULT_BUDGETS;
+module.exports.DEFAULT_EXTERNAL_OPERATIONS = DEFAULT_EXTERNAL_OPERATIONS;
+module.exports.MAX_EXTERNAL_OPERATIONS = MAX_EXTERNAL_OPERATIONS;
 module.exports.argsHash = argsHash;

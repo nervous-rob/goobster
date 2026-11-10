@@ -392,6 +392,7 @@ const GROUPS = [
             'assistantInitiativeService',
             'assistantPlanStep',
             'assistantProcessService',
+            'assistantRepoTools',
             'assistantResponsibilityService',
             'assistantRunService',
             'assistantStewardService',
