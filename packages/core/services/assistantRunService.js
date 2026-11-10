@@ -115,6 +115,21 @@ function argsHash(args) {
  */
 const TOOLS = require('./assistant/runTools');
 
+/** One named resource, as a private read's origin and an outside write's destination are compared. */
+const resourceKey = (kind, id) => (kind && id != null ? `${kind}:${id}` : null);
+
+/**
+ * A private source was read. A tool with `sourceScope: 'resource'` returns
+ * text that lives in the one outside resource its call names; anything
+ * else (the person's notes) has no such home.
+ */
+function notePrivate(ctx, spec, kind, id) {
+    ctx.privateRead = true;
+    const origin = spec.sourceScope === 'resource' ? resourceKey(kind, id) : null;
+    if (origin) ctx.privateOrigins.add(origin);
+    else ctx.privateUnscoped = true;
+}
+
 class AssistantRunService {
     constructor() {
         this.TOOLS = TOOLS;
@@ -402,7 +417,7 @@ class AssistantRunService {
             );
             if (prior?.status === 'SUCCEEDED') {
                 if (spec.final) await spec.run(args, ctx);
-                if (spec.source === 'private') ctx.privateRead = true;
+                if (spec.source === 'private') notePrivate(ctx, spec, prior.resourceKind, prior.resourceId);
                 if (typeof spec.replay === 'function') return spec.replay(prior, ctx);
                 return prior.resultText || '';
             }
@@ -462,7 +477,13 @@ class AssistantRunService {
                 if (!allowed) return refuse('PRIVATE_CONTEXT');
             }
             // Outside this installation nobody's audience is known: never after a private read.
-            if (spec.publishes === 'external' && ctx.privateRead) return refuse('PRIVATE_CONTEXT');
+            // The one exception (ADR 0030): a write back into the same named outside resource
+            // that everything private in this run was read from. Nothing leaves that was not there.
+            if (spec.publishes === 'external' && ctx.privateRead) {
+                const home = spec.publishesTo === 'resource' ? resourceKey(base.resourceKind, base.resourceId) : null;
+                const returning = Boolean(home) && !ctx.privateUnscoped && [...ctx.privateOrigins].every(origin => origin === home);
+                if (!returning) return refuse('PRIVATE_CONTEXT');
+            }
             if (spec.budget === 'searches') {
                 if (ctx.used.searches + ctx.searches >= ctx.budgets.searches) return refuse('SEARCH_BUDGET');
                 ctx.searches += 1;
@@ -510,7 +531,7 @@ class AssistantRunService {
                 return `That did not work (${error?.code || 'ERROR'}).`;
             }
             await mark(id, 'SUCCEEDED', result);
-            if (spec.source === 'private') ctx.privateRead = true;
+            if (spec.source === 'private') notePrivate(ctx, spec, base.resourceKind, base.resourceId);
             await ctx.account();
             ctx.childPending();
             return result;
@@ -540,7 +561,7 @@ class AssistantRunService {
         const steps = planStep ? require('./assistant/planStepRun') : null;
         // Private knowledge this run already read (a resumed run remembers).
         const journaled = await db.all(
-            "SELECT DISTINCT tool FROM assistant_run_operations WHERE runId = @runId AND status = 'SUCCEEDED'", { runId: run.id }
+            "SELECT DISTINCT tool, resourceKind, resourceId FROM assistant_run_operations WHERE runId = @runId AND status = 'SUCCEEDED'", { runId: run.id }
         );
         // Can anyone but the person read what is written into the project?
         const sharedProject = project
@@ -566,7 +587,10 @@ class AssistantRunService {
             // The agent plan step this run carries out, once dispatched.
             planStep: null,
             stepReport: null,
-            privateRead: journaled.some(row => TOOLS[row.tool]?.source === 'private'),
+            privateRead: false,
+            // Where the private text came from: named outside resources, or anywhere else (ADR 0030).
+            privateOrigins: new Set(),
+            privateUnscoped: false,
             searches: Number(run.searches || 0),
             compute: Number(run.computeSeconds || 0),
             fileHashes: new Map(),
@@ -607,6 +631,10 @@ class AssistantRunService {
                 await ctx.hostStopped();
             }
         };
+        for (const row of journaled) {
+            const spec = TOOLS[row.tool];
+            if (spec?.source === 'private') notePrivate(ctx, spec, row.resourceKind, row.resourceId);
+        }
 
         const finishRun = async (fields) => {
             const written = await db.run(

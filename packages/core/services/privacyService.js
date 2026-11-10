@@ -775,6 +775,8 @@ class PrivacyService {
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.knowledgeChangeSets = forgottenResponsibilities.knowledgeChanges;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
+            // What a run asked the person to approve on an outside connector.
+            counts.assistantConnectorRequests = forgottenResponsibilities.connectorRequests;
             counts.assistantDigests = forgottenResponsibilities.digests;
 
             // Spitball Expeditions: research runs, their cycles, and the
@@ -1326,6 +1328,7 @@ class PrivacyService {
             assistant_proposal_counters: responsibilities.proposalCounters,
             assistant_message_labels: responsibilities.messageLabels,
             kg_change_sets: responsibilities.knowledgeChanges,
+            assistant_connector_requests: responsibilities.connectorRequests,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',

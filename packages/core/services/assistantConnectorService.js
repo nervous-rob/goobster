@@ -103,6 +103,8 @@ class AssistantConnectorService {
         if (!connector) throw new AssistantConnectorError('NO_SUCH_CONNECTOR', 'There is no such connector.', 404);
         const holders = await this._holders(userId, connector.id);
         const { disconnected } = await integrations.disconnect({ userId: String(userId), provider: connector.credential.provider });
+        // Anything a run had asked them to approve there can no longer be done.
+        await require('./assistantConnectorRequestService').withdrawStale({ userId, connectorId: connector.id });
         return { revoked: disconnected, responsibilities: holders };
     }
 }

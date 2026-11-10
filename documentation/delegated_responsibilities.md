@@ -99,7 +99,7 @@ permission and no wildcard resource.
 | `repo.commit` | Commit in a project repository clone, on a work branch | `repository` |
 | `repo.push` | Push a work branch (never forced) | `repository` |
 | `pr.create` | Open a pull request from a work branch | `repository` |
-| `external.write` | Write to a named resource of an outside connector (DA-11d) | `external` |
+| `external.write` | Write to a named resource of an outside connector (DA-11d; Notion is DA-11e) | `external` |
 
 Resource shapes:
 
@@ -122,9 +122,13 @@ Resource shapes:
 - `external`: `{ "kind": "external", "ids": ["<connector>:<resource>"] }`. Each id
   names one resource of an installed outside connector, in the shape the
   connector accepts (no wildcard, no whole service); `read` and
-  `external.write` take it and nothing else does. With no connector installed
-  there is nothing to grant, and a grant naming an unknown connector is refused
-  as `INVALID_RESOURCE`. Reaching it also needs your own credential for the
+  `external.write` take it and nothing else does. Notion is the connector
+  installed: `notion:<id>` names one page or one database, and a pasted link
+  or dashed id is stored as the 32-character id
+  ([delegated_notion.md](delegated_notion.md)). A grant naming an unknown
+  connector is refused as `INVALID_RESOURCE`. `external.write` never covers
+  what a connector lists as ask-only (moving a Notion page to the trash): a
+  run can only ask, and you approve each one. Reaching it also needs your own credential for the
   connector's service: activating without it is refused as `RESOURCE_UNAVAILABLE`,
   and so is a call after the credential is revoked
   ([delegated_connectors.md](delegated_connectors.md)).
