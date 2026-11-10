@@ -123,7 +123,7 @@ same rules (host-side sealed git, the person's own token, never forced):
 
 A [delegated run](../delegated_runs.md#repository-work) may commit, push and
 open a pull request in a clone, inside a responsibility its owner activated
-([ADR 0018](0018-delegated-runs.md), amendment). It calls this service and
+([ADR 0025](0025-delegated-repository-work.md)). It calls this service and
 nothing else, so every rule above holds unchanged: host-side sealed git, the
 acting person's own token through the per-call credential helper, their
 allowlist, never forced, a snapshot before the branch switch, an

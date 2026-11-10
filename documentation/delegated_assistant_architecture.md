@@ -976,8 +976,8 @@ additionally refuses the repository's default branch and any branch GitHub
 reports as protected, whatever the pattern says.
 
 **Shipped in DA-11a** as specified, in `runTools/projectRepos.js`
-([delegated_runs.md](delegated_runs.md#repository-work); the amendments to
-ADR 0018 and ADR 0015 hold the reasons). What the implementation settled:
+([delegated_runs.md](delegated_runs.md#repository-work); ADR 0025 and the amendment to
+ADR 0015 hold the reasons). What the implementation settled:
 
 - The commit trailer is looked for in the last 50 commits of the work
   branch, not only at HEAD. A push whose remote head is an ancestor of the

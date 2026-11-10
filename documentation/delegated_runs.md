@@ -283,9 +283,9 @@ finished. Failure records in the work ledger hold a code only.
   `{ action: queue | cancel | retry, expectedRevision }` (unchanged).
 
 Design and reasons: [ADR 0018](adr/0018-delegated-runs.md); for plan steps,
-[ADR 0019](adr/0019-delegated-plan-steps.md); for repository work, the
-amendments at the end of ADR 0018 and
-[ADR 0015](adr/0015-project-repositories.md).
+[ADR 0019](adr/0019-delegated-plan-steps.md); for repository work,
+[ADR 0025](adr/0025-delegated-repository-work.md) and the amendment at the
+end of [ADR 0015](adr/0015-project-repositories.md).
 
 ## Not built yet
 
