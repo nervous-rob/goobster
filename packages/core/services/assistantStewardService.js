@@ -13,11 +13,16 @@
  *     recovers a change whose event hint was missed, e.g. across a restart);
  *  4. adopt open project gates into canonical updates and resolve adopted
  *     ones whose gate closed (assistantGateService);
- *  5. file Inbox envelopes still owed by committed updates.
+ *  5. open, reopen, settle and resolve process incidents, and file the
+ *     update for a process that outlived its purpose
+ *     (assistantIncidentService). A stall counts toward an incident only
+ *     for time this installation was itself running;
+ *  6. file Inbox envelopes still owed by committed updates.
  * Each pass records its time in `instance_state` (`assistant_steward_pass`)
- * so the Home projection can say when its picture was last refreshed.
+ * so the Home projection can say when its picture was last refreshed, and
+ * since when passes have followed each other without a gap.
  * Every six hours it also applies retention: process observations 90 days,
- * terminal initiatives and settled updates 180 days.
+ * terminal initiatives, settled updates and resolved incidents 180 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
  * reconcile for the owner they name. Nothing here runs a model, a search
@@ -30,10 +35,10 @@ const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
 
 const LOCK = 'assistant_steward';
-const { HEARTBEAT_KEY } = require('./assistantHomeService');
+const { HEARTBEAT_KEY, STALE_AFTER_MS } = require('./assistantHomeService');
 const INTERVAL_MS = 5 * 60 * 1000;
 const RETENTION_EVERY_MS = 6 * 60 * 60 * 1000;
-const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180 };
+const RETENTION_DAYS = { observations: 90, initiatives: 180, updates: 180, incidents: 180 };
 // The first pass waits so it does not compete for pooled connections with
 // the other startup sweeps that each hold one for a singleton lock.
 const FIRST_PASS_DELAY_MS = 60 * 1000;
@@ -56,6 +61,15 @@ async function sweep({ now = new Date(), retention = null } = {}) {
         const initiatives = require('./assistantInitiativeService');
         const updates = require('./assistantUpdateService');
         const processes = require('./assistantProcessService');
+        const instanceState = require('./instanceStateService');
+        // Since when passes have followed each other without a gap. Across a
+        // gap this installation was not running (stopped, paused, restored),
+        // and a schedule that slipped then is not the process's fault.
+        const beat = await instanceState.get(HEARTBEAT_KEY);
+        const previous = Date.parse(beat?.at || '');
+        const since = Date.parse(beat?.since || beat?.at || '');
+        const continuous = Number.isFinite(previous) && now.getTime() - previous >= 0 && now.getTime() - previous <= STALE_AFTER_MS;
+        const upSince = continuous && Number.isFinite(since) ? new Date(since) : now;
         const result = {
             expired: await responsibilities.expireDue({ now }),
             leasesReaped: await initiatives.reapExpiredLeases({ now }),
@@ -63,14 +77,16 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             requeued: await initiatives.requeueDue({ now }),
             reconcile: await initiatives.reconcile({ now }),
             gates: await require('./assistantGateService').adoptProjectGates({}),
+            incidents: await require('./assistantIncidentService').reconcile({ now, upSince }),
             envelopes: await updates.deliverPending({})
         };
         // Home says how fresh its picture is from this, in any process.
-        await require('./instanceStateService').set(HEARTBEAT_KEY, { at: now.toISOString() });
+        await instanceState.set(HEARTBEAT_KEY, { at: now.toISOString(), since: upSince.toISOString() });
         if (runRetention) {
             lastRetentionAt = now.getTime();
             result.retention = {
                 processes: await processes.prune({ days: RETENTION_DAYS.observations, now }),
+                incidents: await require('./assistantIncidentService').prune({ days: RETENTION_DAYS.incidents, now }),
                 runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
                 updates: await updates.prune({ days: RETENTION_DAYS.updates, now })

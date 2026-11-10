@@ -875,16 +875,23 @@ class ProjectTriggerService {
             [DISPATCH.FAILED]: 'failed',
             [DISPATCH.SKIPPED]: 'skipped'
         }[status] || 'unknown';
+        const occurrenceKey = sourceJob ? `job:${sourceJob.id}` : `fire:${trigger.nextRun || 'manual'}`;
         await processes.record({
             processKind: 'project_trigger',
             processId: trigger.id,
             ownerUserId: trigger.userId,
-            occurrenceKey: sourceJob ? `job:${sourceJob.id}` : `fire:${trigger.nextRun || 'manual'}`,
+            occurrenceKey,
             phase: 'dispatch',
             outcome,
             reasonCode: extra.code || `DISPATCH_${String(status).toUpperCase()}`,
             evidence: extra.childJobId ? { kind: 'observatory_job', id: extra.childJobId } : null
         });
+        // A job that settled before its dispatch was recorded was filed under a provisional occurrence.
+        if (extra.childJobId) {
+            await processes.mergeOccurrence({
+                processKind: 'project_trigger', processId: trigger.id, from: `run:${extra.childJobId}`, into: occurrenceKey
+            });
+        }
     }
 
     async _recordOutcome(triggerId, text) {
@@ -1325,6 +1332,53 @@ class ProjectTriggerService {
              WHERE id = @id`,
             { id: Number(job.triggerId), lastJobOutcome: describeSettledJob(job) }
         );
+        await this._observeSettled(job);
+    }
+
+    /**
+     * The settled stage as typed observations on the occurrence that
+     * dispatched it: whether the run worked (`execution`) and, where the job
+     * had an output contract, whether what it produced passed (`output`). A
+     * run that finished but failed its contract is a working run with a
+     * failed output, not a failed run. Codes only. Never throws.
+     */
+    async _observeSettled(job) {
+        const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
+        if (!processes) return;
+        try {
+            const trigger = await db.get('SELECT id, userId FROM project_triggers WHERE id = @id', { id: Number(job.triggerId) });
+            if (!trigger) return;
+            const evidence = { kind: 'observatory_job', id: job.id };
+            const base = {
+                processKind: 'project_trigger',
+                processId: trigger.id,
+                ownerUserId: trigger.userId,
+                // The dispatch that started this job, or a provisional key the dispatch adopts when it is recorded.
+                occurrenceKey: await processes.occurrenceFor({ processKind: 'project_trigger', processId: trigger.id, evidence })
+                    || `run:${job.id}`,
+                evidence
+            };
+            let contract = null;
+            try { contract = job.outputContractResultJson ? JSON.parse(job.outputContractResultJson) : null; } catch { contract = null; }
+            const contractFailed = job.errorCode === OUTPUT_CONTRACT_FAILED || contract?.ok === false;
+            const ran = job.status === 'COMPLETED' || contractFailed;
+            await processes.record({
+                ...base,
+                phase: 'execution',
+                outcome: ran ? 'ok' : 'failed',
+                reasonCode: ran ? null : String(job.errorCode || `JOB_${job.status}`).slice(0, 64)
+            });
+            if (contractFailed || contract) {
+                await processes.record({
+                    ...base,
+                    phase: 'output',
+                    outcome: contractFailed ? 'failed' : 'ok',
+                    reasonCode: contractFailed ? OUTPUT_CONTRACT_FAILED : 'OUTPUT_VALIDATED'
+                });
+            }
+        } catch (error) {
+            console.warn(`Project trigger settled observation not recorded: ${error.message}`);
+        }
     }
 
     /**

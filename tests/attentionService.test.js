@@ -109,7 +109,7 @@ beforeEach(async () => {
         'attention_feedback', 'attention_notices', 'attention_provenance',
         'attention_items', 'attention_watches', 'attention_state',
         'attention_policies', 'observatory_jobs', 'observatory_projects',
-        'kg_edges', 'kg_nodes'
+        'kg_edges', 'kg_nodes', 'assistant_process_observations'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -619,6 +619,12 @@ describe('notices and feedback', () => {
 });
 
 describe('watches wait for conditions', () => {
+    const observed = (watchId) => db.all(
+        `SELECT occurrenceKey, phase, outcome, reasonCode FROM assistant_process_observations
+         WHERE processKind = 'attention_watch' AND processId = @id ORDER BY id`,
+        { id: String(watchId) }
+    );
+
     test('registering enforces a known topic, a label, and a prompt', async () => {
         await expect(watches.register({
             userId: USER, guildId: GUILD, label: 'x', topic: 'nonsense.topic', prompt: 'do it'
@@ -670,6 +676,10 @@ describe('watches wait for conditions', () => {
 
         expect(runTurn).toHaveBeenCalledTimes(1);
         expect((await watches.get(watch.id)).status).toBe('FIRED');
+        // The fire is one typed occurrence in the process catalog.
+        expect(await observed(watch.id)).toEqual([
+            { occurrenceKey: 'fire:1', phase: 'execution', outcome: 'ok', reasonCode: null }
+        ]);
         runTurn.mockRestore();
     });
 
@@ -763,6 +773,12 @@ describe('watches wait for conditions', () => {
         const after = await watches.get(watch.id);
         expect(after.status).toBe('FAILED');
         expect(after.lastError).toContain('channel gone');
+        // A code, never the error text.
+        const rows = await observed(watch.id);
+        expect(rows).toEqual([
+            { occurrenceKey: 'fire:1', phase: 'execution', outcome: 'failed', reasonCode: 'FIRE_FAILED' }
+        ]);
+        expect(JSON.stringify(await db.all('SELECT * FROM assistant_process_observations', {}))).not.toContain('channel gone');
         runTurn.mockRestore();
     });
 
