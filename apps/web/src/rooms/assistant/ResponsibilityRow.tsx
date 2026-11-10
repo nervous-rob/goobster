@@ -34,6 +34,12 @@ const ACTIONS: Record<string, Array<{ action: string; label: string; primary?: b
     EXPIRED: [{ action: 'archive', label: 'Archive' }]
 };
 
+/** A draft proposed in a conversation never ran: discarding it deletes it instead of keeping a revoked record. */
+const PROPOSED_DRAFT = [
+    { action: 'activate', label: 'Activate', primary: true },
+    { action: 'discard', label: 'Discard', danger: true, confirm: 'Discard this draft? It was proposed in a conversation and never ran. It is deleted.' }
+];
+
 export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWork }: {
     item: Responsibility;
     projects: Map<string, Project>;
@@ -43,11 +49,14 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
     onActOnWork: (work: AssistantInitiative, action: string) => void;
 }) {
     const whenLabel = useDateLabel();
+    const proposed = item.proposedBy === 'model';
+    const actions = proposed && item.status === 'DRAFT' ? PROPOSED_DRAFT : ACTIONS[item.status] || [];
     return (
         <div id={`responsibility-${item.id}`} className="list-row task-row" data-testid="responsibility-row">
             <div className="row-body">
                 <strong>{item.title}</strong>{' '}
                 <span className="badge" data-testid="responsibility-status">{STATUS_TEXT[item.status] || item.status.toLowerCase()}</span>
+                {proposed && <>{' '}<span className="badge" data-testid="responsibility-proposed">proposed in a conversation</span></>}
                 {item.outcome && <div className="hint">{item.outcome}</div>}
                 <ul className="assistant-grants">
                     {describeGrants(item.operations, projects).map((line) => <li key={line}>May {line}</li>)}
@@ -60,7 +69,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 <WorkList items={work} busy={busy} onAct={onActOnWork} />
             </div>
             <div className="inbox-actions">
-                {(ACTIONS[item.status] || []).map((option) => (
+                {actions.map((option) => (
                     <button key={option.action} type="button" disabled={busy}
                         className={`btn${option.primary ? ' primary' : option.danger ? ' danger' : ' subtle'}`}
                         onClick={() => onAct(item, option.action, option.confirm)}>

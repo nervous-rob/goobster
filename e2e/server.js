@@ -821,6 +821,72 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Delegating by conversation (assistantConversation.spec.js): the owner,
+    // with Attention on and nothing delegated, and a scripted model for the
+    // person's next chat turns. Each entry of `rounds` is one round's tool
+    // calls; when they run out the model says `reply`. The turn, the tools,
+    // the cards and the confirmations are the real ones. No provider.
+    let conversationModel = null;
+    app.post('/e2e/fixtures/assistant-conversation', express.json(), async (req, res) => {
+        try {
+            const aiService = require('@goobster/core/services/aiService');
+            if (conversationModel) {
+                aiService.chat = conversationModel.original;
+                conversationModel = null;
+            }
+            if (req.body?.restore === true) return res.json({ ok: true });
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Owner' });
+            // The pilot gate: conversational delegation is the owner's until the host decides otherwise.
+            if (req.body?.owner !== false) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_confirmation_receipts', 'userId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const rounds = Array.isArray(req.body?.rounds) ? req.body.rounds.map((round) => round.map((call, index) => ({
+                id: `e2e-${Date.now()}-${index}`, name: String(call.name), arguments: JSON.stringify(call.arguments || {})
+            }))) : [];
+            const reply = String(req.body?.reply || 'Done.');
+            conversationModel = { original: aiService.chat, rounds };
+            aiService.chat = async (_messages, options = {}) => {
+                // A model call is never instant. When this answered at once,
+                // a new chat's turn sometimes ended within milliseconds of the
+                // chat being created and the room was left showing an empty
+                // conversation (about one run in four here; none with the
+                // pause). No provider is that fast, so the stand-in is not either.
+                await new Promise((resolve) => setTimeout(resolve, 250));
+                const offered = (options.functions || []).map((definition) => definition.name);
+                const next = rounds[0];
+                // Only the agent loop is scripted, and only with tools it was really offered.
+                if (next && next.every((call) => offered.includes(call.name))) return { content: '', toolCalls: rounds.shift() };
+                if (typeof options.onDelta === 'function') options.onDelta(reply);
+                return { content: reply, toolCalls: [] };
+            };
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // What the database holds for that person, for the spec's own assertions.
+    app.get('/e2e/fixtures/assistant-conversation/state', async (req, res) => {
+        try {
+            const userId = String(req.query.userId || '');
+            res.json({
+                // Scripted rounds the model has not played yet (0: every tool call was made).
+                unplayed: conversationModel ? conversationModel.rounds.length : 0,
+                responsibilities: await db.all(
+                    'SELECT id, title, status, revision, proposedBy, proposalKeptAt, activatedAt FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id', { userId }),
+                receipts: await db.all(
+                    'SELECT subjectKind, action, surface, consumedAt FROM assistant_confirmation_receipts WHERE userId = @userId ORDER BY id', { userId })
+            });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
     // Bypasses the event API so empty-step catalog tours can still show
     // paused/completed rows. Never calls a provider.

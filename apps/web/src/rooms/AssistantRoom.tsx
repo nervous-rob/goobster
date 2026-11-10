@@ -60,14 +60,30 @@ export function AssistantRoom() {
     ]);
 
     async function act(item: Responsibility, action: string, question?: string) {
-        const grants = describeGrants(item.operations, projectById);
-        const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
-            : question;
-        if (ask && !await confirm(ask)) return;
         setBusy(item.id);
         try {
-            await api.responsibilityAction(item.id, action, item.revision);
+            if (action === 'discard') {
+                if (question && !await confirm(question)) return;
+                await api.proposalAction(item.id, 'discard', item.revision);
+                return;
+            }
+            if (action !== 'activate' && action !== 'resume') {
+                if (question && !await confirm(question)) return;
+                await api.responsibilityAction(item.id, action, item.revision);
+                return;
+            }
+            // Turning authority on is confirmed: the server says what this
+            // revision allows, the question shows that, and the single-use
+            // confirmation it issued is spent by the action.
+            const confirmation = await api.confirmResponsibility(item.id, action, item.revision, 'portal');
+            const shown = confirmation.shown;
+            if (action === 'activate') {
+                const grants = describeGrants(shown.operations, projectById);
+                if (!await confirm(`Activate "${shown.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${shown.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${shown.expiresAt ? ` It ends ${whenLabel(shown.expiresAt)}.` : ''} You can pause or revoke it at any time.`)) return;
+            } else if (question && !await confirm(question)) {
+                return;
+            }
+            await api.responsibilityAction(item.id, action, shown.revision, confirmation.receipt);
         } catch (error) {
             toast((error as Error).message, true);
         } finally {

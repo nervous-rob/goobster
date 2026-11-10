@@ -4,7 +4,7 @@ import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
-import type { GateDecisionCard, GateDecisionResult, GateSurface } from './types';
+import type { ConfirmationReceipt, ConfirmationSurface, GateDecisionCard, GateDecisionResult, GateSurface } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -427,8 +427,27 @@ export const api = {
     responsibilities: () => request<{ responsibilities: Responsibility[]; vocabulary: ResponsibilityVocabulary }>('/api/app/assistant/responsibilities'),
     createResponsibility: (body: Record<string, unknown>) =>
         request<{ responsibility: Responsibility }>('/api/app/assistant/responsibilities', { method: 'POST', body }),
-    responsibilityAction: (id: number, action: string, expectedRevision: number) =>
-        request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
+    responsibility: (id: number) => request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}`),
+    /** `receipt` (from confirmResponsibility) is required to activate or resume. */
+    responsibilityAction: (id: number, action: string, expectedRevision: number, receipt?: string) =>
+        request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, {
+            method: 'POST', body: { action, expectedRevision, ...(receipt ? { receipt } : {}) }
+        }),
+    /** The person's own confirmation of what they are looking at: single use, bound to this revision. */
+    confirmResponsibility: (id: number, action: 'activate' | 'resume', revision: number, surface: ConfirmationSurface) =>
+        request<ConfirmationReceipt<Responsibility>>('/api/app/assistant/confirmations', {
+            method: 'POST', body: { subject: 'responsibility', id, action, revision, surface }
+        }),
+    confirmGate: (card: Pick<GateDecisionCard, 'ref' | 'occurrence' | 'revision'>) =>
+        request<ConfirmationReceipt<GateDecisionCard>>('/api/app/assistant/confirmations', {
+            method: 'POST', body: { subject: 'gate', id: card.ref, action: 'decide', occurrence: card.occurrence, revision: card.revision, surface: 'chat' }
+        }),
+    /** A draft proposed in a conversation: keep it for later, or delete it. */
+    proposalAction: (id: number, action: 'keep' | 'discard', expectedRevision: number) =>
+        request<{ responsibility?: Responsibility; discarded?: boolean }>(`/api/app/assistant/responsibilities/${id}/proposal`, {
+            method: 'POST', body: { action, expectedRevision }
+        }),
+    gateCard: (ref: string) => request<{ card: GateDecisionCard }>(`/api/app/assistant/gates/${encodeURIComponent(ref)}`),
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),
     initiativeAction: (id: number, action: string, expectedRevision: number) =>
         request<{ initiative: AssistantInitiative }>(`/api/app/assistant/initiatives/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
@@ -437,9 +456,10 @@ export const api = {
     snoozeUpdate: (id: number, until: string) =>
         request<{ snoozed: unknown }>(`/api/app/assistant/updates/${id}/snooze`, { method: 'POST', body: { until } }),
     /** Decide a request from the card that was shown; a changed card answers 409 STALE_GATE. */
-    decideGate: (card: Pick<GateDecisionCard, 'ref' | 'occurrence' | 'revision'>, option: string, surface: GateSurface) =>
+    /** From a chat card, `receipt` (confirmGate) is required. */
+    decideGate: (card: Pick<GateDecisionCard, 'ref' | 'occurrence' | 'revision'>, option: string, surface: GateSurface, receipt?: string) =>
         request<GateDecisionResult>(`/api/app/assistant/gates/${encodeURIComponent(card.ref)}/decide`, {
-            method: 'POST', body: { option, occurrence: card.occurrence, revision: card.revision, surface }
+            method: 'POST', body: { option, occurrence: card.occurrence, revision: card.revision, surface, ...(receipt ? { receipt } : {}) }
         }),
     inboxAsk: (id: number, inProject = false) => request<{ kind: 'chat' | 'project'; conversationId: number; path: string; suggestedQuestion: string }>(
         `/api/app/inbox/${id}/ask`, { method: 'POST', body: { inProject } }),

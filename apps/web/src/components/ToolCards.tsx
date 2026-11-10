@@ -2,25 +2,35 @@ import { useState } from 'react';
 import { api } from '../lib/api';
 import { requestCompose } from '../hooks/useCompose';
 import { ciBadge, DiffView } from './repoParts';
+import { ProposalCard, RequestsCard } from './DelegationCards';
 import type { ToolCard } from '../lib/types';
+
+type DelegationCard = Extract<ToolCard, { kind: 'assistant-proposal' | 'assistant-requests' }>;
+type RepoCard = Exclude<ToolCard, DelegationCard>;
 
 /**
  * Actionable cards under a reply (agentOrchestrator `_card`): a branch
  * comparison with its diff, a CI verdict with what failed, a merge or
  * rebase stopped on conflicts, an opened pull request. Buttons act on the
  * project directly or put a ready-made request in the composer; nothing is
- * sent on the person's behalf.
+ * sent on the person's behalf. A draft responsibility or an open request
+ * proposed in the conversation is confirmed on its own card
+ * (DelegationCards.tsx).
  */
 export function ToolCards({ cards }: { cards: ToolCard[] }) {
     if (cards.length === 0) return null;
     return (
         <div className="tool-cards">
-            {cards.map((card, index) => <OneCard key={index} card={card} />)}
+            {cards.map((card, index) => (
+                card.kind === 'assistant-proposal' ? <ProposalCard key={`proposal-${card.id}`} id={card.id} />
+                    : card.kind === 'assistant-requests' ? <RequestsCard key={index} refs={card.refs} />
+                        : <OneCard key={index} card={card} />
+            ))}
         </div>
     );
 }
 
-function OneCard({ card }: { card: ToolCard }) {
+function OneCard({ card }: { card: RepoCard }) {
     const [busy, setBusy] = useState(false);
     const [outcome, setOutcome] = useState<string | null>(null);
     const [showDiff, setShowDiff] = useState(false);
