@@ -121,7 +121,7 @@ records the pilot decision, only the owner has them.**
 - **The owner** is any active account with the operator role. An
   installation with two operators has two owners; a disabled or demoted
   operator is not one.
-- **What is gated today.** Of DA-7 through DA-11, three things have shipped.
+- **What is gated today.** Of DA-7 through DA-11, four things have shipped.
   Deciding a request where it is shown (DA-7a,
   [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown))
   shipped before this gate existed and does not check it: every person can
@@ -142,7 +142,12 @@ records the pilot decision, only the owner has them.**
   `reach` capability: for anyone but the owner, creating, editing or
   activating such a responsibility is refused with `PILOT_ONLY` (naming the
   capability), and a finding published after the gate closed comes to its
-  person alone.
+  person alone. Outside connectors (DA-11d,
+  [delegated_connectors.md](delegated_connectors.md)) are `reach` too, and
+  by resource, not by operation name: `read` is not otherwise gated, but a
+  grant of `read` or `external.write` on an `external` resource is refused
+  with `PILOT_ONLY` at activation and at dispatch for anyone but the owner,
+  the tools are not offered to them and the connector card is not shown.
   Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
   too: for anyone but the owner, activating or resuming a responsibility
   whose updates go in a digest or contact them is refused with `PILOT_ONLY`,

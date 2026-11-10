@@ -55,6 +55,7 @@ const TOOLS = {
     ...require('./projectFiles'),
     ...require('./runProjectFile'),
     ...require('./projectRepos'),
+    ...require('./connectors'),
     ...require('./startResearch'),
     ...require('./generatedNotes'),
     ...require('./consultDocs'),
