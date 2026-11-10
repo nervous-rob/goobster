@@ -5,10 +5,12 @@ import { keys } from '../../lib/query';
 import { featureActive } from '../../lib/rooms';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
-import type { ResponsibilityOperation } from '../../lib/types';
-import { DEFAULT_EXTERNAL_OPERATIONS, MAX_EXTERNAL_OPERATIONS, type Project } from './grants';
+import type { Interruption, ResponsibilityOperation } from '../../lib/types';
+import { DEFAULT_EXTERNAL_OPERATIONS, INTERRUPTION_CHOICE, MAX_EXTERNAL_OPERATIONS, type Project } from './grants';
+import { NO_WIDER_SOURCES, SourceChoices, widerOperations, widerScopes, type WiderSources } from './SourceChoices';
 
 type Clone = { name: string; repo: string; clonedBranch: string };
+
 
 /** Drafts a responsibility from plain choices. A draft grants nothing. */
 export function DraftForm({ projects, onCreated }: { projects: Project[]; onCreated: () => Promise<unknown> }) {
@@ -26,27 +28,35 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [planSteps, setPlanSteps] = useState(false);
     const [projectRequests, setProjectRequests] = useState(false);
     const [parlorRequests, setParlorRequests] = useState(false);
+    const [wider, setWider] = useState<WiderSources>(NO_WIDER_SOURCES);
     const [shareFindings, setShareFindings] = useState(false);
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
     const [deepResearch, setDeepResearch] = useState(false);
+    const [interruption, setInterruption] = useState<Interruption>('home');
     const [saving, setSaving] = useState(false);
+    // Reaching you outside the portal and repository work are pilot
+    // capabilities: each is offered only to an account that has it (the
+    // server checks again).
+    const access = useQuery({ queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(), retry: false, staleTime: 60_000 });
+    const canDeliver = access.data?.capabilities?.delivery === true;
     const canProjects = featureActive(me, 'projects');
     const canSandbox = featureActive(me, 'sandbox');
     const canResearch = featureActive(me, 'expeditions');
     const canKnowledge = featureActive(me, 'knowledge');
     const [repoName, setRepoName] = useState('');
     const [branches, setBranches] = useState('goobster/*');
+    const [proposeNotes, setProposeNotes] = useState(false);
+    const [amendSaved, setAmendSaved] = useState(false);
+    const [linkNotes, setLinkNotes] = useState(false);
+    const [archiveNotes, setArchiveNotes] = useState(false);
     const [commitRepo, setCommitRepo] = useState(false);
     const [pushRepo, setPushRepo] = useState(false);
     const [openPulls, setOpenPulls] = useState(false);
     const [perDay, setPerDay] = useState(String(DEFAULT_EXTERNAL_OPERATIONS));
     // Repository work is still in the pilot: offered only to whoever the host's policy allows.
-    const accessQ = useQuery({
-        queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(),
-        enabled: canProjects && featureActive(me, 'github'), retry: false, staleTime: 60_000
-    });
-    const canRepos = accessQ.data?.capabilities?.reach === true;
+    const canReach = access.data?.capabilities?.reach === true;
+    const canRepos = canReach && canProjects && featureActive(me, 'github');
     const project = projects.find((entry) => String(entry.id) === projectId) || null;
     const ownerId = project && project.ownerId !== me.user.id ? project.ownerId : null;
     const reposQ = useQuery({
@@ -59,6 +69,16 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const branchPatterns = branches.split(',').map((part) => part.trim()).filter(Boolean);
     const reaches = Boolean(clone) && (pushRepo || openPulls);
 
+    // Outside connectors are still in the pilot, like repositories: offered only when the server lists them for this person.
+    const connectorsQ = useQuery({ queryKey: keys.assistantConnectors, queryFn: () => api.assistantConnectors(), retry: false, staleTime: 30_000 });
+    const connectors = (connectorsQ.data?.allowed ? connectorsQ.data.connectors : []).filter((entry) => entry.connected && entry.featureOn);
+    const [picks, setPicks] = useState<Record<string, { resource: string; read: boolean; write: boolean }>>({});
+    const pick = (id: string) => picks[id] || { resource: '', read: false, write: false };
+    const setPick = (id: string, patch: Partial<{ resource: string; read: boolean; write: boolean }>) =>
+        setPicks((current) => ({ ...current, [id]: { ...(current[id] || { resource: '', read: false, write: false }), ...patch } }));
+    const chosen = connectors.filter((entry) => pick(entry.id).read || pick(entry.id).write);
+    const writesOut = connectors.some((entry) => pick(entry.id).write);
+
     function operations(): ResponsibilityOperation[] {
         const list: ResponsibilityOperation[] = [];
         if (web) list.push({ operation: 'read', resource: { kind: 'web' } });
@@ -66,6 +86,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         if (writeNotes && canKnowledge) {
             list.push({ operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } });
             list.push({ operation: 'kg.generated.amend', resource: { kind: 'knowledge', ids: ['personal'] } });
+        }
+        // Saved-note work is still in the pilot (capability `reach`), like repository work.
+        if (canReach && canKnowledge && readKnowledge) {
+            const notes = { kind: 'knowledge', ids: ['personal'] };
+            if (proposeNotes) list.push({ operation: 'kg.saved.propose', resource: notes });
+            if (amendSaved) list.push({ operation: 'kg.saved.amend', resource: notes });
+            if (linkNotes) list.push({ operation: 'kg.edge', resource: notes });
+            if (archiveNotes) list.push({ operation: 'kg.archive', resource: notes });
         }
         // A research expedition searches and writes generated notes: it is
         // offered only together with both of those choices.
@@ -85,6 +113,13 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 if (openPulls) list.push({ operation: 'pr.create', resource });
             }
         }
+        list.push(...widerOperations(wider, (project || undefined)));
+        for (const connector of connectors) {
+            const choice = pick(connector.id);
+            const resource = { kind: 'external', ids: [`${connector.id}:${choice.resource.trim()}`] };
+            if (choice.read && connector.reads.length) list.push({ operation: 'read', resource });
+            if (choice.write && connector.writes.length) list.push({ operation: 'external.write', resource });
+        }
         return list;
     }
 
@@ -93,6 +128,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         const list: string[] = [];
         if (projectId && projectRequests) list.push('project_chat');
         if (parlorRequests) list.push('parlor');
+        list.push(...widerScopes(wider, (project || undefined)));
         return list;
     }
 
@@ -105,8 +141,10 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         if (!title.trim()) return toast('Give it a title.', true);
         if (!granted.length) return toast('Choose at least one thing it may do.', true);
         if (clone && (commitRepo || reaches) && !branchPatterns.length) return toast('Name the branches it may work on, for example goobster/*.', true);
+        const unnamed = chosen.find((entry) => !pick(entry.id).resource.trim());
+        if (unnamed) return toast(`Name the resource it may use in ${unnamed.name}: ${unnamed.resource}.`, true);
         const daily = Number(perDay);
-        if (reaches && (!Number.isInteger(daily) || daily < 0 || daily > MAX_EXTERNAL_OPERATIONS)) {
+        if ((reaches || writesOut) && (!Number.isInteger(daily) || daily < 0 || daily > MAX_EXTERNAL_OPERATIONS)) {
             return toast(`Pushes and pull requests a day is a whole number from 0 to ${MAX_EXTERNAL_OPERATIONS}.`, true);
         }
         setSaving(true);
@@ -117,12 +155,18 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 operations: granted,
                 ...(projectId ? { projectId: Number(projectId) } : {}),
                 ...(sources().length ? { scopes: { sources: sources(), ...(sharing ? { audience: 'project' } : {}) } } : {}),
-                ...(reaches ? { budgets: { externalOperations: daily } } : {}),
+                ...(reaches || writesOut ? { budgets: { externalOperations: daily } } : {}),
                 ...(days ? { expiresAt: new Date(Date.now() + Number(days) * 86400_000).toISOString() } : {}),
-                ...(autoStart ? { rules: { autoStart: true } } : {})
+                ...(autoStart || (canDeliver && interruption !== 'home') ? {
+                    rules: {
+                        ...(autoStart ? { autoStart: true } : {}),
+                        ...(canDeliver && interruption !== 'home' ? { interruption } : {})
+                    }
+                } : {})
             });
             setTitle('');
             setOutcome('');
+            setWider(NO_WIDER_SOURCES);
             toast('Saved as a draft. Review it below, then activate it.');
             await onCreated();
         } catch (error) { toast((error as Error).message, true); } finally { setSaving(false); }
@@ -147,6 +191,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 <label><input type="checkbox" checked={readKnowledge} onChange={(e) => setReadKnowledge(e.target.checked)} /> Read your knowledge</label>
                 {canKnowledge && (
                     <label><input type="checkbox" checked={writeNotes} onChange={(e) => setWriteNotes(e.target.checked)} /> Add and amend generated notes (never notes you saved)</label>
+                )}
+                {canReach && canKnowledge && readKnowledge && (
+                    <div className="field" data-testid="responsibility-note-work">
+                        <label><input type="checkbox" checked={proposeNotes} onChange={(e) => setProposeNotes(e.target.checked)} data-testid="responsibility-propose-notes" /> Suggest changes to notes you saved (you apply each one, shown as a diff)</label>
+                        <label><input type="checkbox" checked={amendSaved} onChange={(e) => setAmendSaved(e.target.checked)} data-testid="responsibility-amend-saved" /> Edit notes you saved directly (every edit can be undone)</label>
+                        <label><input type="checkbox" checked={linkNotes} onChange={(e) => setLinkNotes(e.target.checked)} data-testid="responsibility-link-notes" /> Connect notes, and retract connections it made</label>
+                        <label><input type="checkbox" checked={archiveNotes} onChange={(e) => setArchiveNotes(e.target.checked)} data-testid="responsibility-archive-notes" /> Archive notes it generated (restorable; never notes you saved)</label>
+                    </div>
                 )}
                 {canResearch && canKnowledge && web && writeNotes && (
                     <label><input type="checkbox" checked={deepResearch} onChange={(e) => setDeepResearch(e.target.checked)} /> Run a research expedition when a few searches are not enough (one per piece of work)</label>
@@ -225,19 +277,6 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                             <label><input type="checkbox" checked={commitRepo} onChange={(e) => setCommitRepo(e.target.checked)} data-testid="responsibility-repo-commit" /> Commit its changes there (stays in this project until pushed)</label>
                                             <label><input type="checkbox" checked={pushRepo} onChange={(e) => setPushRepo(e.target.checked)} data-testid="responsibility-repo-push" /> Push those branches to GitHub as you (never forced)</label>
                                             <label><input type="checkbox" checked={openPulls} onChange={(e) => setOpenPulls(e.target.checked)} data-testid="responsibility-repo-pr" /> Open pull requests for them as you (drafts unless it decides otherwise)</label>
-                                            {reaches && (
-                                                <>
-                                                    <label className="field">
-                                                        <span>At most this many pushes and pull requests a day</span>
-                                                        <input type="number" min={0} max={MAX_EXTERNAL_OPERATIONS} step={1} value={perDay}
-                                                            onChange={(e) => setPerDay(e.target.value)} data-testid="responsibility-external-budget" />
-                                                    </label>
-                                                    <div className="hint" role="note" data-testid="responsibility-reach-note">
-                                                        A push or a pull request goes to GitHub and cannot be undone from here. They also need Attention set to
-                                                        Delegate with GitHub writes allowed (Settings), and they are refused once a piece of work has read your private knowledge.
-                                                    </div>
-                                                </>
-                                            )}
                                         </>
                                     )}
                                 </div>
@@ -245,6 +284,59 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                         </>
                     )}
                 </fieldset>
+            )}
+            {connectors.length > 0 && (
+                <fieldset className="field" data-testid="responsibility-connectors">
+                    <legend>Outside services (optional)</legend>
+                    {connectors.map((connector) => (
+                        <div key={connector.id} className="field">
+                            <strong>{connector.name}</strong>
+                            <div className="hint">{connector.description}</div>
+                            <label className="field">
+                                <span>Which resource it may use ({connector.resource})</span>
+                                <input type="text" value={pick(connector.id).resource} maxLength={150}
+                                    onChange={(e) => setPick(connector.id, { resource: e.target.value })}
+                                    data-testid={`responsibility-connector-resource-${connector.id}`} />
+                            </label>
+                            {connector.reads.length > 0 && (
+                                <label>
+                                    <input type="checkbox" checked={pick(connector.id).read} onChange={(e) => setPick(connector.id, { read: e.target.checked })}
+                                        data-testid={`responsibility-connector-read-${connector.id}`} /> Read from it ({connector.reads.map((entry) => entry.operation).join(', ')})
+                                </label>
+                            )}
+                            {connector.writes.length > 0 && (
+                                <label>
+                                    <input type="checkbox" checked={pick(connector.id).write} onChange={(e) => setPick(connector.id, { write: e.target.checked })}
+                                        data-testid={`responsibility-connector-write-${connector.id}`} /> Write to it as you ({connector.writes.map((entry) => entry.operation).join(', ')})
+                                </label>
+                            )}
+                        </div>
+                    ))}
+                    {chosen.some((entry) => pick(entry.id).read) && (
+                        <div className="hint" role="note" data-testid="responsibility-connector-read-note">
+                            What it reads there is your own data: once a piece of work has read from an outside service it cannot write outside this installation.
+                        </div>
+                    )}
+                </fieldset>
+            )}
+            {(reaches || writesOut) && (
+                <>
+                    <label className="field">
+                        <span>At most this many {reaches && writesOut ? 'pushes, pull requests and outside writes' : writesOut ? 'outside writes' : 'pushes and pull requests'} a day</span>
+                        <input type="number" min={0} max={MAX_EXTERNAL_OPERATIONS} step={1} value={perDay}
+                            onChange={(e) => setPerDay(e.target.value)} data-testid="responsibility-external-budget" />
+                    </label>
+                    <div className="hint" role="note" data-testid="responsibility-reach-note">
+                        {reaches && (
+                            <>A push or a pull request goes to GitHub and cannot be undone from here. They also need Attention set to
+                            Delegate with GitHub writes allowed (Settings), and they are refused once a piece of work has read your private knowledge. </>
+                        )}
+                        {writesOut && (
+                            <>A write to an outside service is made as you and cannot be undone from here. It needs Attention set to Delegate with
+                            general external writes allowed (Settings), and it is refused once a piece of work has read your private knowledge or anything from an outside service. </>
+                        )}
+                    </div>
+                </>
             )}
             <fieldset className="field">
                 <legend>Requests in conversation (optional)</legend>
@@ -262,6 +354,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                     </div>
                 )}
             </fieldset>
+            <SourceChoices project={(project || undefined)} value={wider} onChange={setWider} />
             <label className="field">
                 <span>Ends</span>
                 <select value={days} onChange={(e) => setDays(e.target.value)}>
@@ -275,6 +368,20 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 <input type="checkbox" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} data-testid="responsibility-autostart" />{' '}
                 Start proposed work automatically (otherwise each piece waits for you to press Start). It stays within the daily budgets.
             </label>
+            {canDeliver && (
+                <label className="field">
+                    <span>How should its updates reach you?</span>
+                    <select value={interruption} onChange={(e) => setInterruption(e.target.value as Interruption)} data-testid="responsibility-interruption">
+                        {(Object.keys(INTERRUPTION_CHOICE) as Interruption[]).map((mode) => (
+                            <option key={mode} value={mode}>{INTERRUPTION_CHOICE[mode]}</option>
+                        ))}
+                    </select>
+                    <span className="hint">
+                        Everything is always on Home and in your Inbox. A digest or a contact also sends a browser notification or a Discord message,
+                        within your Attention limits (quiet hours, contacts per day, time between contacts).
+                    </span>
+                </label>
+            )}
             <button type="submit" className="btn primary" disabled={saving} data-testid="responsibility-save">Save draft</button>
         </form>
     );

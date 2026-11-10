@@ -46,7 +46,9 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   (`PILOT_ONLY`); see [delegated_project_findings.md](delegated_project_findings.md).
   `project_chat` and `parlor` say where it takes requests you address to
   Goobster ([delegated_conversation_requests.md](delegated_conversation_requests.md));
-  `personal_chat` is reserved and not read yet. A purpose never grants access to a
+  `personal_chat`, `followed_source`, `job_failure` and `ci_verdict` (DA-8) say
+  which wider sources it notices work from, and are pilot capabilities
+  ([delegated_opportunity_sources.md](delegated_opportunity_sources.md)). A purpose never grants access to a
   source the person could not otherwise reach.
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and
@@ -62,7 +64,12 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
   `stopCondition`, and `autoStart` (`true` queues proposed work without
-  waiting for Start; off by default).
+  waiting for Start; off by default). `interruption` decides whether the
+  responsibility's updates also reach you outside the portal: `home` (the
+  default) never does, `digest` adds one digest a day, `immediate` adds one
+  contact per request that needs your decision. `digest` and `immediate`
+  are refused at activation with `PILOT_ONLY` for an account without the
+  delivery capability. See [delegated_delivery.md](delegated_delivery.md).
 - **Expiry** (`expiresAt`, UTC), optional.
 - **Principals**: owner, authorizer, acting person and payer. Today all four are
   the signed-in person who creates the responsibility, whatever the request
@@ -85,14 +92,14 @@ permission and no wildcard resource.
 | `file.edit` | Edit project files | `project` |
 | `sandbox.run` | Run code in the project sandbox | `project` |
 | `plan.step.execute` | Carry out the assistant steps of the project's plan, only in a plan revision a person approved and started. Never approves, starts or completes a plan. Takes no `paths` | `project` |
-| `process.repair` | Repair a recurring process | `process` |
-| `process.pause` | Pause a process | `process` |
-| `process.archive` | Archive a process | `process` |
-| `cleanup.exact` | Remove an exact, owned set of artifacts | `process` |
+| `process.repair` | Repair a recurring process (not used yet) | `process` |
+| `process.pause` | Pause a process whose purpose is over | `process` |
+| `process.archive` | Archive a process Goobster paused that way, after 7 days | `process` |
+| `cleanup.exact` | Remove an exact, owned set of artifacts (not used yet: only you can clean up a process) | `process` |
 | `repo.commit` | Commit in a project repository clone, on a work branch | `repository` |
 | `repo.push` | Push a work branch (never forced) | `repository` |
 | `pr.create` | Open a pull request from a work branch | `repository` |
-| `external.write` | Another external write | `external` |
+| `external.write` | Write to a named resource of an outside connector (DA-11d) | `external` |
 
 Resource shapes:
 
@@ -112,7 +119,15 @@ Resource shapes:
   say, a delegated run never works on the branch the clone started from, the
   repository's default branch or a protected branch
   ([delegated_runs.md](delegated_runs.md#repository-work)).
-- `external`: `{ "kind": "external", "ids": ["…"] }`.
+- `external`: `{ "kind": "external", "ids": ["<connector>:<resource>"] }`. Each id
+  names one resource of an installed outside connector, in the shape the
+  connector accepts (no wildcard, no whole service); `read` and
+  `external.write` take it and nothing else does. With no connector installed
+  there is nothing to grant, and a grant naming an unknown connector is refused
+  as `INVALID_RESOURCE`. Reaching it also needs your own credential for the
+  connector's service: activating without it is refused as `RESOURCE_UNAVAILABLE`,
+  and so is a call after the credential is revoked
+  ([delegated_connectors.md](delegated_connectors.md)).
 
 Unknown operations, kinds or fields are rejected when the responsibility is
 saved.
@@ -190,7 +205,7 @@ Two installation-wide checks sit around those. Before any of them, if the
 host has [stopped all delegated work](delegated_operations.md#stop-all) the
 answer is `ASSISTANT_PAUSED`. After step 5, an operation that is still in
 the pilot (`repo.commit`, `repo.push`, `pr.create`, `kg.saved.amend`,
-`kg.edge`, `kg.archive`, `external.write`) is refused as `PILOT_ONLY` unless
+`kg.edge`, `kg.archive`, `external.write`, and `read` on an `external` resource) is refused as `PILOT_ONLY` unless
 the responsibility's owner is the installation's owner or the host has
 recorded the [pilot decision](delegated_operations.md#the-pilot-gate);
 activating or resuming a responsibility that grants one is refused the same
@@ -310,14 +325,16 @@ you, or a project's current members.
 - **Seen is per person and per revision.** Acknowledging names an exact
   revision. Acknowledging an older revision never clears a newer one, and
   someone else's acknowledgment never affects yours. Delivering an update to
-  you (a mention in conversation, an Inbox envelope) is recorded separately
-  from acknowledging it.
+  you (a mention in conversation, an Inbox envelope, a browser notification,
+  a Discord message, a digest) is recorded separately from acknowledging it.
 - **Needs you.** An update with an open gate, such as a question or a review,
   needs action until whatever raised it is resolved. Acknowledging it does not
   resolve it. Snoozing hides it until a time you choose, and the gate stays
   open.
 - **Inbox.** A personal update can file one Inbox item. That item is the
-  update's envelope, not a second record.
+  update's envelope, not a second record. Filing it sends no browser
+  notification and no Discord message; the responsibility's interruption
+  rule decides that ([delegated_delivery.md](delegated_delivery.md)).
   - A new revision refreshes the same item and makes it unread again.
   - Reading the item in the Inbox acknowledges exactly the revision it showed.
   - Acknowledging the update in the portal marks the item read when the item
@@ -381,10 +398,18 @@ two separate questions: whether it is working (`healthy`, `degraded`,
 needed (`active`, `awaiting_event`, `satisfied`, `superseded`, `dormant`,
 `retirement_candidate` or `unknown`). A process with no stated purpose is
 always `unknown` on the second. Repeated failures become one incident per
-cause, announced once and closed after a recovery period. This only observes
-and reports: no process is paused, repaired or removed. The rules, the
+cause, announced once and closed after a recovery period. The rules, the
 defaults and what you are told are in
 [process_stewardship.md](process_stewardship.md).
+
+**Retirement.** A process can be paused, archived, restored and cleaned up in
+separate steps. You can do each from the Processes list. Goobster pauses a
+process whose purpose is over only when an active responsibility grants
+`process.pause` on exactly that process and your Attention boundaries allow
+him to act on schedules; otherwise he asks. He archives only what he paused
+that way, under `process.archive`, after 7 days. Archiving never deletes, and
+a cleanup removes only the exact rows it previewed. Nothing is repaired yet.
+See [Retiring a process](process_stewardship.md#retiring-a-process).
 
 ## Retention
 
@@ -395,6 +420,8 @@ The assistant's periodic pass applies these windows:
 | Process observations | 90 days, and removed at once when their process is deleted |
 | Process contracts | Until removed, or their process is deleted |
 | Process incidents and their members | 180 days after the incident was resolved. Open and recovering incidents are kept |
+| Process retirement records | As long as the process is paused or archived; 180 days after their last change once it is running again; removed when the process is deleted |
+| Cleanup previews | 7 days after they expired if never applied; 180 days once applied |
 | Finished initiatives (`COMPLETED`, `FAILED`, `CANCELLED`, `SUPERSEDED`) | 180 days after their last change |
 | Runs and their operation journals ([delegated_runs.md](delegated_runs.md)) | 180 days after the run finished, and with their initiative |
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
@@ -425,8 +452,9 @@ All routes act as the signed-in person. Another person's responsibility answers
 | `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
 | `GET /api/app/assistant/gates/:ref` | One request's decision card. |
 | `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface, receipt? }` (`receipt` is required when `surface` is `chat`): decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card; an account outside the pilot gate answers 403 `PILOT_ONLY`. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
-| `GET /api/app/assistant/processes` | Your recurring processes, each with whether it has a contract, its assessment and the incident it is part of; counts per state; and the incidents still open. |
-| `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations, existing delivery history, assessment and incident. |
+| `GET /api/app/assistant/processes` | Your recurring processes, each with whether it has a contract, its assessment, the incident it is part of, its retirement stage (`lifecycle`) and the actions you may take (`controls`); counts per state; and the incidents still open. |
+| `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations, existing delivery history, assessment, incident, retirement stage, the processes that depend on it and its newest cleanup preview. |
+| `POST /api/app/assistant/processes/:kind/:id/actions` | `{ action, expectedRevision?, cleanupId?, manifestHash? }`: `pause`, `resume`, `archive`, `restore`, `keep`, `preview_cleanup` or `cleanup` one of your processes. See [process_stewardship.md](process_stewardship.md#retiring-a-process). |
 | `PUT /api/app/assistant/processes/:kind/:id/contract` | Create or replace its contract (`expectedRevision` to replace). |
 | `DELETE /api/app/assistant/processes/:kind/:id/contract` | Remove its contract. |
 
@@ -438,7 +466,8 @@ revision. An action that the current status does not allow answers 409
 
 Responsibilities, their revision history, source cursors, initiatives,
 personal updates, update receipts, confirmation receipts, process contracts,
-process observations and process incidents are personal data:
+process observations, process incidents, process retirement records and
+cleanup previews are personal data:
 
 - The transparency report (`/what-do-you-know-about-me`, Settings → Privacy)
   counts them.

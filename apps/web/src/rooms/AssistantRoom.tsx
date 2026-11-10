@@ -11,7 +11,9 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, describeListening, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from './assistant/grants';
+import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
+import { ConnectorList } from './assistant/ConnectorList';
+import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
@@ -23,7 +25,8 @@ import { ResponsibilityRow } from './assistant/ResponsibilityRow';
  * grants nothing; only Activate, pressed by the person, turns one on.
  *
  * Below them, Processes reports on the recurring work the person has set up
- * (documentation/process_stewardship.md). That part is read-only.
+ * (documentation/process_stewardship.md) and lets them pause, archive,
+ * restore and clean up each one; it owns those actions itself.
  *
  * This file is the page: its queries and the two action handlers. The parts
  * live under ./assistant (the draft form, one responsibility's row, its work
@@ -44,7 +47,9 @@ export function AssistantRoom() {
         queryKey: keys.observatory, queryFn: () => api.observatoryProjects() as Promise<{ projects: Project[] }>,
         enabled: enabled && featureActive(me, 'projects')
     });
-    // Work in progress changes without the person doing anything: poll gently.
+    // Work in progress changes without the person doing anything. The portal
+    // event stream says when (documentation/delegated_delivery.md); the gentle
+    // poll covers an account or a moment the stream does not reach.
     const workQ = useQuery({ queryKey: keys.assistantInitiatives, queryFn: () => api.assistantInitiatives(), enabled, refetchInterval: 15_000 });
     // Health is judged on every read, and incidents move on the steward's pass.
     const processesQ = useQuery({ queryKey: keys.assistantProcesses, queryFn: () => api.assistantProcesses(), enabled, refetchInterval: 60_000 });
@@ -94,8 +99,9 @@ export function AssistantRoom() {
             if (action === 'activate') {
                 const grants = describeGrants(shown.operations, projectById);
                 const listening = describeListening(shown, me.assistant.name);
+                const noticing = describeNoticing(shown);
                 const sharing = describeSharing(shown);
-                if (!await confirm(`Activate "${shown.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${sharing ? ` ${sharing}.` : ''}${shown.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(shown.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(shown.budgets)} a day.` : ''}${shown.expiresAt ? ` It ends ${whenLabel(shown.expiresAt)}.` : ''} You can pause or revoke it at any time.`)) return;
+                if (!await confirm(`Activate "${shown.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${noticing ? ` ${noticing}.` : ''}${sharing ? ` ${sharing}.` : ''}${shown.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(shown.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(shown.budgets)} a day.` : ''}${writesOutside(shown.operations) ? ` Writes to outside services are made as you and cannot be undone from here; at most ${externalOperationsPerDay(shown.budgets)} outside operations a day.` : ''}${shown.expiresAt ? ` It ends ${whenLabel(shown.expiresAt)}.` : ''} ${describeInterruption(shown.rules?.interruption)}. You can pause or revoke it at any time.`)) return;
             } else if (question && !await confirm(question)) {
                 return;
             }
@@ -170,6 +176,8 @@ export function AssistantRoom() {
                         <div style={{ marginTop: 22 }}>
                             <DraftForm projects={projects} onCreated={refresh} />
                         </div>
+                        <ConnectorList enabled={enabled} />
+                        {featureActive(me, 'knowledge') && <KnowledgeChanges />}
                         <ProcessList data={processesQ.data} pending={processesQ.isPending} error={processesQ.isError ? processesQ.error as Error : null} />
                     </>
                 )}

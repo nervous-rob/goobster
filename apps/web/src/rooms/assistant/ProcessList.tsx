@@ -1,15 +1,26 @@
 import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
+import { useQueryClient } from '@tanstack/react-query';
+import { api } from '../../lib/api';
+import { keys } from '../../lib/query';
+import { useMe } from '../../hooks/useSession';
+import { useToast } from '../../hooks/useToast';
+import { useConfirm } from '../../hooks/useConfirm';
 import { useDateLabel } from '../../hooks/useDateLabel';
-import type { AssistantProcess, AssistantProcessList, ProcessExecution, ProcessIncident, ProcessRelevance } from '../../lib/types';
+import type {
+    AssistantProcess, AssistantProcessList, ProcessAction, ProcessActionResult, ProcessCleanup, ProcessExecution,
+    ProcessIncident, ProcessRelevance
+} from '../../lib/types';
 
 /**
  * Processes (documentation/process_stewardship.md): the recurring work a
  * person has set up, with two separate judgments for each. Whether it is
  * working, and whether it is still needed, are never folded into one mark.
  *
- * Read-only. Nothing here pauses, repairs or removes a process; each one is
- * still managed where it was made.
+ * A process can be paused, resumed, archived and restored here. Nothing on
+ * this page deletes one: archiving keeps the process and its history, and
+ * cleaning up an archived process first shows exactly what it would remove.
+ * Repair is not here; each process is still edited where it was made.
  */
 
 const KIND_TEXT: Record<AssistantProcess['kind'], { label: string; to: string | null }> = {
@@ -73,6 +84,103 @@ function executionReason(process: AssistantProcess, nameOf: (ref: string) => str
         case 'NO_OBSERVATIONS': return 'Nothing has been recorded about its runs yet.';
         case 'NO_VERDICT': return 'Its runs recorded nothing that says whether they worked.';
         case 'NOT_RUNNING': return 'It is switched off.';
+        case 'PAUSED': return 'It is paused, so it is not being judged.';
+        case 'ARCHIVED': return 'It is archived, so it is not being judged.';
+        default: return '';
+    }
+}
+
+function relevanceState(process: AssistantProcess): string {
+    const { relevance, reasons } = process.assessment;
+    if (relevance === 'dormant' && reasons.relevance === 'PAUSED') return 'Paused';
+    if (relevance === 'dormant' && reasons.relevance === 'ARCHIVED') return 'Archived';
+    return RELEVANCE_TEXT[relevance];
+}
+
+/** What stewardship has done with a process, in a sentence or two. Empty when it has done nothing. */
+function lifecycleText(process: AssistantProcess, assistantName: string, whenLabel: (value: string) => string): string {
+    const state = process.lifecycle;
+    if (!state) return '';
+    const who = state.actor === 'assistant' ? assistantName : 'you';
+    const parts: string[] = [];
+    if (state.stage === 'paused') {
+        if (state.reasonCode === 'RESTORED') {
+            parts.push(`Restored${state.pausedAt ? ` ${whenLabel(state.pausedAt)}` : ''}. It stays paused until you resume it.`);
+        } else {
+            parts.push(`Paused by ${who}${state.pausedAt ? ` ${whenLabel(state.pausedAt)}` : ''}.`);
+            const ended = state.reasonCode?.startsWith('RETIRE_') ? ENDED_TEXT[state.reasonCode.slice('RETIRE_'.length)] : null;
+            if (ended) parts.push(ended);
+            if (state.started?.count) {
+                parts.push(state.started.policy === 'abandon'
+                    ? 'A check that was under way was dropped, and nothing from it was stored.'
+                    : `${plural(state.started.count, 'run')} that had already started ${state.started.count === 1 ? 'was' : 'were'} left to finish.`);
+            }
+            if (state.actor === 'assistant') parts.push('Resume it if you still want it.');
+        }
+    } else if (state.stage === 'archived' || state.stage === 'cleaned') {
+        parts.push(`Archived by ${who}${state.archivedAt ? ` ${whenLabel(state.archivedAt)}` : ''}. It cannot run until it is restored, and it comes back paused.`);
+        if (state.cleaned) {
+            const removed = removedText(state.cleaned);
+            if (removed.length) parts.push(`Cleaned up${state.cleanedAt ? ` ${whenLabel(state.cleanedAt)}` : ''}: ${removed.join(', ')} removed. Restoring does not bring ${removed.length === 1 && state.cleaned.observations === 1 ? 'it' : 'them'} back.`);
+        }
+    } else if (state.kept && process.assessment.relevance === 'retirement_candidate') {
+        parts.push(`You chose to keep it running${state.kept.at ? ` ${whenLabel(state.kept.at)}` : ''}.`);
+    }
+    return parts.join(' ');
+}
+
+function removedText(removes: { observations: number; sourceEntries: number; sourceCache: boolean }): string[] {
+    const out: string[] = [];
+    if (removes.observations) out.push(plural(removes.observations, 'run record'));
+    if (removes.sourceEntries) out.push(plural(removes.sourceEntries, 'fetched entry', 'fetched entries'));
+    if (removes.sourceCache) out.push('the stored copy of the page');
+    return out;
+}
+
+function keptText(keeps: ProcessCleanup['keeps']): string[] {
+    const out = ['the process itself'];
+    if (keeps.contract) out.push('its purpose');
+    if (keeps.inboxResults) out.push(`${plural(keeps.inboxResults, 'result')} in your Inbox`);
+    if (keeps.deliveries) out.push(plural(keeps.deliveries, 'delivery record'));
+    if (keeps.jobs) out.push(`${plural(keeps.jobs, 'run')} it started in the project`);
+    if (keeps.keptEntries) out.push(`${plural(keeps.keptEntries, 'entry', 'entries')} you kept or researched`);
+    return out;
+}
+
+const ACTION_LABEL: Partial<Record<ProcessAction, string>> = {
+    pause: 'Pause', resume: 'Resume', archive: 'Archive', restore: 'Restore', keep: 'Keep it running', preview_cleanup: 'Clean up…'
+};
+
+/** What an action did, said once after it. */
+function outcomeText(process: AssistantProcess, result: ProcessActionResult): string {
+    const name = `"${process.name}"`;
+    const waiting = (result.dependents || []).filter((item) => item.enabled).map((item) => `"${item.name}"`);
+    const depends = waiting.length ? ` ${waiting.join(', ')} ${waiting.length === 1 ? 'depends' : 'depend'} on it and ${waiting.length === 1 ? 'is' : 'are'} still switched on.` : '';
+    switch (result.action) {
+        case 'pause': {
+            if (!result.changed) return `${name} was already paused.`;
+            const started = result.started?.count
+                ? result.started.policy === 'abandon'
+                    ? ' A check that was under way was dropped.'
+                    : ` ${plural(result.started.count, 'run')} that had already started will finish.`
+                : '';
+            const dropped = result.dropped ? ` ${plural(result.dropped, 'event')} waiting to be retried will not be.` : '';
+            return `Paused ${name}. Nothing new will start.${started}${dropped}${depends}`;
+        }
+        case 'resume':
+            return result.changed
+                ? `Resumed ${name}.${result.skipped ? ` ${plural(result.skipped, 'event')} that happened while it was paused will not be replayed.` : ''}`
+                : `${name} is already running.`;
+        case 'archive': return `Archived ${name}. It and its history are kept.${depends}`;
+        case 'restore': {
+            const gone = result.notRestored ? removedText(result.notRestored) : [];
+            return `Restored ${name}. It is paused until you resume it.${gone.length ? ` What was cleaned up (${gone.join(', ')}) is not restored.` : ''}`;
+        }
+        case 'keep': return `${name} stays on. You will not be asked again unless its purpose changes.`;
+        case 'cleanup': {
+            const removed = result.cleanup?.result ? removedText(result.cleanup.result.removed) : [];
+            return removed.length ? `Removed ${removed.join(', ')} of ${name}.` : `Nothing of ${name} needed removing.`;
+        }
         default: return '';
     }
 }
@@ -120,7 +228,35 @@ function IncidentRow({ incident }: { incident: ProcessIncident }) {
     );
 }
 
-function ProcessRow({ process, nameOf }: { process: AssistantProcess; nameOf: (ref: string) => string }) {
+function CleanupPreview({ cleanup, busy, onConfirm, onCancel }: {
+    cleanup: ProcessCleanup; busy: boolean; onConfirm: () => void; onCancel: () => void;
+}) {
+    const removes = removedText(cleanup.removes);
+    return (
+        <div className="process-cleanup" data-testid="process-cleanup-preview" role="group" aria-label="Cleanup preview">
+            {removes.length > 0
+                ? <div><strong>This removes exactly:</strong> {removes.join(', ')}.</div>
+                : <div><strong>There is nothing to remove.</strong></div>}
+            <div className="hint">It keeps {keptText(cleanup.keeps).join(', ')}.</div>
+            {cleanup.more && <div className="hint">There is more than one cleanup can take. Preview again afterwards for the rest.</div>}
+            {removes.length > 0 && <div className="hint">What is removed cannot be brought back, also not by restoring the process.</div>}
+            <div className="inbox-actions" style={{ marginTop: 6 }}>
+                {removes.length > 0 && (
+                    <button type="button" className="btn danger" disabled={busy} data-testid="process-cleanup-confirm" onClick={onConfirm}>Remove these</button>
+                )}
+                <button type="button" className="btn subtle" disabled={busy} onClick={onCancel}>{removes.length > 0 ? 'Cancel' : 'Close'}</button>
+            </div>
+        </div>
+    );
+}
+
+function ProcessRow({ process, nameOf, assistantName, busy, cleanup, onAct, onConfirmCleanup, onCancelCleanup }: {
+    process: AssistantProcess; nameOf: (ref: string) => string; assistantName: string; busy: boolean;
+    cleanup: ProcessCleanup | null;
+    onAct: (process: AssistantProcess, action: ProcessAction) => void;
+    onConfirmCleanup: (process: AssistantProcess, cleanup: ProcessCleanup) => void;
+    onCancelCleanup: () => void;
+}) {
     const whenLabel = useDateLabel();
     const kind = KIND_TEXT[process.kind];
     const judged = process.assessment;
@@ -131,12 +267,15 @@ function ProcessRow({ process, nameOf }: { process: AssistantProcess; nameOf: (r
     const lastRan = process.lastRunAt
         || [judged.health.lastOkAt, judged.health.lastFailureAt].filter(Boolean).sort().pop()
         || null;
+    const stage = process.archived ? 'archived' : process.lifecycle?.stage === 'paused' && !process.enabled ? 'paused' : null;
+    const stewardship = lifecycleText(process, assistantName, whenLabel);
+    const actions = process.controls.filter((action) => ACTION_LABEL[action]);
     return (
         <div id={`process-${process.kind}-${process.id}`} className={`list-row task-row process-row is-${judged.execution}`}
             data-testid="process-row" data-process={process.ref}>
             <div className="row-body">
                 <strong>{process.name}</strong>{' '}
-                <span className="row-meta">{kind.label}{process.enabled ? '' : ' · off'}</span>
+                <span className="row-meta">{kind.label}{stage ? ` · ${stage}` : process.enabled ? '' : ' · off'}</span>
                 <div className="process-judgment" data-testid="process-execution">
                     <span className="process-axis">Working?</span>{' '}
                     <span className="process-state"><span aria-hidden="true">{execution.mark}</span> {execution.text}</span>
@@ -144,7 +283,7 @@ function ProcessRow({ process, nameOf }: { process: AssistantProcess; nameOf: (r
                 </div>
                 <div className="process-judgment" data-testid="process-relevance">
                     <span className="process-axis">Still needed?</span>{' '}
-                    <span className="process-state">{RELEVANCE_TEXT[judged.relevance]}</span>
+                    <span className="process-state">{relevanceState(process)}</span>
                     {usefulness && <span className="hint"> {usefulness}</span>}
                 </div>
                 {(judged.signals.reviewDue || judged.signals.resultsIgnored) && (
@@ -153,17 +292,26 @@ function ProcessRow({ process, nameOf }: { process: AssistantProcess; nameOf: (r
                         {judged.signals.resultsIgnored && 'Its recent results were not opened. That alone is not a reason to stop it.'}
                     </div>
                 )}
+                {stewardship && <div className="hint" data-testid="process-lifecycle">{stewardship}</div>}
                 <div className="row-meta">
                     {lastRan ? `Last ran ${whenLabel(lastRan)}` : 'Has not run yet'}
                     {process.nextRunAt && process.enabled ? ` · next ${whenLabel(process.nextRunAt)}` : ''}
                     {process.incident ? ` · part of an ${process.incident.status === 'RECOVERING' ? 'incident that is recovering' : 'open incident'}` : ''}
                 </div>
+                {cleanup && (
+                    <CleanupPreview cleanup={cleanup} busy={busy}
+                        onConfirm={() => onConfirmCleanup(process, cleanup)} onCancel={onCancelCleanup} />
+                )}
             </div>
-            {kind.to && (
-                <div className="inbox-actions">
-                    <Link to={kind.to as never} className="btn subtle">Manage →</Link>
-                </div>
-            )}
+            <div className="inbox-actions">
+                {actions.map((action) => (
+                    <button key={action} type="button" className={action === 'keep' || action === 'resume' ? 'btn' : 'btn subtle'}
+                        disabled={busy} data-testid={`process-${action}`} onClick={() => onAct(process, action)}>
+                        {ACTION_LABEL[action]}
+                    </button>
+                ))}
+                {kind.to && !process.archived && <Link to={kind.to as never} className="btn subtle">Manage →</Link>}
+            </div>
         </div>
     );
 }
@@ -171,15 +319,30 @@ function ProcessRow({ process, nameOf }: { process: AssistantProcess; nameOf: (r
 /** Not-working first, then problems, then the rest, each group by name. */
 const ORDER: ProcessExecution[] = ['blocked', 'unreachable', 'stalled', 'degraded', 'unknown', 'healthy'];
 
-/** Switched off with nothing to report: a finished watch, a paused task. Folded away until asked for. */
-const isIdle = (process: AssistantProcess) => !process.enabled && process.assessment.execution === 'unknown' && !process.incident;
+/**
+ * Switched off where it was made, with nothing to report: a finished watch,
+ * a task turned off by hand. Folded away until asked for. A process paused
+ * here stays in view, because resuming it is done here.
+ */
+const isIdle = (process: AssistantProcess) => !process.enabled && !process.archived && process.lifecycle?.stage !== 'paused'
+    && process.assessment.execution === 'unknown' && !process.incident;
 
 export function ProcessList({ data, pending, error }: { data: AssistantProcessList | undefined; pending: boolean; error: Error | null }) {
+    const me = useMe();
+    const toast = useToast();
+    const confirm = useConfirm();
+    const queryClient = useQueryClient();
     const [showIdle, setShowIdle] = useState(false);
+    const [showArchived, setShowArchived] = useState(false);
+    const [busy, setBusy] = useState<string | null>(null);
+    const [notice, setNotice] = useState('');
+    const [preview, setPreview] = useState<{ ref: string; cleanup: ProcessCleanup } | null>(null);
     const sorted = [...(data?.processes || [])].sort((a, b) =>
         ORDER.indexOf(a.assessment.execution) - ORDER.indexOf(b.assessment.execution) || a.name.localeCompare(b.name));
-    const idle = sorted.filter(isIdle).length;
-    const processes = showIdle ? sorted : sorted.filter((process) => !isIdle(process));
+    const current = sorted.filter((process) => !process.archived);
+    const archived = sorted.filter((process) => process.archived);
+    const idle = current.filter(isIdle).length;
+    const processes = showIdle ? current : current.filter((process) => !isIdle(process));
     const byRef = new Map(sorted.map((process) => [process.ref, process.name]));
     const nameOf = (ref: string) => byRef.get(ref) || ref;
     const counts = data?.counts;
@@ -190,19 +353,64 @@ export function ProcessList({ data, pending, error }: { data: AssistantProcessLi
         if (counts.degraded) summary.push(`${counts.degraded} running with a problem`);
         if (counts.retirementCandidates) summary.push(`${counts.retirementCandidates} may no longer be needed`);
         if (counts.unknown) summary.push(`${counts.unknown} not enough to judge`);
+        if (counts.paused) summary.push(`${counts.paused} paused`);
+        if (counts.archived) summary.push(`${counts.archived} archived`);
     }
+
+    const refresh = () => Promise.all([
+        queryClient.invalidateQueries({ queryKey: keys.assistantProcesses }),
+        queryClient.invalidateQueries({ queryKey: keys.home }),
+        queryClient.invalidateQueries({ queryKey: ['inbox'] })
+    ]);
+
+    async function run(process: AssistantProcess, action: ProcessAction, extra: { cleanupId?: number; manifestHash?: string } = {}) {
+        setBusy(process.ref);
+        setNotice('');
+        try {
+            const result = await api.assistantProcessAction(process, { action, expectedRevision: process.lifecycle?.revision ?? 0, ...extra });
+            if (action === 'preview_cleanup' && result.cleanup) {
+                setPreview({ ref: process.ref, cleanup: result.cleanup });
+            } else {
+                setPreview(null);
+                setNotice(outcomeText(process, result));
+            }
+        } catch (failure) {
+            toast((failure as Error).message, true);
+            if (action === 'cleanup') setPreview(null);
+        } finally {
+            await refresh();
+            setBusy(null);
+        }
+    }
+
+    async function act(process: AssistantProcess, action: ProcessAction) {
+        if (action === 'archive' && !await confirm(
+            `Archive "${process.name}"? It will not run again unless you restore it. The process, its history and its results are kept; nothing is deleted.`
+        )) return;
+        await run(process, action);
+    }
+
+    const row = (process: AssistantProcess) => (
+        <ProcessRow key={process.ref} process={process} nameOf={nameOf} assistantName={me.assistant.name}
+            busy={busy === process.ref} cleanup={preview?.ref === process.ref ? preview.cleanup : null}
+            onAct={(target, action) => void act(target, action)}
+            onConfirmCleanup={(target, cleanup) => void run(target, 'cleanup', { cleanupId: cleanup.id, manifestHash: cleanup.manifestHash })}
+            onCancelCleanup={() => setPreview(null)} />
+    );
     return (
         <section id="processes" className="assistant-processes" aria-labelledby="processes-heading" data-testid="assistant-processes">
             <h2 id="processes-heading">Processes</h2>
             <p className="hint" style={{ maxWidth: 720 }}>
                 The recurring work you have set up: scheduled tasks, project triggers, watches and followed sources.
                 Each is judged twice from what it recorded: whether it is working, and whether it is still needed.
-                This is a report. Nothing here changes a process.
+                You can pause, archive and restore each one here. Nothing here deletes a process: archiving keeps it and its history,
+                and cleaning up an archived one shows exactly what it would remove before anything goes.
             </p>
             {pending && <div className="empty">Loading…</div>}
             {error && <div className="empty" role="alert">{error.message}</div>}
             {data && sorted.length === 0 && <div className="hint" data-testid="processes-empty">No recurring work is set up yet.</div>}
             {data && sorted.length > 0 && <div className="row-meta" data-testid="processes-summary">{summary.join(' · ')}</div>}
+            <div className="hint" role="status" aria-live="polite" data-testid="process-notice">{notice}</div>
             {data && data.incidents.length > 0 && (
                 <ul className="assistant-list" style={{ marginTop: 10 }} aria-label="Open incidents">
                     {data.incidents.map((incident) => <IncidentRow key={incident.id} incident={incident} />)}
@@ -210,7 +418,7 @@ export function ProcessList({ data, pending, error }: { data: AssistantProcessLi
             )}
             {processes.length > 0 && (
                 <div className="list-card" style={{ marginTop: 10 }}>
-                    {processes.map((process) => <ProcessRow key={process.ref} process={process} nameOf={nameOf} />)}
+                    {processes.map(row)}
                 </div>
             )}
             {idle > 0 && (
@@ -218,6 +426,20 @@ export function ProcessList({ data, pending, error }: { data: AssistantProcessLi
                     data-testid="processes-show-idle" onClick={() => setShowIdle((value) => !value)}>
                     {showIdle ? 'Hide switched off' : `Show ${idle} switched off`}
                 </button>
+            )}
+            {archived.length > 0 && (
+                <>
+                    {' '}
+                    <button type="button" className="btn subtle" style={{ marginTop: 10 }} aria-expanded={showArchived}
+                        data-testid="processes-show-archived" onClick={() => setShowArchived((value) => !value)}>
+                        {showArchived ? 'Hide archived' : `Show ${archived.length} archived`}
+                    </button>
+                    {showArchived && (
+                        <div className="list-card" style={{ marginTop: 10 }} data-testid="processes-archived">
+                            {archived.map(row)}
+                        </div>
+                    )}
+                </>
             )}
         </section>
     );

@@ -554,7 +554,7 @@ class ParlorService {
     async listNotes({ ownerId, personaId, tagId = null, q = null }) {
         const { guildId, scopeKey } = await this._workspace(ownerId, personaId);
         const params = { guildId, scopeKey, limit: MAX_NOTES_PER_PERSONA };
-        let where = 'n.guildId = @guildId AND n.scopeKey = @scopeKey';
+        let where = 'n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.archivedAt IS NULL';
         if (tagId) {
             where += ' AND EXISTS (SELECT 1 FROM kg_node_tags nt WHERE nt.nodeId = n.id AND nt.tagId = @tagId)';
             params.tagId = Number(tagId);
@@ -843,7 +843,7 @@ class ParlorService {
             `SELECT n.id, n.label AS title, n.content, e.embedding, e.dims, e.model, n.updatedAt
              FROM kg_nodes n
              LEFT JOIN kg_node_embeddings e ON e.nodeId = n.id
-             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey
+             WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.archivedAt IS NULL
              LIMIT @limit`,
             { guildId, scopeKey, limit: MAX_NOTES_PER_PERSONA }
         );
@@ -2959,7 +2959,7 @@ class ParlorService {
             const aiService = require('./aiService');
             const existingTitles = (await db.all(
                 `SELECT label AS title FROM kg_nodes
-                 WHERE guildId = @guildId AND scopeKey = @scopeKey
+                 WHERE guildId = @guildId AND scopeKey = @scopeKey AND archivedAt IS NULL
                  ORDER BY updatedAt DESC LIMIT 60`,
                 { guildId, scopeKey }
             )).map(r => r.title);
@@ -3024,7 +3024,7 @@ class ParlorService {
                     for (const note of upserts) {
                         const row = await db.get(
                             `SELECT id, label FROM kg_nodes
-                             WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label`,
+                             WHERE guildId = @guildId AND scopeKey = @scopeKey AND label = @label AND archivedAt IS NULL`,
                             { guildId, scopeKey, label: note.label }
                         );
                         if (row) created.push({ id: row.id, title: row.label });

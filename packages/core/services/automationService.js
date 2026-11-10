@@ -61,7 +61,7 @@ class AutomationService {
         return await db.all(`
             SELECT
                 a.id, a.userId, a.guildId, a.channelId,
-                a.name, a.promptText, a.schedule, a.metadata
+                a.name, a.promptText, a.schedule, a.metadata, a.nextRun
             FROM automations a
             WHERE a.isEnabled = 1
             AND a.nextRun <= CURRENT_TIMESTAMP
@@ -323,6 +323,8 @@ class AutomationService {
 
     /** Internal execution body; callers must finish claimDueRun first. */
     async _executeClaimedAutomation(automation) {
+        const occurrenceKey = this._occurrenceKey(automation);
+        await this._observeStarted(automation, occurrenceKey);
         // The run is one piece of work: a turn that fails inside it, and
         // every search or sandbox second it spends, is the automation's.
         const result = await workContext.run(
@@ -330,8 +332,41 @@ class AutomationService {
             () => this._runClaimedAutomation(automation),
             { replace: true }
         );
-        await this._observe(automation, result);
+        await this._observe(automation, result, occurrenceKey);
         return result;
+    }
+
+    /**
+     * The identity of this run for the process catalog: the scheduled fire
+     * time the claim consumed, or the moment of a run that had none.
+     */
+    _occurrenceKey(automation) {
+        const due = automation.nextRun instanceof Date ? automation.nextRun : (automation.nextRun ? new Date(
+            /[zZ]|[+-]\d\d:?\d\d$/.test(String(automation.nextRun)) || !String(automation.nextRun).includes(' ')
+                ? String(automation.nextRun)
+                : `${String(automation.nextRun).replace(' ', 'T')}Z`
+        ) : null);
+        const stamp = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
+        return due && !Number.isNaN(due.getTime()) ? `fire:${stamp(due)}` : `manual:${stamp(new Date())}`;
+    }
+
+    /**
+     * Mark the run as started, so a pause that lands while it is running can
+     * say that work was already under way (process_stewardship.md). The
+     * outcome recorded when it ends is what settles it. Never throws.
+     */
+    async _observeStarted(automation, occurrenceKey) {
+        const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
+        if (!processes) return;
+        await processes.record({
+            processKind: 'automation',
+            processId: automation.id,
+            ownerUserId: automation.userId,
+            occurrenceKey,
+            phase: 'dispatch',
+            outcome: 'unknown',
+            reasonCode: 'STARTED'
+        });
     }
 
     /**
@@ -339,14 +374,14 @@ class AutomationService {
      * (documentation/delegated_responsibilities.md, "Processes"). The fire
      * time the claim consumed is the occurrence identity. Never throws.
      */
-    async _observe(automation, result) {
+    async _observe(automation, result, occurrenceKey = this._occurrenceKey(automation)) {
         const processes = requireOptional('./assistantProcessService', { feature: 'assistant' });
         if (!processes || !result?.outcome) return;
         await processes.record({
             processKind: 'automation',
             processId: automation.id,
             ownerUserId: automation.userId,
-            occurrenceKey: `fire:${automation.nextRun || 'manual'}`,
+            occurrenceKey,
             phase: 'outcome',
             outcome: result.outcome,
             reasonCode: result.code || null

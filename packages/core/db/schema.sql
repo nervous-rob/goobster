@@ -165,7 +165,10 @@ CREATE TABLE IF NOT EXISTS automations (
     nextRun TEXT,
     metadata TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    -- Set while archived (documentation/process_stewardship.md): the row and
+    -- its history stay, it cannot be switched on until restored.
+    archivedAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_automations_guild ON automations(guildId);
@@ -1897,7 +1900,9 @@ CREATE TABLE IF NOT EXISTS project_triggers (
     -- how the stage itself ended - the two are deliberately separate.
     lastJobOutcome TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Set while archived (documentation/process_stewardship.md)
+    archivedAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_triggers_project ON project_triggers(projectId);
@@ -2367,6 +2372,10 @@ CREATE TABLE IF NOT EXISTS attention_watches (
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     -- Mission start-attempt correlation (see observatory_jobs.executionAttemptId)
     executionAttemptId TEXT,
+    -- Process stewardship: a paused watch stays ARMED but cannot be claimed;
+    -- an archived one cannot be resumed until restored.
+    pausedAt TEXT,
+    archivedAt TEXT,
     UNIQUE (userId, label)
 );
 
@@ -2391,6 +2400,9 @@ CREATE TABLE IF NOT EXISTS attention_policies (
     quietEndMinute INTEGER,
     maxContactsPerDay INTEGER NOT NULL DEFAULT 3,
     contactCooldownMinutes INTEGER NOT NULL DEFAULT 180,
+    -- When the day's digest of delegated work may go out, in minutes from
+    -- midnight on the same clock as the quiet hours (NULL = 09:00).
+    digestMinute INTEGER,
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -3329,6 +3341,8 @@ CREATE TABLE IF NOT EXISTS followed_sources (
     claimUntil TEXT,
     latestEntryId INTEGER,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- Set while archived (documentation/process_stewardship.md)
+    archivedAt TEXT,
     CHECK ((projectId IS NOT NULL AND topicNodeId IS NULL) OR (projectId IS NULL AND topicNodeId IS NOT NULL)),
     UNIQUE (userId, projectId, url),
     UNIQUE (userId, topicNodeId, url)
@@ -3546,8 +3560,10 @@ CREATE TABLE IF NOT EXISTS assistant_source_cursors (
     id INTEGER PRIMARY KEY,
     responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
     -- attention_item | project_plan | project_plan_step | conversation_request
-    -- (conversation_request keeps one row per responsibility: sourceId
-    -- 'messages', sourceRevision the last parlor_messages.id examined)
+    -- | chat_request | job_failure | followed_source | ci_verdict
+    -- (a stream - conversation_request, chat_request, job_failure - keeps one
+    -- row per responsibility: sourceId 'messages' or 'jobs', sourceRevision
+    -- the last parlor_messages / messages / observatory_jobs id examined)
     sourceKind TEXT NOT NULL,
     sourceId TEXT NOT NULL,
     -- Opaque fingerprint of the source's material state at the last scan
@@ -3692,6 +3708,13 @@ CREATE TABLE IF NOT EXISTS assistant_updates (
     inboxItemId INTEGER,
     envelopeRequested INTEGER NOT NULL DEFAULT 0 CHECK (envelopeRequested IN (0, 1)),
     envelopeRevision INTEGER NOT NULL DEFAULT 0,
+    -- Delivery (DA-9): the one time a material revision, or a gate
+    -- occurrence, left the portal - as a 'digest' entry or as a 'contact',
+    -- never both. Leaving the portal is delivery; it acknowledges nothing.
+    outboundKind TEXT,
+    outboundRevision INTEGER NOT NULL DEFAULT 0,
+    outboundOccurrence INTEGER NOT NULL DEFAULT 0,
+    outboundAt TEXT,
     happenedAt TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -3886,3 +3909,194 @@ CREATE TABLE IF NOT EXISTS assistant_process_incident_members (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_process_incident_members_owner ON assistant_process_incident_members(ownerUserId);
+
+-- Process lifecycle (DA-5b, ADR 0022): one row per process that has ever
+-- been paused, archived, cleaned or deliberately kept through stewardship.
+-- The definition stays in its own table; this row is the restore metadata:
+-- who acted and why, what was already running at the pause, the final
+-- outcome at archive and what a cleanup removed. Codes and counts only.
+--   stage: ACTIVE (resumed or kept) | PAUSED | ARCHIVED | CLEANED
+--   actorKind: 'person' or 'assistant' (acting inside responsibilityId)
+--   startedPolicy: 'finish' (already-started work ran to its end) or
+--     'abandon' (it was dropped without storing anything)
+--   keptRevision / keptReason: the contract revision and relevance reason
+--     the person chose to keep the process running under
+CREATE TABLE IF NOT EXISTS assistant_process_lifecycle (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    name TEXT,
+    stage TEXT NOT NULL DEFAULT 'ACTIVE' CHECK (stage IN ('ACTIVE', 'PAUSED', 'ARCHIVED', 'CLEANED')),
+    actorKind TEXT NOT NULL DEFAULT 'person' CHECK (actorKind IN ('person', 'assistant')),
+    responsibilityId INTEGER,
+    reasonCode TEXT,
+    startedCount INTEGER NOT NULL DEFAULT 0,
+    startedPolicy TEXT,
+    pausedAt TEXT,
+    archivedAt TEXT,
+    cleanedAt TEXT,
+    resumedAt TEXT,
+    finalJson TEXT,
+    cleanedJson TEXT,
+    keptRevision INTEGER,
+    keptReason TEXT,
+    keptAt TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (processKind, processId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_lifecycle_owner ON assistant_process_lifecycle(ownerUserId, stage);
+
+-- Cleanup manifests (DA-5b): the exact rows one cleanup may remove, frozen
+-- at preview. manifestJson holds row ids and counts, never content. It is
+-- bound to the lifecycle revision, the contract revision and a hash of the
+-- definition, so a change to any of them makes it INVALIDATED at apply.
+--   status: PREVIEWED | APPLIED | INVALIDATED | EXPIRED
+CREATE TABLE IF NOT EXISTS assistant_process_cleanups (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    name TEXT,
+    status TEXT NOT NULL DEFAULT 'PREVIEWED' CHECK (status IN ('PREVIEWED', 'APPLIED', 'INVALIDATED', 'EXPIRED')),
+    manifestJson TEXT NOT NULL,
+    manifestHash TEXT NOT NULL,
+    lifecycleRevision INTEGER NOT NULL,
+    resultJson TEXT,
+    expiresAt TEXT NOT NULL,
+    appliedAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_cleanups_owner ON assistant_process_cleanups(ownerUserId, processKind, processId);
+
+-- Daily proposal counters (DA-8, ADR 0026): how many opportunities one
+-- adapter has proposed for one responsibility on one UTC day, and how many
+-- further changes it folded into the newest revision instead. The cap is
+-- taken with a conditional UPDATE, so a restart or a second process cannot
+-- exceed it. Numbers only; no source text. Kept 14 days.
+CREATE TABLE IF NOT EXISTS assistant_proposal_counters (
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    ownerUserId TEXT NOT NULL,
+    -- followed_source | ci_verdict | job_failure | chat_request
+    sourceKind TEXT NOT NULL,
+    day TEXT NOT NULL,
+    proposed INTEGER NOT NULL DEFAULT 0,
+    coalesced INTEGER NOT NULL DEFAULT 0,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (responsibilityId, sourceKind, day)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_proposal_counters_owner ON assistant_proposal_counters(ownerUserId, day);
+
+-- What the classifier decided about one personal-chat message under one
+-- responsibility revision (DA-8, ADR 0026): a label, never the message. It
+-- exists so a pass that stops half way, or a restart, does not pay for the
+-- same message twice. Kept 30 days.
+CREATE TABLE IF NOT EXISTS assistant_message_labels (
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    responsibilityRevision INTEGER NOT NULL,
+    ownerUserId TEXT NOT NULL,
+    messageId INTEGER NOT NULL,
+    -- request | commitment | mention | none
+    label TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (responsibilityId, responsibilityRevision, messageId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_message_labels_owner ON assistant_message_labels(ownerUserId, createdAt);
+
+-- ---------------------------------------------------------------------------
+-- Delivery of delegated work (DA-9). Spec: documentation/delegated_delivery.md
+-- ---------------------------------------------------------------------------
+
+-- The contact ledger for everything that is not one of Attention's own
+-- notices: one row per outbound contact (a browser push or a Discord DM)
+-- that another subsystem asked attentionService.requestContact() for. The
+-- daily cap and the cooldown count these rows together with the notices
+-- Attention delivered itself, so there is one contact budget per person.
+-- Codes and ids only: never a title or a body. Kept 30 days.
+CREATE TABLE IF NOT EXISTS attention_contacts (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    -- Who asked: 'assistant' (delegated work)
+    reason TEXT NOT NULL,
+    -- What it was about: an update id, or 'digest:<day>'
+    refId TEXT,
+    urgent INTEGER NOT NULL DEFAULT 0 CHECK (urgent IN (0, 1)),
+    inboxItemId INTEGER,
+    -- skipped | sent | failed, as inbox_items.discordStatus
+    discordStatus TEXT,
+    pushSent INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_contacts_user ON attention_contacts(userId, createdAt);
+
+-- One digest per person and day. `day` is the person's own calendar day
+-- (their timezone when quiet hours are evaluated locally, otherwise UTC).
+-- The unique key is what makes a second digest impossible. sentAt is NULL
+-- for a digest that was reserved and never confirmed (a crash mid-send):
+-- that day is spent and its updates go into the next day's digest.
+CREATE TABLE IF NOT EXISTS assistant_digests (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    day TEXT NOT NULL,
+    updateIdsJson TEXT NOT NULL DEFAULT '[]',
+    inboxItemId INTEGER,
+    sentAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, day)
+);
+
+-- Knowledge change sets (DA-11b, ADR 0027): what a delegated run proposed to
+-- do to a person's notes, or did under an explicit direct-edit grant, and the
+-- review of a withdrawn source. One row is one decision for one person.
+-- PROPOSED waits for them; APPLIED, REJECTED and STALE are decisions; APPLIED
+-- becomes REVERTED only through a revision-checked compensating change.
+-- operationsJson is a closed schema ({ op: 'amend' | 'dispute', nodeId, ... });
+-- beforeJson and afterJson hold the note text the diff is drawn from and a
+-- revert restores, so they are the person's private text: erasure, export and
+-- the retention pass cover this table (documentation/delegated_knowledge.md).
+CREATE TABLE IF NOT EXISTS kg_change_sets (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    guildId TEXT NOT NULL,
+    scopeKey TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('saved_note_edit', 'direct_change', 'source_retraction')),
+    status TEXT NOT NULL DEFAULT 'PROPOSED'
+        CHECK (status IN ('PROPOSED', 'APPLIED', 'REJECTED', 'STALE', 'REVERTED')),
+    -- Initiating run, and the grant it ran under (NULL for a review opened by a person)
+    runId INTEGER,
+    responsibilityId INTEGER,
+    responsibilityRevision INTEGER,
+    -- The one note an edit concerns (NULL for a source review, which names several)
+    nodeId INTEGER,
+    -- The note revision the proposal was read at; applying checks it still holds
+    expectedRevision INTEGER,
+    operationsJson TEXT NOT NULL,
+    beforeJson TEXT,
+    afterJson TEXT,
+    rationale TEXT,
+    evidenceJson TEXT,
+    -- A source review: the source and the notes and assumptions that rested on it
+    impactJson TEXT,
+    -- PROPOSAL | DIRECT_GRANT | SOURCE_RETRACTED, then how it was decided:
+    -- APPLIED | REJECTED | REVISION_CONFLICT | NOTE_GONE | EXPIRED | REVERTED
+    policyCode TEXT,
+    decisionCode TEXT,
+    appliedRevision INTEGER,
+    updateId INTEGER,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    decidedAt TEXT,
+    revertedAt TEXT,
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_kg_change_sets_user ON kg_change_sets(userId, status, createdAt);
+CREATE INDEX IF NOT EXISTS idx_kg_change_sets_run ON kg_change_sets(runId);
+CREATE INDEX IF NOT EXISTS idx_kg_change_sets_node ON kg_change_sets(nodeId);

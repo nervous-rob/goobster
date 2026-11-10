@@ -224,8 +224,184 @@ const accessRequest = {
     }
 };
 
+// --- A process that may no longer be needed (gate kind `process_retirement`) --
+
+/**
+ * Asked by the steward pass when a process's purpose is over, it is still
+ * switched on, and no responsibility lets the assistant pause it
+ * (documentation/process_stewardship.md, "When Goobster does it for you").
+ * Both answers go through `assistantProcessLifecycleService.act`, the same
+ * call the Processes list makes; this descriptor decides nothing itself.
+ */
+const processRetirement = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_A_CANDIDATE', 'NOT_RUNNING', 'ARCHIVED', 'CHANGED', 'NOT_FOUND'],
+
+    /** The process a gate names, as its owner sees it now; null when it is gone or not theirs. */
+    async _entry(gate, viewer) {
+        const { processes } = await require('./assistantProcessService').assess({ userId: viewer.userId });
+        return processes.find(entry => entry.ref === String(gate.id)) || null;
+    },
+
+    async describe(gate, viewer) {
+        const entry = await this._entry(gate, viewer);
+        if (!entry) return null;
+        const lifecycle = require('./assistantProcessLifecycleService');
+        const { ENDED_TEXT } = require('./assistantIncidentService');
+        const name = `"${String(entry.described.name || 'A process').slice(0, 80)}"`;
+        const reason = entry.assessment.reasons.relevance;
+        const row = entry.lifecycle || null;
+        // Open while "keep it running" is still on offer: its purpose is over, it is on, and it was not kept.
+        const open = lifecycle.controls(entry, row).includes('keep');
+        let outcome = null;
+        if (!open) {
+            if (entry.described.archived) outcome = `${name} is archived.`;
+            else if (!entry.described.enabled && row?.stage === 'PAUSED') outcome = `${name} is paused.`;
+            else if (!entry.described.enabled) outcome = `${name} is switched off.`;
+            else if (entry.assessment.relevance === 'retirement_candidate') outcome = `You chose to keep ${name} running.`;
+            else outcome = `Nothing says ${name} has outlived its purpose any more.`;
+        }
+        return {
+            state: open ? 'open' : 'resolved',
+            title: `${name} may no longer be needed`,
+            detail: `${ENDED_TEXT[reason] || 'What it was for is over.'} It is still switched on.`,
+            outcome,
+            // The contract and reason asked about, and the stage the options were read at.
+            revision: `c${entry.contract?.revision ?? 0}:${reason}:l${row?.revision ?? 0}`,
+            options: [
+                { id: 'pause', label: 'Pause it', effect: 'Nothing new starts. A run already under way finishes. Nothing is deleted, and you can resume it from Processes.' },
+                { id: 'keep', label: 'Keep it running', effect: 'It stays on, and you are not asked again unless its purpose changes.' }
+            ]
+        };
+    },
+
+    async decide(gate, viewer, optionId, { revision }) {
+        if (optionId !== 'pause' && optionId !== 'keep') throw stale();
+        const ref = /^([a-z_]+):(\d+)$/.exec(String(gate.id));
+        const shown = /:l(\d+)$/.exec(String(revision));
+        if (!ref || !shown) throw stale();
+        const result = await require('./assistantProcessLifecycleService').act({
+            userId: viewer.userId, kind: ref[1], id: ref[2], action: optionId, expectedRevision: Number(shown[1])
+        });
+        const name = `"${result.process.name}"`;
+        if (optionId === 'keep') return { message: `${name} stays on.` };
+        const running = result.started?.count
+            ? result.started.policy === 'abandon'
+                ? ' A check that was under way was dropped.'
+                : ` ${plural(result.started.count, 'run')} already under way will finish.`
+            : '';
+        return { message: `Paused ${name}. Nothing new will start.${running}` };
+    }
+};
+
+// --- Delegated knowledge work (DA-11b, ADR 0027) ------------------------------
+//
+// Both kinds are decided by the person who owns the notes. `apply` here is the
+// person's own click: the run that proposed it has no way to reach this.
+
+const changeSets = () => require('./knowledgeChangeSetService');
+
+const PROPOSAL_OUTCOME = {
+    APPLIED: 'You applied this change. You can revert it from Knowledge changes.',
+    REJECTED: 'You dismissed this suggestion. The note was not changed.',
+    STALE: 'The note changed after this was suggested, so nothing was applied.',
+    REVERTED: 'You applied this change and then reverted it.'
+};
+const RETRACTION_OUTCOME = {
+    APPLIED: 'You marked those notes as disputed. You can revert it from Knowledge changes.',
+    REJECTED: 'You left your notes as they are.',
+    STALE: 'Those notes changed since the review, so nothing was changed.',
+    REVERTED: 'You marked those notes as disputed and then reverted it.'
+};
+
+async function ownChangeSet(gate, viewer, kind) {
+    const row = await changeSets().forPerson(gate.id, viewer.userId);
+    return row && row.kind === kind ? row : null;
+}
+
+const noteProposal = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_OPEN'],
+
+    async describe(gate, viewer) {
+        const row = await ownChangeSet(gate, viewer, 'saved_note_edit');
+        if (!row) return null;
+        const service = changeSets();
+        const shown = service.present(row);
+        const open = row.status === 'PROPOSED';
+        // The note may have moved since the run read it: say so, and offer only to dismiss.
+        const node = open ? await require('./knowledgeGraphService').getPersonalNote({
+            guildId: row.guildId, userId: row.userId, nodeId: row.nodeId
+        }) : null;
+        const moved = open && (!node || node.archivedAt || Number(node.revision) !== Number(row.expectedRevision));
+        const changes = [
+            shown.operations.some(op => op.op === 'amend') ? 'replaces the text' : null,
+            shown.claimStatus ? 'marks the note as disputed' : null
+        ].filter(Boolean).join(' and ');
+        return {
+            state: open ? 'open' : 'resolved',
+            title: `Suggested change to "${shown.label || 'a note'}"`,
+            detail: moved
+                ? 'The note changed after this was suggested, so it cannot be applied. Dismiss it; the next pass may suggest again from what is there now.'
+                : `${shown.rationale ? `${shown.rationale} ` : ''}Applying ${changes || 'this'}; nothing changes until you do.`,
+            diff: shown.diff,
+            outcome: open ? null : (PROPOSAL_OUTCOME[row.status] || 'This request is no longer open.'),
+            revision: `cs:${row.id}:${row.updatedAt}:${node ? node.revision : 'x'}`,
+            options: [
+                ...(moved ? [] : [{ id: 'apply', label: 'Apply change', effect: `Applies the change to your note${changes ? ` (it ${changes})` : ''}. You can revert it afterwards.` }]),
+                { id: 'reject', label: 'Dismiss', effect: 'Leaves the note exactly as it is.' }
+            ]
+        };
+    },
+
+    async decide(gate, viewer, optionId) {
+        const service = changeSets();
+        try {
+            return optionId === 'apply'
+                ? await service.apply({ id: gate.id, userId: viewer.userId })
+                : await service.reject({ id: gate.id, userId: viewer.userId });
+        } catch (error) {
+            if (error?.code === 'NOT_FOUND') throw stale();
+            throw error;
+        }
+    }
+};
+
+const sourceRetraction = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_OPEN'],
+
+    async describe(gate, viewer) {
+        const row = await ownChangeSet(gate, viewer, 'source_retraction');
+        if (!row) return null;
+        const shown = changeSets().present(row);
+        const open = row.status === 'PROPOSED';
+        const notes = shown.impact?.notes || [];
+        const total = notes.length + (shown.impact?.moreNotes || 0);
+        const assumptions = shown.impact?.assumptions || [];
+        const names = notes.slice(0, 4).map(note => `"${note.label}"`).join(', ');
+        return {
+            state: open ? 'open' : 'resolved',
+            title: `A source was withdrawn: ${shown.impact?.source?.label || 'a source'}`,
+            detail: [
+                `${plural(total, 'note')} cite${total === 1 ? 's' : ''} it${names ? `: ${names}${total > 4 ? ', and more' : ''}` : ''}.`,
+                assumptions.length ? `${plural(assumptions.length, 'open project assumption')} rest${assumptions.length === 1 ? 's' : ''} on it.` : '',
+                'The source being gone makes its claims unverifiable, not false. Nothing was deleted.'
+            ].filter(Boolean).join(' '),
+            outcome: open ? null : (RETRACTION_OUTCOME[row.status] || 'This request is no longer open.'),
+            revision: `cs:${row.id}:${row.updatedAt}`,
+            options: [
+                ...(notes.length ? [{ id: 'apply', label: 'Mark as disputed', effect: 'Labels these notes as disputed. Their text stays; you can revert it.' }] : []),
+                { id: 'reject', label: 'Keep as they are', effect: 'Leaves your notes exactly as they are.' }
+            ]
+        };
+    },
+
+    decide: noteProposal.decide
+};
+
 module.exports = {
     project_approve: projectApprove,
     friend_request: friendRequest,
-    access_request: accessRequest
+    access_request: accessRequest,
+    process_retirement: processRetirement,
+    note_proposal: noteProposal,
+    source_retraction: sourceRetraction
 };

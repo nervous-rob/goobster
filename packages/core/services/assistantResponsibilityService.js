@@ -36,6 +36,7 @@ const modelCallScope = require('../utils/modelCallScope');
 const control = require('./assistantControlService');
 const pilotAccess = require('./assistantAccessService');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
+const connectorRegistry = require('./assistant/connectors/registry');
 
 const FEATURE_ID = 'assistant';
 
@@ -70,10 +71,11 @@ const CONVERSATION_REF_MAX = 200;
  * beyond the resource kind's own.
  */
 const OPERATIONS = {
-    read: { kinds: ['knowledge', 'web', 'project', 'process', 'repository'], action: 'read', category: null, features: [] },
+    read: { kinds: ['knowledge', 'web', 'project', 'process', 'repository', 'external'], action: 'read', category: null, features: [] },
     research: { kinds: ['knowledge', 'web', 'project'], action: 'compute', category: 'research', features: ['expeditions'] },
     'kg.generated.add': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.generated.amend': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
+    'kg.saved.propose': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.saved.amend': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.edge': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.archive': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
@@ -116,9 +118,16 @@ const PROCESS_KINDS = {
 /**
  * `project_chat` and `parlor` (ADR 0021) let a responsibility take requests
  * the person addresses to Goobster in the linked project's conversations
- * and in their own Parlor discussions. `personal_chat` is reserved (DA-8).
+ * and in their own Parlor discussions. DA-8 (ADR 0026) adds `personal_chat`
+ * (requests in their own portal chats), `followed_source` (an item they
+ * kept from a source they follow), `job_failure` (a new cause of a failed
+ * run in the linked project) and `ci_verdict` (a settled CI result on a
+ * watched branch). Those four are pilot capabilities: only the owner may
+ * activate a responsibility that names one until the pilot decision is
+ * recorded (assistantAccessService, capability `sources`).
  */
-const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project', 'project_chat', 'parlor'];
+const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project', 'project_chat', 'parlor', 'followed_source', 'job_failure', 'ci_verdict'];
+const GATED_SOURCE_SCOPES = ['personal_chat', 'followed_source', 'job_failure', 'ci_verdict'];
 const AUDIENCES = ['private', 'project'];
 const BUDGET_KEYS = ['modelTokens', 'searches', 'computeSeconds', 'concurrentInitiatives', 'repairAttempts', 'externalOperations'];
 const INTERRUPTIONS = ['immediate', 'digest', 'home'];
@@ -248,6 +257,15 @@ function normalizeResource(raw, operation, index) {
                 : kind === 'repository' ? REPO_PATTERN : null;
         const ids = stringList(raw.ids, `${field}.ids`, LIMITS.ids, { pattern, code: 'INVALID_RESOURCE' });
         if (!ids.length) throw bad(`${field}.ids must name at least one ${kind}; there is no wildcard.`, 'INVALID_RESOURCE');
+        // A connector's named resource, as "<connector>:<resource>" (ADR 0028): the
+        // connector must be installed and the resource of the shape it accepts.
+        if (kind === 'external') {
+            for (const id of ids) {
+                if (!connectorRegistry.parseRef(id)) {
+                    throw bad(`${field}.ids has "${id}", which is not a named resource of an installed connector (<connector>:<resource>).`, 'INVALID_RESOURCE');
+                }
+            }
+        }
         resource.ids = kind === 'repository' ? ids.map(id => id.toLowerCase()) : ids;
     } else if (raw.ids !== undefined) {
         throw bad(`${field}.ids is not used for ${kind} resources.`, 'INVALID_RESOURCE');
@@ -595,6 +613,14 @@ class AssistantResponsibilityService {
             }
             return true;
         }
+        case 'external': {
+            const connectors = require('./assistantConnectorService');
+            for (const ref of ids) {
+                const reachable = await connectors.reachable(userId, ref);
+                if (reachable !== true) return reachable;
+            }
+            return true;
+        }
         case 'process':
             for (const ref of ids) {
                 const match = PROCESS_REF.exec(ref);
@@ -629,7 +655,7 @@ class AssistantResponsibilityService {
                     throw new AssistantResponsibilityError('FEATURE_UNAVAILABLE', `"${entry.operation}" needs a feature that is not available.`, 409, { feature: featureId });
                 }
             }
-            const gate = await pilotAccess.allowsOperation(row.ownerUserId, entry.operation);
+            const gate = await pilotAccess.allowsOperation(row.ownerUserId, entry.operation, entry.resource.kind);
             if (!gate.ok) {
                 throw new AssistantResponsibilityError(gate.code,
                     `"${entry.operation}" is limited to the installation's owner until the pilot decision is recorded.`, 409,
@@ -644,10 +670,27 @@ class AssistantResponsibilityService {
                 );
             }
         }
+        const gatedSources = (parseJson(row.scopesJson, {}).sources || []).filter(source => GATED_SOURCE_SCOPES.includes(source));
+        if (gatedSources.length && !(await pilotAccess.allows(row.ownerUserId, 'sources'))) {
+            throw new AssistantResponsibilityError(pilotAccess.REFUSAL_CODE,
+                `Noticing work from ${gatedSources.join(', ')} is limited to the installation's owner until the pilot decision is recorded.`, 409,
+                { capability: 'sources', sources: gatedSources });
+        }
         const policy = await attentionPolicyService.get(row.ownerUserId);
         if (!policy || !policy.enabled) {
             throw new AssistantResponsibilityError('ATTENTION_NOT_ENROLLED',
                 'Turn on Attention (/attention enable or Settings) before activating a responsibility.', 409);
+        }
+        // Reaching a person outside the portal (a digest, a contact) is a
+        // pilot capability (documentation/delegated_delivery.md).
+        const interruption = parseJson(row.rulesJson, {})?.interruption;
+        if (['digest', 'immediate'].includes(interruption)) {
+            const access = require('./assistantAccessService');
+            if (!(await access.allows(row.ownerUserId, 'delivery'))) {
+                throw new AssistantResponsibilityError(access.REFUSAL_CODE,
+                    'Digests and contacts for delegated work are limited to the installation\'s owner until the pilot decision is recorded. Keep updates on Home to activate.',
+                    409, { capability: 'delivery' });
+            }
         }
     }
 
@@ -665,6 +708,9 @@ class AssistantResponsibilityService {
                 snapshot: JSON.stringify(this.present(row))
             }
         );
+        // Every stored revision is a change the owner's open pages show
+        // (documentation/delegated_delivery.md, "Live updates").
+        require('./assistantLiveService').changed(row.ownerUserId, 'initiative');
     }
 
     /**
@@ -1093,6 +1139,17 @@ class AssistantResponsibilityService {
     }
 
     /**
+     * `authorize()` without the ledger note: a source adapter asks it before
+     * it reads anything on a responsibility's behalf, and "not covered" is
+     * the ordinary answer, not a failure worth a ledger row every pass.
+     * `preview` also answers for a DRAFT, so the owner can see what delegating
+     * would read before it is active.
+     */
+    async permits({ responsibilityId, revision, operation, resource, actorUserId, now = new Date(), preview = false }) {
+        return this._authorize({ responsibilityId, revision, operation, resource, actorUserId, now, preview });
+    }
+
+    /**
      * The dispatch-time authority check. Call it immediately before every
      * delegated side effect (and again after long I/O, before committing).
      *
@@ -1112,10 +1169,11 @@ class AssistantResponsibilityService {
         return result;
     }
 
-    async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now }) {
+    async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now, preview = false }) {
         if (features.enforcedOff(FEATURE_ID)) return unavailableResult(FEATURE_ID);
         // The host's stop-all: nothing delegated is dispatched while it is on.
-        if (await control.isPaused()) return { ok: false, code: control.PAUSED_CODE };
+        // (`preview` is a draft's look-back before delegating, which dispatches nothing.)
+        if (!preview && await control.isPaused()) return { ok: false, code: control.PAUSED_CODE };
         const row = await this._row(responsibilityId);
         if (!row) return { ok: false, code: 'RESPONSIBILITY_NOT_FOUND' };
 
@@ -1123,7 +1181,7 @@ class AssistantResponsibilityService {
         const status = isOverdue(row, nowText) ? 'EXPIRED' : row.status;
         if (status === 'REVOKED' || (status === 'ARCHIVED' && row.finalStatus === 'REVOKED')) return { ok: false, code: 'RESPONSIBILITY_REVOKED' };
         if (status === 'EXPIRED' || (status === 'ARCHIVED' && row.finalStatus === 'EXPIRED')) return { ok: false, code: 'RESPONSIBILITY_EXPIRED' };
-        if (status !== 'ACTIVE') return { ok: false, code: 'RESPONSIBILITY_INACTIVE', status };
+        if (status !== 'ACTIVE' && !(preview && status === 'DRAFT')) return { ok: false, code: 'RESPONSIBILITY_INACTIVE', status };
 
         const presented = Number(revision);
         if (!Number.isSafeInteger(presented) || presented < Number(row.authorityRevision) || presented > Number(row.revision)) {
@@ -1147,7 +1205,7 @@ class AssistantResponsibilityService {
         if (!matching) return { ok: false, code: 'OPERATION_OUT_OF_SCOPE' };
 
         // Capabilities still in the pilot are the owner's alone, whatever the grant says.
-        const gate = await pilotAccess.allowsOperation(row.ownerUserId, operation);
+        const gate = await pilotAccess.allowsOperation(row.ownerUserId, operation, resource.kind);
         if (!gate.ok) return { ok: false, code: gate.code, capability: gate.capability };
 
         const reachable = await this._resourceAccess(row.actingUserId, matching.resource, target);
@@ -1185,3 +1243,4 @@ module.exports.AssistantResponsibilityService = AssistantResponsibilityService;
 module.exports.AssistantResponsibilityError = AssistantResponsibilityError;
 module.exports.OPERATIONS = OPERATIONS;
 module.exports.RESOURCE_KINDS = RESOURCE_KINDS;
+module.exports.GATED_SOURCE_SCOPES = GATED_SOURCE_SCOPES;

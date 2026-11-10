@@ -401,9 +401,30 @@ export type InboxUpdateRef = {
  * card, so one that has changed is refused instead of applied.
  */
 export type GateDecisionOption = { id: string; label: string; effect: string | null; danger: boolean };
+/** One run of a proposed text change: added, removed, unchanged, or a folded stretch of unchanged passages. */
+export type GateDiffEntry = { op: 'same' | 'add' | 'del' | 'skip'; text: string };
 export type GateDecisionCard = {
     ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
     occurrence: number; revision: string; options: GateDecisionOption[];
+    /** Present only on a card that proposes a change to text (a note proposal). */
+    diff?: GateDiffEntry[];
+};
+
+/** What delegated runs proposed, changed and archived in the person's notes (documentation/delegated_knowledge.md). */
+export type KnowledgeChange = {
+    id: number; kind: 'saved_note_edit' | 'direct_change' | 'source_retraction'; status: 'PROPOSED' | 'APPLIED' | 'REJECTED' | 'STALE' | 'REVERTED';
+    nodeId: number | null; label: string | null; rationale: string | null; diff: GateDiffEntry[];
+    claimStatus: { from: string; to: string } | null; policy: string | null; decision: string | null;
+    impact: { source: string | null; reason: string | null; notes: Array<{ id: number; label: string }>; moreNotes: number; assumptions: Array<{ missionId: number; title: string }>; unverifiable: boolean } | null;
+    revertible: boolean; createdAt: string; decidedAt: string | null; revertedAt: string | null;
+};
+export type KnowledgeArchivedNote = {
+    id: number; label: string; content: string; curation: string; archivedAt: string; archivedBy: string | null; archiveCode: string;
+    mergedInto: { id: number; label: string | null } | null; connections: number;
+};
+export type KnowledgeOverview = {
+    proposals: KnowledgeChange[]; changes: KnowledgeChange[]; archived: KnowledgeArchivedNote[];
+    retractedLinks: Array<{ id: number; relation: string; from: string; to: string; retractedAt: string }>;
 };
 export type GateSurface = 'home' | 'inbox' | 'chat' | 'project';
 export type GateDecisionResult = {
@@ -439,6 +460,9 @@ export type AssistantBriefItem = {
     inboxItemId: number | null; happenedAt: string;
 };
 /** The `assistant` block of GET /api/app/home. A null count is unknown, not zero. */
+/** How a responsibility's updates may reach its owner (documentation/delegated_delivery.md). */
+export type Interruption = 'home' | 'digest' | 'immediate';
+
 export type AssistantHome = {
     schemaVersion: number; asOf: string;
     availability: 'ready' | 'paused' | 'none_delegated' | 'attention_off' | 'unavailable' | 'unknown';
@@ -453,16 +477,30 @@ export type AssistantHome = {
     partial: string[];
 };
 
-/** `GET /api/app/assistant/access`: which capabilities still in the pilot this person has. */
+/**
+ * `GET /api/app/assistant/access`: which capabilities still in the pilot this
+ * person has (`delivery` is the digest, contacts and live updates).
+ */
 export type AssistantAccess = {
     hostPaused: boolean; budgetDefaults: Record<string, number>;
     pilot: string; capabilities: Record<string, boolean>; gatedOperations: string[];
 };
+/** An installed outside connector as this person sees it (`GET /api/app/assistant/connectors`, delegated_connectors.md). */
+export type AssistantConnector = {
+    id: string; name: string; description: string; feature: string | null; provider: string; providerName: string;
+    decision: { recordedBy: string; recordedAt: string; reference: string } | null;
+    /** What a named resource is, in words (a calendar, a notebook). */
+    resource: string;
+    reads: Array<{ operation: string; describe: string }>;
+    writes: Array<{ operation: string; describe: string; reconcilable: boolean }>;
+    connected: boolean; account: string | null; featureOn: boolean;
+};
+export type AssistantConnectors = { allowed: boolean; connectors: AssistantConnector[] };
 export type ResponsibilityOperation = { operation: string; resource: { kind: string; ids?: string[]; paths?: string[]; projectId?: string; branches?: string[] } };
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
     projectId: number | null; attentionItemId: number | null; operations: ResponsibilityOperation[];
-    /** `sources` names where it listens for requests: `project_chat`, `parlor` (delegated_conversation_requests.md). */
+    /** `sources` names where it notices work: `project_chat`, `parlor`, `personal_chat`, `followed_source`, `job_failure`, `ci_verdict` (delegated_conversation_requests.md, delegated_opportunity_sources.md). */
     scopes?: { sources?: string[]; audience?: string };
     budgets: Record<string, number>; rules?: { autoStart?: boolean; interruption?: string; stopCondition?: string }; expiresAt: string | null; activatedAt: string | null; createdAt: string; updatedAt: string;
     /** 'model' when it was drafted in a conversation: turning it on always takes the person's own confirmation. */
@@ -494,9 +532,25 @@ export type AssistantInitiative = {
     /** What replaced a superseded attempt: `parlor:<conversation>:<message>` or `plan:<plan id>`. */
     supersededBy?: string | null;
 };
-export type AssistantInitiativeOrigin = {
-    kind: 'parlor_message'; surface: 'project' | 'parlor'; conversationId: number; messageId: number;
-    available: boolean; conversationTitle: string | null; excerpt: string | null; link: string | null;
+export type AssistantInitiativeOrigin =
+    | {
+        kind: 'parlor_message'; surface: 'project' | 'parlor'; conversationId: number; messageId: number;
+        available: boolean; conversationTitle: string | null; excerpt: string | null; link: string | null;
+    }
+    | {
+        kind: 'chat_message'; conversationId?: number; messageId?: number; implied?: boolean;
+        available: boolean; conversationTitle?: string | null; excerpt?: string | null; link?: string | null;
+    }
+    | { kind: 'followed_source_entry'; available: boolean; sourceLabel?: string; entryTitle?: string; link?: string | null }
+    | { kind: 'ci_verdict'; available: boolean; repo?: string; branch?: string; state?: string; sha?: string; moved?: boolean; link?: string }
+    | { kind: 'job_failure'; available: boolean; jobId?: number; language?: string; status?: string; link?: string };
+
+/** What delegating would do with the wider sources a responsibility names (GET .../responsibilities/:id/sources). */
+export type ResponsibilitySources = {
+    cutoff: string;
+    locked: boolean;
+    sources: Array<{ sourceKind: string; scopes: string[]; locked: boolean; sources: number; ignored: number; examples: string[] }>;
+    today: Array<{ sourceKind: string; proposed: number; coalesced: number; cap: number }>;
 };
 
 /**
@@ -546,6 +600,43 @@ export type AssistantProcess = {
     enabled: boolean; trigger: { kind: 'cron' | 'event' | 'poll'; schedule?: string; topic?: string; source?: string };
     lastRunAt: string | null; nextRunAt: string | null; hasContract: boolean; criticality: 'low' | 'normal' | 'high';
     assessment: ProcessAssessment; incident: ProcessIncidentRef | null;
+    /** Archived: kept with its history, not running, and not counted with the rest. */
+    archived: boolean;
+    /** Null until the process has been paused, archived or kept through stewardship. */
+    lifecycle: ProcessLifecycle | null;
+    /** What the signed-in person may do with it now. */
+    controls: ProcessAction[];
+};
+export type ProcessAction = 'pause' | 'resume' | 'archive' | 'restore' | 'keep' | 'preview_cleanup' | 'cleanup';
+export type ProcessLifecycle = {
+    stage: 'active' | 'paused' | 'archived' | 'cleaned'; revision: number; actor: 'person' | 'assistant';
+    responsibilityId: number | null; reasonCode: string | null;
+    pausedAt: string | null; archivedAt: string | null; cleanedAt: string | null; resumedAt: string | null;
+    /** Runs that had already started when it was paused, and what became of them. */
+    started: { count: number; policy: 'finish' | 'abandon' } | null;
+    cleaned: { observations: number; sourceEntries: number; sourceCache: boolean } | null;
+    kept: { revision: number; reason: string | null; at: string | null } | null;
+};
+/** A previewed (or applied) cleanup: exactly what it removes, and what it leaves alone. */
+export type ProcessCleanup = {
+    id: number; status: 'PREVIEWED' | 'APPLIED' | 'EXPIRED' | 'INVALIDATED'; manifestHash: string; expiresAt: string;
+    removes: { observations: number; sourceEntries: number; sourceCache: boolean };
+    keeps: { definition?: boolean; contract?: boolean; inboxResults?: number; deliveries?: number; jobs?: number; keptEntries?: number };
+    more: boolean;
+    result: { removed: { observations: number; sourceEntries: number; sourceCache: boolean } } | null;
+    appliedAt: string | null;
+};
+export type ProcessActionResult = {
+    action: ProcessAction; changed: boolean; lifecycle: ProcessLifecycle | null; controls: ProcessAction[];
+    process: { kind: AssistantProcess['kind']; id: number; ref: string; name: string; enabled: boolean };
+    started?: { count: number; policy: 'finish' | 'abandon' };
+    /** Event deliveries that were waiting to retry and were dropped by the pause. */
+    dropped?: number;
+    /** Events that settled while it was paused and will not be replayed. */
+    skipped?: number;
+    dependents?: Array<{ ref: string; name: string; enabled: boolean }>;
+    notRestored?: { observations: number; sourceEntries: number; sourceCache: boolean } | null;
+    cleanup?: ProcessCleanup;
 };
 export type ProcessIncident = {
     id: number; key: string; occurrence: number; status: 'OPEN' | 'RECOVERING' | 'RESOLVED'; causeCode: string | null;
@@ -556,7 +647,7 @@ export type AssistantProcessList = {
     processes: AssistantProcess[];
     counts: {
         total: number; healthy: number; degraded: number; blocked: number; stalled: number; unreachable: number; unknown: number;
-        notWorking: number; retirementCandidates: number; reviewDue: number;
+        notWorking: number; retirementCandidates: number; reviewDue: number; paused: number; archived: number;
     };
     incidents: ProcessIncident[];
 };
@@ -1321,6 +1412,8 @@ export type SettingSection<TValues = Record<string, unknown>, TEffective = Recor
     personalAi?: PersonalAiSettings;
     categories?: string[];
     initiativeLevels?: string[];
+    /** Initiative section: the digest time used when the person chose none (minutes from midnight). */
+    digestDefaultMinute?: number;
 };
 
 export type UserSettingsResponse = {
@@ -1404,6 +1497,8 @@ export type UserSettingsResponse = {
             contactCooldownMinutes: number;
             quietStartMinute: number | null;
             quietEndMinute: number | null;
+            /** When the day's digest of delegated work may go out; null = the default (09:00). */
+            digestMinute: number | null;
             boundaries: Record<string, { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean }>;
             notifyInApp: boolean;
             notifyMentionBanners: boolean;

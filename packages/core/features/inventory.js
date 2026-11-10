@@ -229,6 +229,8 @@ const eventGates = {
     shardError: 'core',
     'domainEventBus:attention': 'core',
     'domainEventBus:watches': 'core',
+    // The portal stream's per-person watch on `assistant.changed` (live Home).
+    'domainEventBus:assistant-live': 'assistant',
     'eventBusService:settings-cache': 'core'
 };
 
@@ -582,7 +584,8 @@ const tables = {
         observatory_jobs: 'observatory',
         research_sources: 'expeditions',
         research_claims: 'expeditions',
-        expedition_briefs: 'expeditions'
+        expedition_briefs: 'expeditions',
+        kg_change_sets: 'assistant'
     },
     prefixes: [
         { prefix: 'memory_', owner: 'core' },

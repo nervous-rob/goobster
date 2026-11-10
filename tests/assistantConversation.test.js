@@ -323,6 +323,13 @@ describe('proposing a responsibility', () => {
         expect(plain.scopesJson).not.toMatch(/parlor|project_chat/);
     });
 
+    test('how it reaches the person is theirs to say: a proposal cannot ask for a digest or a contact', async () => {
+        const result = await tool('proposeResponsibility', {
+            title: 'Loudly', operations: [KG_ADD], rules: { interruption: 'immediate' }, interruption: 'digest'
+        });
+        expect(await row(result._card.id)).toMatchObject({ rulesJson: '{}' });
+    });
+
     test('the same proposal in the same conversation is one draft; a pile of unanswered ones is refused', async () => {
         const first = await proposed();
         const again = await tool('proposeResponsibility', { title: 'Keep my garden notes current', operations: [KG_ADD] });

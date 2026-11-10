@@ -541,6 +541,13 @@ Restoring an archived process restores it paused. Recheck current access,
 dependencies and grants before explicit resume, and disclose any artifacts that
 permanent cleanup has made unavailable to restore.
 
+**Available:** pause, resume, archive, restore and exact cleanup of a process
+by its owner; pause and archive by the assistant under a responsibility that
+names that process; and a request, answered on Home or in the Inbox, when
+there is none
+([process_stewardship.md](process_stewardship.md#retiring-a-process)). Repair
+and cleanup by the assistant are planned.
+
 ## 9. Further capabilities in the same loop
 
 - **Assumption monitoring:** track consequential assumptions behind active work;
@@ -658,13 +665,13 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; six items are available** (answering a request on Home
+**Status: planned; seven items are available** (answering a request on Home
 and in the Inbox; "Delegating and steering by conversation" in portal chat
 and DMs, apart from the items marked planned below, see
 [delegated_conversation.md](delegated_conversation.md); the spoken briefing
-in portal voice chat; repository work;
-findings shared with a project; and "For the host" at the end of this
-section, each marked below); nothing else here is. Increments DA-7 through
+in portal voice chat; "Reaching you";
+repository work; findings shared with a project; and "For the host" at the
+end of this section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -686,7 +693,8 @@ DA-12. The technical contracts are in
 - A request can be answered where you see it: on Home, in the Inbox, in the
   notification or in chat. The choice shown is the concrete decision, with
   what it will change. **Available on Home and in the Inbox** for a friend
-  request, a request to join and a mission plan to approve or start
+  request, a request to join, a mission plan to approve or start and a
+  process that may no longer be needed
   ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)),
   **and from a card in portal chat**; the notification is planned.
 - A spoken briefing tells you what needs you and what changed. Hearing it
@@ -706,12 +714,19 @@ DA-12. The technical contracts are in
 
 ### Reaching you
 
+**Available** to the installation's owner, and to everyone once the host
+records the pilot decision
+([delegated_delivery.md](delegated_delivery.md)).
+
 - The overview updates while you look at it.
 - Each responsibility has an interruption setting: quietly on Home, in one
   daily digest, or immediately for requests that block its work.
 - Anything that reaches you outside the portal respects your Attention
   contact limit, cooldown and quiet hours. Findings never interrupt.
-- At most one digest a day, and none on a day with nothing in it.
+- At most one digest a day, and none on a day with nothing in it. You
+  choose its time in Settings; the default is 09:00.
+- Being told is not having looked: a notification or a digest leaves the
+  update highlighted on Home until you review it.
 
 ### Learning from you
 
@@ -731,12 +746,17 @@ DA-12. The technical contracts are in
   you that a push or a pull request cannot be undone
   ([delegated_runs.md](delegated_runs.md#repository-work)).
 - Suggested edits to notes you saved, shown as a diff you apply; connecting
-  and archiving notes, both restorable.
+  and archiving notes, both restorable. **Available (DA-11b)** to the
+  installation's owner while it is in the pilot
+  ([delegated_knowledge.md](delegated_knowledge.md)).
 - Findings shared with a project's current members, with the author shown.
   **Available (DA-11c)** to the installation's owner while it is in the
   pilot ([delegated_project_findings.md](delegated_project_findings.md)).
 - Outside services one named resource at a time, each with a plain list of
   what it reads and writes. There is no "watch everything" option.
+  **The framework is available (DA-11d)** to the installation's owner while
+  it is in the pilot, but no service is installed: the owner has not named
+  one ([delegated_connectors.md](delegated_connectors.md)).
 
 ### For the host
 

@@ -35,6 +35,7 @@ if (!fs.existsSync(distIndex)) {
 }
 
 const C = require('./constants');
+let e2eConnectorDouble = null;
 const db = require('@goobster/core/db');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const { ObservatoryService } = require('@goobster/core/services/observatoryService');
@@ -761,6 +762,7 @@ async function main() {
                 ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
                 ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
                 ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
+                ['assistant_process_cleanups', 'ownerUserId'], ['assistant_process_lifecycle', 'ownerUserId'],
                 ['attention_items', 'userId'], ['automations', 'userId']
             ]) {
                 await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
@@ -846,6 +848,16 @@ async function main() {
                 body: { purpose: 'Tell me when the release ships', attentionItemId: itemId }
             });
             res.json({ ok: true, pass: await incidents.reconcile({ userId }) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One more incident pass for that person, as the steward would run it.
+    app.post('/e2e/fixtures/assistant-home/processes/pass', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            res.json({ ok: true, pass: await require('@goobster/core/services/assistantIncidentService').reconcile({ userId }) });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }
@@ -1083,6 +1095,97 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    let assistantSourcesFixture = null;
+    // Wider opportunity sources (assistantSources.spec.js, ADR 0026): the
+    // installation's owner (an operator account, so the pilot capability is
+    // theirs), a project, one portal chat and one failed run that both
+    // pre-date any delegation. Safe to call again: it starts the person over.
+    app.post('/e2e/fixtures/assistant-sources', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const name = String(req.body?.name || 'Owner');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: name });
+            await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            const scope = dmScopeId(userId);
+            await db.run('DELETE FROM messages WHERE guildConversationId IN (SELECT id FROM guild_conversations WHERE guildId = @scope)', { scope });
+            await db.run('DELETE FROM conversations WHERE guildConversationId IN (SELECT id FROM guild_conversations WHERE guildId = @scope)', { scope });
+            await db.run('DELETE FROM guild_conversations WHERE guildId = @scope', { scope });
+            await db.run('DELETE FROM web_conversations WHERE userId = @userId', { userId });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_proposal_counters', 'ownerUserId'], ['assistant_message_labels', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'Pipeline') });
+            const conversation = await webChatService.createConversation(userId);
+            await db.run('UPDATE web_conversations SET title = @title WHERE id = @id', { id: conversation.id, title: 'Framework choice' });
+            const { channelId } = await db.get('SELECT channelId FROM web_conversations WHERE id = @id', { id: conversation.id });
+            await db.run("INSERT INTO users (discordUsername, discordId, username) VALUES ('owner', @id, 'owner') ON CONFLICT DO NOTHING", { id: userId });
+            const human = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: userId })).id;
+            const guildConversationId = await db.insert(
+                'INSERT INTO guild_conversations (guildId, channelId, threadId) VALUES (@scope, @channelId, @threadId)',
+                { scope, channelId, threadId: `thread-${channelId}` }
+            );
+            const personal = await db.insert('INSERT INTO conversations (userId, guildConversationId) VALUES (@human, @guildConversationId)', { human, guildConversationId });
+            const speak = (text) => db.insert(
+                'INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) VALUES (@personal, @guildConversationId, @human, @text, 0)',
+                { personal, guildConversationId, human, text }
+            );
+            await speak('Could you please look into the old licence question from March?');
+            const addJob = (stderr) => db.insert(
+                `INSERT INTO observatory_jobs (projectId, userId, language, code, status, exitCode, stderrTail, finishedAt)
+                 VALUES (@projectId, @userId, 'python', 'print(1)', 'FAILED', 1, @stderr, datetime('now'))`,
+                { projectId: project.id, userId, stderr }
+            );
+            await addJob('Traceback (most recent call last):\n  File "/workspace/old.py", line 3, in <module>\nImportError: no module named legacy');
+            assistantSourcesFixture = { userId, personal, guildConversationId, human, projectId: project.id };
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The person writes in their chat, then the assistant takes its next look.
+    app.post('/e2e/fixtures/assistant-sources/say', express.json(), async (req, res) => {
+        try {
+            const state = assistantSourcesFixture;
+            if (!state) return res.status(409).json({ error: 'seed first' });
+            await db.run(
+                'INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) VALUES (@personal, @guildConversationId, @human, @text, 0)',
+                { personal: state.personal, guildConversationId: state.guildConversationId, human: state.human, text: String(req.body?.text || '') }
+            );
+            const seen = await require('@goobster/core/services/assistantInitiativeService').reconcile({ userId: state.userId, now: new Date(Date.now() + 10_000) });
+            res.json({ ok: true, ...seen });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Failed runs of the same cause (a changed line number each time), then a look.
+    app.post('/e2e/fixtures/assistant-sources/fail', express.json(), async (req, res) => {
+        try {
+            const state = assistantSourcesFixture;
+            if (!state) return res.status(409).json({ error: 'seed first' });
+            const count = Math.max(1, Math.min(5, Number(req.body?.count) || 3));
+            for (let n = 0; n < count; n += 1) {
+                await db.run(
+                    `INSERT INTO observatory_jobs (projectId, userId, language, code, status, exitCode, stderrTail, finishedAt)
+                     VALUES (@projectId, @userId, 'python', 'print(1)', 'FAILED', 1, @stderr, datetime('now'))`,
+                    {
+                        projectId: state.projectId, userId: state.userId,
+                        stderr: `Traceback (most recent call last):\n  File "/workspace/load.py", line ${10 + n}, in <module>\nKeyError: 'price'`
+                    }
+                );
+            }
+            const seen = await require('@goobster/core/services/assistantInitiativeService').reconcile({ userId: state.userId, now: new Date(Date.now() + 10_000) });
+            res.json({ ok: true, ...seen });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Repository grants in the draft form (assistantRepository.spec.js,
     // DA-11a): a dedicated person with Attention at "delegate", their own
     // project and one repository cloned into it (the row only: nothing here
@@ -1110,6 +1213,113 @@ async function main() {
                 { projectId: project.id, userId }
             );
             res.json({ ok: true, projectId: project.id, slug: project.slug });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Outside connectors (assistantConnectors.spec.js, DA-11d): Goobster ships
+    // none, so the journey installs the test double (a fake in-memory
+    // notebook, tests/helpers/connectorDouble.js) and gives the person a
+    // credential for it. Safe to call twice: it re-registers the double and
+    // clears that person's rows first.
+    app.post('/e2e/fixtures/assistant-connector', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Keeper' });
+            if (req.body?.owner) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['user_integrations', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'delegate' });
+            await policies.setBoundary({ userId, category: 'general', externalWrite: true });
+            const { createDouble } = require(path.join(ROOT, 'tests/helpers/connectorDouble'));
+            e2eConnectorDouble = e2eConnectorDouble || createDouble();
+            e2eConnectorDouble.register();
+            if (req.body?.connected !== false) {
+                await db.run(
+                    "INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@userId, 'notion', 'e2e-secret-token', 'Keeper workspace')",
+                    { userId }
+                );
+            }
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // What authorize() says now for the person's first responsibility's write
+    // on the double's notebook: the next call after a revocation.
+    app.post('/e2e/fixtures/assistant-connector/authorize', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const row = await db.get(
+                'SELECT id, revision FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id LIMIT 1', { userId }
+            );
+            if (!row) return res.status(404).json({ error: 'no responsibility' });
+            const verdict = await require('@goobster/core/services/assistantResponsibilityService').authorize({
+                responsibilityId: row.id, revision: row.revision, operation: 'external.write',
+                resource: { kind: 'external', id: 'notebook:garden' }, actorUserId: userId
+            });
+            res.json({ ok: verdict.ok, code: verdict.code || null });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Delegated knowledge work (assistantKnowledge.spec.js, DA-11b): a person
+    // with one suggested change to a note they saved (waiting), one change a
+    // run made directly (undoable) and one generated note a run archived
+    // (restorable). `owner: true` makes them the installation's owner, the
+    // only one offered saved-note work during the pilot. Safe to call again:
+    // it starts that person over, and clears the pilot decision.
+    app.post('/e2e/fixtures/assistant-knowledge', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const responsibilityService = require('@goobster/core/services/assistantResponsibilityService');
+            const changes = require('@goobster/core/services/knowledgeChangeSetService');
+            const updates = require('@goobster/core/services/assistantUpdateService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Gardener' });
+            if (req.body?.owner) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            const scopeKey = `USER:${userId}`;
+            for (const table of ['kg_edges', 'kg_provenance', 'kg_node_revisions']) {
+                await db.run(
+                    `DELETE FROM ${table} WHERE ${table === 'kg_edges' ? 'sourceId IN (SELECT id FROM kg_nodes WHERE scopeKey = @scopeKey) OR targetId IN (SELECT id FROM kg_nodes WHERE scopeKey = @scopeKey)' : 'nodeId IN (SELECT id FROM kg_nodes WHERE scopeKey = @scopeKey)'}`,
+                    { scopeKey }
+                );
+            }
+            await db.run('DELETE FROM kg_nodes WHERE scopeKey = @scopeKey', { scopeKey });
+            for (const [table, column] of [
+                ['kg_change_sets', 'userId'], ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'],
+                ['assistant_initiatives', 'ownerUserId'], ['assistant_responsibilities', 'ownerUserId'],
+                ['inbox_items', 'userId'], ['attention_policies', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await db.run("DELETE FROM instance_state WHERE key = 'assistantPilot'");
+            await policies.enroll({ userId, initiative: 'assist' });
+            const guildId = dmScopeId(userId);
+            const { responsibility } = await responsibilityService.create({
+                userId, body: { title: 'Keep my garden notes accurate', operations: [{ operation: 'read', resource: { kind: 'knowledge', ids: ['personal'] } }] }
+            });
+            const run = { id: 1, responsibilityId: responsibility.id, responsibilityRevision: responsibility.revision };
+            const frost = await knowledgeGraphService.createUserNote({ guildId, userId, label: 'Frost date', content: 'Frost is expected on the 14th. Cover the beans.' });
+            const soil = await knowledgeGraphService.createUserNote({ guildId, userId, label: 'Soil test', content: 'Loam, slightly acid.' });
+            const proposed = await changes.propose({
+                guildId, userId, run, nodeId: frost.id, expectedRevision: frost.revision,
+                content: 'Frost is expected on the 9th. Cover the beans.', rationale: 'Two almanacs now say the 9th.'
+            });
+            const direct = await changes.recordDirect({
+                guildId, userId, run: { ...run, id: 2 }, nodeId: soil.id, expectedRevision: soil.revision,
+                content: 'Loam, slightly acid (pH 6.2).', rationale: 'Added the measured pH.'
+            });
+            const stale = await knowledgeGraphService.addGeneratedNote({ guildId, userId, label: 'Old watering schedule', content: 'Water daily.' });
+            await knowledgeGraphService.archiveNote({ guildId, userId, nodeId: stale.id, by: 'run' });
+            await updates.deliverPending({ userId });
+            res.json({ ok: true, proposalId: proposed.id, directId: direct.id, frostId: frost.id });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }
@@ -1227,6 +1437,83 @@ async function main() {
                 receipts: await db.all(
                     'SELECT subjectKind, action, surface, consumedAt FROM assistant_confirmation_receipts WHERE userId = @userId ORDER BY id', { userId })
             });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Delivery and interruption (assistantDelivery.spec.js,
+    // documentation/delegated_delivery.md). `step` is one of:
+    //   pilot    record or clear the pilot decision (scope: everyone | null)
+    //   finding  one more finding under the person's newest responsibility
+    //   pause    the system side of a status change: pause that responsibility
+    //   drop     cut every open portal event stream (a network drop)
+    //   sweep    one delivery pass at `hour`:00 UTC tomorrow, with a Discord
+    //            gateway that accepts every DM, so a digest can go out
+    //   reset    forget the person's digests and contacts
+    const eventStreams = new Set();
+    app.use('/api/app/events', (_req, res, next) => {
+        eventStreams.add(res);
+        res.on('close', () => eventStreams.delete(res));
+        next();
+    });
+    app.post('/e2e/fixtures/assistant-delivery', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const step = String(req.body?.step || '');
+            const newest = () => db.get(
+                'SELECT * FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id DESC LIMIT 1', { userId }
+            );
+            if (step === 'pilot') {
+                const access = require('@goobster/core/services/assistantAccessService');
+                if (req.body?.scope) await access.recordDecision({ scope: String(req.body.scope) });
+                else await require('@goobster/core/services/instanceStateService').remove(access.KEY_PILOT);
+                return res.json({ ok: true, decision: await access.decision() });
+            }
+            if (step === 'drop') {
+                const open = eventStreams.size;
+                for (const stream of [...eventStreams]) stream.destroy();
+                return res.json({ ok: true, dropped: open });
+            }
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            if (step === 'reset') {
+                await db.run('DELETE FROM assistant_digests WHERE userId = @userId', { userId });
+                await db.run('DELETE FROM attention_contacts WHERE userId = @userId', { userId });
+                return res.json({ ok: true });
+            }
+            if (step === 'finding') {
+                const responsibility = await newest();
+                const title = String(req.body?.title || 'A new finding');
+                const { update } = await require('@goobster/core/services/assistantUpdateService').publish({
+                    audience: { userId }, identityKey: `e2e:delivery:${title}`, kind: 'finding', title,
+                    summary: 'Found while you were looking at the page.', components: ['research'],
+                    responsibilityId: responsibility?.id ?? null, deliver: true
+                });
+                return res.json({ ok: true, id: update.id });
+            }
+            if (step === 'pause') {
+                const responsibility = await newest();
+                const responsibilities = require('@goobster/core/services/assistantResponsibilityService');
+                // A retried journey may ask twice.
+                if (responsibility.status !== 'PAUSED') {
+                    await responsibilities.act({ userId, id: responsibility.id, action: 'pause', expectedRevision: responsibility.revision });
+                }
+                return res.json({ ok: true });
+            }
+            if (step === 'sweep') {
+                const delivery = require('@goobster/core/services/assistantDeliveryService');
+                const today = new Date();
+                const now = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + 1, Number(req.body?.hour) || 12));
+                const sent = [];
+                delivery.attach({
+                    gateway: { isGoobsterGateway: true, kind: 'local', sendDm: async (to) => { sent.push(String(to)); return { ok: true }; } }
+                });
+                try {
+                    return res.json({ ok: true, result: await delivery.sweep({ now }), dms: sent });
+                } finally {
+                    delivery.detach();
+                }
+            }
+            res.status(400).json({ error: 'step' });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }

@@ -57,7 +57,7 @@ const BOARD_STEP_LIMIT = 40;
 /** A request that lives on its own Inbox item is addressed as `inbox-<item id>`. */
 const INBOX_REF = /^inbox-(\d{1,15})$/;
 const UPDATE_REF = /^\d{1,15}$/;
-const LIMITS = { label: 60, text: 400, option: 40 };
+const LIMITS = { label: 60, text: 400, option: 40, diff: 40, diffText: 300 };
 /** The pilot capability deciding in place belongs to (DA-7). */
 const PILOT_CAPABILITY = 'conversation';
 
@@ -191,6 +191,15 @@ class AssistantGateService {
             state: open ? 'open' : 'resolved',
             title: clip(described.title, LIMITS.text),
             detail: clip(described.detail, LIMITS.text) || null,
+            // A proposed text change, shown as a bounded diff (ADR 0027); absent on a card that proposes none.
+            ...(Array.isArray(described.diff)
+                ? {
+                    diff: described.diff.slice(0, LIMITS.diff).map(entry => ({
+                        op: ['same', 'add', 'del', 'skip'].includes(entry.op) ? entry.op : 'same',
+                        text: clip(entry.text, LIMITS.diffText)
+                    }))
+                }
+                : {}),
             outcome: open ? null : (clip(described.outcome, LIMITS.text) || 'This request is no longer open.'),
             occurrence: gate.occurrence,
             revision: String(described.revision ?? gate.updateRevision ?? 1),

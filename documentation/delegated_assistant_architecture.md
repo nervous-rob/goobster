@@ -12,12 +12,14 @@ are implemented as recorded in ADR 0016, 0017 and 0018, the `agent` plan
 step of section 7 as recorded in ADR 0019, the rest of section 7 for
 explicit requests (requests addressed to Goobster in a conversation,
 supersession when a person changes direction) together with the project
-board of section 9.2 as recorded in ADR 0021, and the assessment and
-incidents of section 8 as recorded in ADR 0020; the rest, and all of section
-13 except 13.1 (ADR 0023), the explicit-request
-part of the `conversation_request` adapter (13.2), repository work (ADR 0025)
-and findings for a project's members (both 13.5) and 13.6 (the host's
-controls and the evaluation set), is planned.** Updated 2026-11-10.
+board of section 9.2 as recorded in ADR 0021, and the assessment,
+incidents and retirement of section 8 as recorded in ADR 0020 and 0022
+(repair is planned); the rest, and all of section
+13 except 13.1 (ADR 0023 and 0024), the explicit-request
+part of the `conversation_request` adapter (13.2), delivery and interruption
+(13.3), repository work (ADR 0025) and findings for a project's members
+(both 13.5) and 13.6 (the host's controls and the evaluation set), is
+planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -360,6 +362,15 @@ removes material from normal retrieval but preserves review/restore access.
 Retrieval normally favors current claims and can include disputed/historical
 claims with explicit labels; it never presents retracted content as current.
 
+**Shipped in DA-11b** ([delegated_knowledge.md](delegated_knowledge.md),
+ADR 0027): `kg_change_sets` with `PROPOSED -> APPLIED | REJECTED | STALE` and
+`APPLIED -> REVERTED` (an undo is refused once the note has moved), claim
+status on nodes, evidence and retraction on edges, reversible merge and
+archive, and the source-retraction impact review. The semantic operations
+built are `amend`, `dispute`, `link`, `unlink`, `archive` and `merge` (as
+archive-as-alias); `supersede`, `retract` of a note and `delete` are not
+available to a run.
+
 Capacity enforcement must protect deliberate saves and active dependencies.
 Archive eligible generated material, refuse an addition, or ask for a storage
 choice instead of silently deleting saved knowledge. Mirror-aware retirement
@@ -431,8 +442,24 @@ grouping with hysteresis and cooldown, the `process_health` and
 `process_relevance` generators and the Home Processes card reading the
 assessment. See [process_stewardship.md](process_stewardship.md) and
 [ADR 0020](adr/0020-process-assessment-and-incidents.md). It observes and
-reports only. Repair and retirement (pause, archive, restore, cleanup) are
-still planned.
+reports only.
+
+**Shipped in DA-5b:** retirement as `PAUSED -> ARCHIVED -> CLEANED` with
+restore and a separate, rechecked resume
+(`assistantProcessLifecycleService`, tables `assistant_process_lifecycle` and
+`assistant_process_cleanups`). Each owning service gained its own pause,
+resume, archive and restore, fenced in its own launch claim; an `archivedAt`
+column on each process table makes an archived definition unstartable from
+any path. The person acts through `POST /api/app/assistant/processes/:kind/:id/actions`;
+the assistant pauses and archives only under `process.pause` /
+`process.archive` on the exact process, checked by `authorize()` at the
+moment of the change, and otherwise files a `process_retirement` request that
+is decided in place. Cleanup is the person's only, from a frozen manifest of
+exact row ids. See
+[process_stewardship.md](process_stewardship.md#retiring-a-process) and
+[ADR 0022](adr/0022-process-retirement.md). Still planned: repair, cleanup
+under `cleanup.exact`, declared owned artifacts beyond a process's own
+records, and permanent deletion (which no grant reaches today).
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,
@@ -778,10 +805,11 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with four parts implemented: 13.1 (DA-7a, DA-7b and
-the spoken briefing, DA-7c), repository work (DA-11a) and findings for a
-project's members (DA-11c) in 13.5, and 13.6 (DA-12: the host's controls and the
-evaluation set). Nothing else in this section is implemented.** These are the
+**Status: planned, with five parts implemented: 13.1 (DA-7a, DA-7b and the
+spoken briefing, DA-7c), delivery and interruption in 13.3 (DA-9), repository
+work (DA-11a) and findings for a project's members (DA-11c) in 13.5, and 13.6
+(DA-12: the host's controls and the evaluation set). Nothing else in this
+section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -907,7 +935,8 @@ up to three findings. It calls no acknowledgment route. Speaking a private
 finding requires the voice session to be the person's own (never a shared
 guild voice channel).
 
-As built: the intent is the `spokenBriefing` chat tool, so it runs inside
+As built ([ADR 0024](adr/0024-spoken-briefing.md)): the intent is the
+`spokenBriefing` chat tool, so it runs inside
 `runAgentLoop` like every other tool. `services/assistant/spokenBriefing.js`
 has a pure `compose(projection)` that writes the sentences (counts as Home
 computes them, at most five Needs-you titles and three findings, `null`
@@ -955,6 +984,23 @@ conversation attempts at 10 per responsibility. DA-8 adds `personal_chat`,
 model classification, `maxProposalsPerDay` and the other adapters; the
 explicit rule stays the floor.
 
+*Implemented (DA-8, ADR 0026):* four adapters - `chat_request` (the table's
+`conversation_request` row for `personal_chat`, a separate source kind so its
+cursor and open limit are its own), `followed_source`, `job_failure` and
+`ci_verdict` - each with `capability: 'sources'` (the pilot gate), a
+`read` grant checked through `permits()`, a baseline on first look and a
+`maxProposalsPerDay` of 3 (`assistant_proposal_counters`, one conditional
+UPDATE; excess coalesced into the cursor). Classification is a label cached in
+`assistant_message_labels` and charged under work kind
+`assistant_classification` (at most 10 percent of the responsibility's daily
+token budget). The failure cause is `hash(status, exit code, exception class,
+last own-file frame)`. Differences from the table above: `followed_source`
+proposes an entry the person *kept after activation* (an unkept entry is only
+observed); `ci_verdict` reads the stored verdict and proposes `failure` and
+the recovery after a `failure`, never skipped, and leaves `fix`-mode watches
+to the watch. See
+[delegated_opportunity_sources.md](delegated_opportunity_sources.md).
+
 Rules:
 
 - Classification of a conversation message is a bounded, cached decision
@@ -974,20 +1020,31 @@ Rules:
 
 ### 13.3 Delivery and interruption (DA-9)
 
+*Implemented; the behaviour, the stored records and the defaults chosen are
+in [delegated_delivery.md](delegated_delivery.md). Where the built contract
+differs from the proposal below, it is stated in place.*
+
 Builds on: the portal SSE channel (`web/liveAuthorization.createSseChannel`),
 `inboxService.deliver` (Inbox first, Discord DM as a tracked echo),
 `pushService.notify`, and Attention's contact path
 (`attentionService._contact`, `attentionPolicyService` daily cap, cooldown
 and quiet hours), and `rules.interruption` already stored on the grant.
 
-- **Live overview.** `assistantUpdateService`, `assistantInitiativeService`
-  and `assistantRunService` publish `assistant.changed` on the domain bus
-  with `{ userId, kinds: ['update' | 'initiative' | 'run' | 'gate'] }`. The
+- **Live overview.** `assistantUpdateService`, `assistantInitiativeService`,
+  `assistantRunService` and `assistantResponsibilityService` publish
+  `assistant.changed` on the domain bus (through
+  `assistantLiveService.changed`) with
+  `{ userId, kinds: ['update' | 'initiative' | 'run' | 'gate'] }`. The
   portal stream forwards it as an `assistant` event to that person's
-  sessions only. The client refetches; the event carries no title or text.
-  A reconnect refetches. Progress within a run is coalesced to at most one
-  event per five seconds.
-- **Interruption rule.** Evaluated when an update's envelope is filed:
+  sessions only. The client refetches; the event carries no title, text or
+  id. A reconnect refetches. Each stream gets at most one event per five
+  seconds (the first after a 300 ms settle delay, then the union of what
+  changed), and run progress is published at most once per run in the same
+  window.
+- **Interruption rule.** Read from the live responsibility when the
+  contact or digest is decided (first when the envelope is filed, then on
+  each steward pass), so a change to `home`, a pause or a revoke applies to
+  what is still waiting:
 
   | `rules.interruption` | Finding | Open request |
   | --- | --- | --- |
@@ -996,20 +1053,35 @@ and quiet hours), and `rules.interruption` already stored on the grant.
   | `immediate` | Inbox, and the day's digest | Inbox, plus one contact per gate occurrence |
 
   A finding never contacts by itself. `immediate` applies to requests that
-  block delegated work.
-- **One contact path.** A contact is requested through a new
+  block delegated work. `assistant_updates.outboundRevision`,
+  `outboundOccurrence`, `outboundKind` and `outboundAt` record the one time
+  a revision (or a gate occurrence) left the portal, claimed before anything
+  is sent.
+- **One contact path.** A contact is requested through
   `attentionService.requestContact({ userId, reason: 'assistant', updateId,
-  urgent })`, which applies the same daily cap, cooldown and quiet hours as
-  Attention's own contacts and records the contact in the same ledger. Push
-  and the Discord echo are its channels. Delegated work has no channel of
-  its own, so it cannot exceed the person's contact budget.
-- **Digest.** `assistant_digests (userId, day, updateIdsJson, sentAt)`,
-  unique per person and day. Built once per day at the person's digest time
-  from unseen updates filed since the last digest; an empty set sends
-  nothing. An update already contacted about is listed, not re-announced.
+  urgent, inboxItemId | item })`, which applies the same daily cap, cooldown
+  and quiet hours as Attention's own contacts. Attention's notices are their
+  own ledger; every other reason is recorded in `attention_contacts`
+  (reason, reference, delivery status; no text), and both are counted
+  together for the cap and the cooldown. The contact is reserved in a
+  transaction on the person's `attention_state` row before it is sent. Push
+  and the Discord echo are its channels (`inboxService.echo`). Delegated
+  work has no channel of its own, so it cannot exceed the person's contact
+  budget.
+- **Digest.** `assistant_digests (userId, day, updateIdsJson, inboxItemId,
+  sentAt)`, unique per person and day. Built once per day after the person's
+  digest time (`attention_policies.digestMinute`, default 09:00 on the
+  quiet-hours clock) from unseen updates that were waiting at that time; an
+  empty set sends nothing and records nothing. An update already contacted
+  about is left out of the digest, so the same update never arrives both
+  ways.
 - Receipts keep `deliveredRevision` separate from `acknowledgedRevision`
   (ADR 0017): a push, a DM, a digest and a spoken briefing all record
   delivery only.
+- Until the pilot decision is recorded the capability (`delivery` in
+  `assistantAccessService`) is the owner's: other accounts get no
+  `assistant` events, cannot activate a `digest` or `immediate` rule
+  (`PILOT_ONLY`), and nothing is sent for them.
 
 ### 13.4 Feedback and learned signals (DA-10)
 
@@ -1141,6 +1213,29 @@ Each connector ships with a recorded owner decision and a manifest shown at
 activation. Broad surveillance remains a product non-goal: there is no
 "watch everything" connector and no background ingestion outside a named
 responsibility.
+
+**Framework shipped in DA-11d** ([delegated_connectors.md](delegated_connectors.md),
+ADR 0028), with no connector: the owner has not named one. What the
+implementation settled, in `services/assistant/connectors/registry.js`,
+`runTools/connectors.js` and `assistantConnectorService.js`:
+
+- A manifest also carries each operation's `run` and optional `validate`,
+  and a write's optional `reconcile`; a write without one stops for review
+  after any uncertainty. `register()` refuses a manifest without the
+  owner's recorded decision (`NO_OWNER_DECISION`); `shipped.js` is empty.
+- A grant is `{ kind: 'external', ids: ['<connector>:<resource>'] }` on
+  `read` or `external.write`, checked when saved: the connector is
+  installed and the resource has the manifest's shape, with no wildcard.
+- Three tools, `listConnectors`, `readConnector` and `writeConnector`,
+  reuse `guard`, `publishes: 'external'` and the `externalOperations`
+  budget of 13.5's repository work. A read is `source: 'private'`.
+  Everything on an `external` resource, reads included, is the pilot
+  capability `reach`.
+- Credentials stay in `user_integrations`; the manifest names a provider of
+  `userIntegrationService`'s catalog. Revocation deletes that token.
+  `GET /api/app/assistant/connectors` and `POST
+  /api/app/assistant/connectors/:id/revoke` are the portal's routes.
+- No schema change.
 
 ### 13.6 Operator controls and evaluation (DA-12)
 

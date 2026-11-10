@@ -49,6 +49,9 @@ const requireOptional = require('../utils/optionalModule').forModule(module);
 const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
 const projectAudience = require('./assistant/projectAudience');
 
+/** Tells open portals that someone's run started, moved or stopped (kinds only). */
+const live = () => require('./assistantLiveService');
+
 /**
  * Used when the responsibility sets no budget of its own (per UTC day), and
  * the most its own budget can allow. These are the configured values; what
@@ -273,7 +276,16 @@ class AssistantRunService {
              WHERE responsibilityId = @rid AND id <> @run AND startedAt >= @day`,
             { rid: responsibilityId, run: exceptRunId, day: dayStart(now) }
         );
-        return { tokens: Number(row?.tokens || 0), searches: Number(row?.searches || 0), compute: Number(row?.compute || 0) };
+        // Judging chat messages (ADR 0026) is paid from the same daily token budget.
+        const judged = await db.get(
+            `SELECT COALESCE(SUM(COALESCE(actualTokens, estimatedTokens)), 0) AS n FROM usage_reservations
+             WHERE workKind = 'assistant_classification' AND workId = @rid AND status <> 'released' AND createdAt >= @day`,
+            { rid: String(responsibilityId), day: dayStart(now) }
+        );
+        return {
+            tokens: Number(row?.tokens || 0) + Number(judged?.n || 0),
+            searches: Number(row?.searches || 0), compute: Number(row?.compute || 0)
+        };
     }
 
     /** Open, or resume, the run row of a claimed initiative. */
@@ -287,6 +299,7 @@ class AssistantRunService {
                  WHERE id = @id`,
                 { id: existing.id, revision: initiative.responsibilityRevision, now }
             );
+            live().changed(existing.ownerUserId, 'run');
             return db.get('SELECT * FROM assistant_runs WHERE id = @id', { id: existing.id });
         }
         const id = await db.insert(
@@ -303,6 +316,7 @@ class AssistantRunService {
                 now
             }
         );
+        live().changed(responsibility.ownerUserId, 'run');
         return db.get('SELECT * FROM assistant_runs WHERE id = @id', { id });
     }
 
@@ -573,7 +587,11 @@ class AssistantRunService {
                 if (await ctx.hostStopped()) return false;
                 const alive = await initiatives.renewLease({ id: initiative.id, leaseToken });
                 if (!alive) ctx.halt('LEASE_LOST');
-                else await db.run('UPDATE assistant_runs SET heartbeatAt = @now WHERE id = @id', { id: run.id, now: utcText() });
+                else {
+                    await db.run('UPDATE assistant_runs SET heartbeatAt = @now WHERE id = @id', { id: run.id, now: utcText() });
+                    // Progress for open portals, at most once in five seconds per run.
+                    live().progress(run.ownerUserId, run.id);
+                }
                 return alive;
             },
             // The host's stop-all, read from the database so every process agrees.
@@ -590,17 +608,22 @@ class AssistantRunService {
             }
         };
 
-        const finishRun = async (fields) => db.run(
-            `UPDATE assistant_runs SET status = @status, stopCode = @stopCode, outcome = @outcome, rounds = @rounds,
-                tokensUsed = @tokens, searches = @searches, computeSeconds = @compute, resultTitle = @title, resultSummary = @summary,
-                updateId = @updateId, endedAt = @endedAt, updatedAt = @now
-             WHERE id = @id`,
-            {
-                id: run.id, stopCode: null, outcome: null, title: null, summary: null, updateId: null,
-                rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute,
-                endedAt: ['RUNNING', 'WAITING'].includes(fields.status) ? null : utcText(), now: utcText(), ...fields
-            }
-        );
+        const finishRun = async (fields) => {
+            const written = await db.run(
+                `UPDATE assistant_runs SET status = @status, stopCode = @stopCode, outcome = @outcome, rounds = @rounds,
+                    tokensUsed = @tokens, searches = @searches, computeSeconds = @compute, resultTitle = @title, resultSummary = @summary,
+                    updateId = @updateId, endedAt = @endedAt, updatedAt = @now
+                 WHERE id = @id`,
+                {
+                    id: run.id, stopCode: null, outcome: null, title: null, summary: null, updateId: null,
+                    rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute,
+                    endedAt: ['RUNNING', 'WAITING'].includes(fields.status) ? null : utcText(), now: utcText(), ...fields
+                }
+            );
+            live().forgetRun(run.id);
+            live().changed(run.ownerUserId, 'run');
+            return written;
+        };
         const park = async (waitReason, stopCode, recheckAfter) => {
             const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'WAITING', waitReason, stopCode, recheckAfter });
             await finishRun({ status: settled.ok ? 'WAITING' : 'CANCELLED', stopCode: settled.ok ? stopCode : 'LEASE_LOST' });
@@ -636,8 +659,7 @@ class AssistantRunService {
         // the person. Deleted, out of reach or no longer covered ends the
         // attempt here, before any model call.
         let request = null;
-        const requests = !planStep && initiative.origin?.kind === 'parlor_message'
-            ? require('./assistant/conversationRequestRun') : null;
+        const requests = !planStep ? require('./assistant/originRuns').forKind(initiative.origin?.kind) : null;
         if (requests) {
             const loaded = await requests.load({ initiative, responsibility });
             if (!loaded.ok) {
@@ -760,10 +782,14 @@ class AssistantRunService {
 
         // What the run reported, before the lines naming what it changed.
         const reported = result.summary;
-        if (applied.lines.length) {
-            // A change was made: the person is always told, whatever the model reported.
+        if (applied.lines.length || applied.waiting.length) {
+            // A change was made, or a request filed: the person is always told, whatever the model reported.
             result.outcome = 'DONE';
-            result.summary = clip(`${result.summary ? `${result.summary}\n\n` : ''}Changed: ${applied.lines.join(' ')}`, SUMMARY_CHARS);
+            const parts = [
+                applied.lines.length ? `Changed: ${applied.lines.join(' ')}` : '',
+                applied.waiting.length ? `Waiting for you: ${applied.waiting.join(' ')}` : ''
+            ].filter(Boolean).join('\n');
+            result.summary = clip(`${result.summary ? `${result.summary}\n\n` : ''}${parts}`, SUMMARY_CHARS);
         }
         // Settle first: a result is only published for work that still holds its lease.
         const settled = await initiatives.settle({
@@ -838,12 +864,14 @@ class AssistantRunService {
                 kind: 'finding',
                 title,
                 summary: summary || null,
-                components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
+                components: [...new Set([...(project ? ['projects'] : []), ...(request?.conversationId != null ? ['conversations'] : []), 'research', ...applied.components])],
                 source: { kind: 'initiative', id: initiative.id },
                 // A result of something asked in a conversation links back to it.
                 actions: [
                     { kind: 'open_initiative', id: String(initiative.id) },
-                    ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                    ...(request?.conversationId != null
+                        ? [{ kind: request.kind === 'chat_message' ? 'open_chat' : 'open_conversation', id: String(request.conversationId) }]
+                        : [])
                 ],
                 responsibilityId: responsibility.id,
                 initiativeId: initiative.id,
@@ -1085,6 +1113,7 @@ class AssistantRunService {
             { runId }
         );
         const lines = [];
+        const waiting = [];
         const components = new Set();
         // What a project's members may be told: changes to the project itself.
         const projectLines = [];
@@ -1093,6 +1122,13 @@ class AssistantRunService {
             const text = String(row.resultText || '');
             // A write tool that declined (title exists, note is the person's) changed nothing.
             if (!text || /^Not /.test(text)) continue;
+            // Evidence only: nothing to tell the person (a confirmation).
+            if (TOOLS[row.tool]?.quiet) continue;
+            // A request filed for the person to decide changed nothing yet.
+            if (TOOLS[row.tool]?.proposes) {
+                waiting.push(text.split('\n')[0]);
+                continue;
+            }
             lines.push(text.split('\n')[0]);
             const component = TOOLS[row.tool]?.component;
             if (component) components.add(component);
@@ -1101,7 +1137,7 @@ class AssistantRunService {
                 if (component) projectComponents.add(component);
             }
         }
-        return { lines, components: [...components], projectLines, projectComponents: [...projectComponents] };
+        return { lines, waiting, components: [...components], projectLines, projectComponents: [...projectComponents] };
     }
 
     /** Retention: journals and runs of long-finished work (the initiative prune cascades too). */

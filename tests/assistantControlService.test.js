@@ -41,6 +41,7 @@ const operatorAudit = require('@goobster/core/services/operatorAuditService');
 const assistantConfig = require('@goobster/core/config/assistantConfig');
 const { DisabledGateway } = require('@goobster/core/gateway');
 const { useState } = require('./helpers/featureFixtures');
+const { createDouble } = require('./helpers/connectorDouble');
 
 const HOST = '760000000000000001';
 const A = '760000000000000002';
@@ -48,11 +49,15 @@ const B = '760000000000000003';
 const C = '760000000000000004';
 const READ_WEB = { operation: 'read', resource: { kind: 'web' } };
 const READ_NOTES = { operation: 'read', resource: { kind: 'knowledge', ids: ['personal'] } };
-const CONNECTOR = { operation: 'external.write', resource: { kind: 'external', ids: ['calendar'] } };
+const CONNECTOR = { operation: 'external.write', resource: { kind: 'external', ids: ['notebook:calendar'] } };
 const DEFAULT_CAPS = { installationRuns: 2, runsPerAccount: 1, defaultModelTokens: 200000, defaultSearches: 20, defaultComputeSeconds: 120 };
 const quiet = { info() {}, warn() {}, error() {}, debug() {} };
 
+const notebook = createDouble();
+beforeAll(() => notebook.register());
+
 afterAll(async () => {
+    notebook.unregister();
     initiatives.stopListening();
     useState();
     await db.closeConnection();
@@ -69,7 +74,7 @@ beforeEach(async () => {
         'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions', 'assistant_responsibilities',
         'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations', 'work_failures', 'operator_audit', 'kg_nodes',
         'project_mission_approval_receipts', 'project_mission_events', 'project_mission_evidence', 'project_mission_steps',
-        'project_missions', 'observatory_projects'
+        'project_missions', 'observatory_projects', 'user_integrations'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -576,6 +581,9 @@ describe('the pilot gate', () => {
 
     test('a gated operation cannot be activated or dispatched by anyone but the owner', async () => {
         await policies.enroll({ userId: A, initiative: 'assist' });
+        for (const userId of [A, HOST]) {
+            await db.run("INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@userId, 'notion', 'tok', 'Test')", { userId });
+        }
         const { responsibility } = await responsibilities.create({ userId: A, body: { title: 'Keep my calendar tidy', operations: [READ_WEB, CONNECTOR] } });
         await expect(responsibilities.act({ userId: A, id: responsibility.id, action: 'activate', expectedRevision: responsibility.revision }))
             .rejects.toMatchObject({ code: 'PILOT_ONLY', status: 409, details: { operation: 'external.write', capability: 'reach' } });
@@ -589,7 +597,7 @@ describe('the pilot gate', () => {
         await access.recordDecision({ scope: 'everyone' });
         const active = (await responsibilities.act({ userId: A, id: responsibility.id, action: 'activate', expectedRevision: responsibility.revision })).responsibility;
         expect(active.status).toBe('ACTIVE');
-        const write = () => check(active, { operation: 'external.write', resource: { kind: 'external', id: 'calendar' } });
+        const write = () => check(active, { operation: 'external.write', resource: { kind: 'external', id: 'notebook:calendar' } });
         expect((await write()).code).not.toBe('PILOT_ONLY');
 
         // ...and closing it again stops the dispatch, whatever the grant says.

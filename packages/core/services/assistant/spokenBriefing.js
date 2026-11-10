@@ -1,6 +1,7 @@
 /**
  * The spoken briefing (DA-7c; documentation/delegated_conversation.md,
- * "Hearing a briefing"; delegated_assistant_architecture.md section 13.1).
+ * "Hearing a briefing"; delegated_assistant_architecture.md section 13.1;
+ * ADR 0024).
  *
  * `compose()` turns the Home projection (assistantHomeService.project) into
  * a few sentences written to be heard: the same counts Home shows, the

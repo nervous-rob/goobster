@@ -1,6 +1,24 @@
-import type { Responsibility, ResponsibilityOperation } from '../../lib/types';
+import type { Interruption, Responsibility, ResponsibilityOperation } from '../../lib/types';
 
 /** Plain words for what a responsibility grants. */
+
+/** The interruption rule as a choice in the draft form. */
+export const INTERRUPTION_CHOICE: Record<Interruption, string> = {
+    home: 'Keep them on Home and in my Inbox',
+    digest: 'Also send me one digest a day',
+    immediate: 'Tell me when it needs my decision; the rest goes in the daily digest'
+};
+
+/** The interruption rule as a fact about a saved responsibility. */
+const INTERRUPTION_TEXT: Record<Interruption, string> = {
+    home: 'Updates stay on Home',
+    digest: 'Updates go in your daily digest',
+    immediate: 'Contacts you when it needs a decision; other updates go in your daily digest'
+};
+
+export function describeInterruption(rule: string | undefined): string {
+    return INTERRUPTION_TEXT[(rule as Interruption) || 'home'] || INTERRUPTION_TEXT.home;
+}
 
 export type Project = { id: number; slug: string; name: string; ownerId: string };
 
@@ -9,7 +27,8 @@ const OPERATION_TEXT: Record<string, string> = {
     research: 'run research expeditions',
     'kg.generated.add': 'add generated notes',
     'kg.generated.amend': 'amend generated notes',
-    'kg.saved.amend': 'amend notes you saved',
+    'kg.saved.propose': 'suggest changes to notes you saved (you apply them)',
+    'kg.saved.amend': 'amend notes you saved directly',
     'kg.edge': 'connect notes',
     'kg.archive': 'archive notes',
     'file.edit': 'edit files',
@@ -37,6 +56,7 @@ function describeResource(entry: ResponsibilityOperation, projects: Map<string, 
         case 'repository':
             return `${(resource.ids || []).join(', ')}${resource.branches?.length ? ` on ${resource.branches.join(', ')}` : ''}`;
         case 'process': return (resource.ids || []).join(', ');
+        case 'external': return (resource.ids || []).map((id) => `${id.slice(id.indexOf(':') + 1)} in ${id.slice(0, id.indexOf(':'))}`).join(', ');
         default: return (resource.ids || []).join(', ') || resource.kind;
     }
 }
@@ -48,6 +68,11 @@ export const MAX_EXTERNAL_OPERATIONS = 20;
 /** True when the grant lets work leave this installation (a push, a pull request). */
 export function reachesGitHub(operations: ResponsibilityOperation[]): boolean {
     return operations.some((entry) => entry.operation === 'repo.push' || entry.operation === 'pr.create');
+}
+
+/** True when the grant lets work write to an outside service through a connector (DA-11d). */
+export function writesOutside(operations: ResponsibilityOperation[]): boolean {
+    return operations.some((entry) => entry.operation === 'external.write');
 }
 
 /** How many pushes and pull requests a day the responsibility allows. */
@@ -74,6 +99,18 @@ export function describeListening(item: Pick<Responsibility, 'scopes'>, name: st
         sources.includes('parlor') ? 'your discussions' : null
     ].filter(Boolean);
     return places.length ? `Takes requests you address to ${name} in ${places.join(' and ')}` : null;
+}
+
+/** The wider sources it notices work from, in plain words (delegated_opportunity_sources.md). */
+export function describeNoticing(item: Pick<Responsibility, 'scopes'>): string | null {
+    const sources = item.scopes?.sources || [];
+    const things = [
+        sources.includes('personal_chat') ? 'requests in your own chats' : null,
+        sources.includes('followed_source') ? 'items you keep from sources you follow' : null,
+        sources.includes('job_failure') ? 'new causes of failed project runs' : null,
+        sources.includes('ci_verdict') ? 'CI results on watched branches' : null
+    ].filter(Boolean);
+    return things.length ? `Notices ${things.join(', ')}` : null;
 }
 
 /** Whether its findings go to the project's members as well (delegated_project_findings.md). */

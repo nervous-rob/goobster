@@ -64,18 +64,24 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_updates', column: 'audienceUserId' },
     { feature: 'assistant', table: 'assistant_update_receipts', column: 'userId' },
     { feature: 'assistant', table: 'assistant_confirmation_receipts', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_digests', column: 'userId' },
     { feature: 'assistant', table: 'assistant_process_contracts', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_incidents', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_incident_members', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_lifecycle', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_cleanups', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' }
+    { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_message_labels', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'kg_change_sets', column: 'userId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
 const SECRETS = ['hash-secret', 'ghp-secret', 'mcp-hash', 'p256dh-secret', 'auth-secret'];
 /** The person's own content: in their export, never in the report. */
-const CONTENT = ['refactor the parser'];
+const CONTENT = ['refactor the parser', 'private note after'];
 
 function utc(offsetMs = 0) {
     return new Date(Date.now() + offsetMs).toISOString().slice(0, 19).replace('T', ' ');
@@ -178,6 +184,16 @@ function createDormantSeed(db) {
              VALUES (@responsibilityId, 'attention_item', '1', 'r1', 1)`,
             { responsibilityId }
         );
+        await db.run(
+            `INSERT INTO assistant_proposal_counters (responsibilityId, ownerUserId, sourceKind, day, proposed, coalesced)
+             VALUES (@responsibilityId, @u, 'job_failure', '2026-01-01', 3, 2)`,
+            { responsibilityId, u }
+        );
+        await db.run(
+            `INSERT INTO assistant_message_labels (responsibilityId, responsibilityRevision, ownerUserId, messageId, label)
+             VALUES (@responsibilityId, 1, @u, 1, 'request')`,
+            { responsibilityId, u }
+        );
         const initiativeId = await db.insert(
             `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,
                 sourceKind, sourceId, sourceRevision, dedupeKey, title)
@@ -195,6 +211,12 @@ function createDormantSeed(db) {
              VALUES (@runId, @u, 'lookupNotes', 'h', 'SUCCEEDED', 'private retrieved text')`,
             { runId, u }
         );
+        await db.run(
+            `INSERT INTO kg_change_sets (userId, guildId, scopeKey, kind, status, runId, responsibilityId, operationsJson, beforeJson, afterJson, rationale)
+             VALUES (@u, @g, @scope, 'saved_note_edit', 'PROPOSED', @runId, @responsibilityId, '[]',
+                '{"content":"private note before"}', '{"content":"private note after"}', 'private rationale')`,
+            { u, g: `dm:${u}`, scope: `USER:${u}`, runId, responsibilityId }
+        );
         const updateId = await db.insert(
             `INSERT INTO assistant_updates (audienceKind, audienceKey, audienceUserId, producerUserId, identityKey, kind,
                 fingerprint, sequence, title, componentsJson, happenedAt)
@@ -211,6 +233,10 @@ function createDormantSeed(db) {
                 (userId, subjectKind, subjectId, action, revision, grantHash, surface, nonceHash, expiresAt)
              VALUES (@u, 'responsibility', @responsibilityId, 'activate', '1', 'grant-hash', 'chat', 'hash-secret', @now)`,
             { u, responsibilityId: String(responsibilityId), now: utc() }
+        );
+        await db.run(
+            "INSERT INTO assistant_digests (userId, day, updateIdsJson, sentAt) VALUES (@u, '2026-11-08', @ids, @now)",
+            { u, ids: JSON.stringify([Number(updateId)]), now: utc() }
         );
         const automationId = await db.insert(
             `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule)
@@ -236,6 +262,17 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_process_incident_members (incidentId, ownerUserId, processKind, processId, name, joinedAt)
              VALUES (@incidentId, @u, 'automation', @automationId, 'nightly ' || @tag, @now)`,
             { incidentId, u, automationId: String(automationId), tag, now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_lifecycle (ownerUserId, processKind, processId, name, stage, pausedAt, updatedAt)
+             VALUES (@u, 'automation', @automationId, 'nightly ' || @tag, 'PAUSED', @now, @now)`,
+            { u, automationId: String(automationId), tag, now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_cleanups
+                (ownerUserId, processKind, processId, name, manifestJson, manifestHash, lifecycleRevision, expiresAt, updatedAt)
+             VALUES (@u, 'automation', @automationId, 'nightly ' || @tag, '{"items":{"observations":[]}}', 'hash-' || @tag, 1, @now, @now)`,
+            { u, automationId: String(automationId), tag, now: utc() }
         );
 
         await db.run(`INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)

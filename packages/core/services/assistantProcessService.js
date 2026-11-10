@@ -7,7 +7,8 @@
  * may attach a contract saying what the process is for and what healthy
  * looks like. `assess()` judges each process on two axes, execution and
  * relevance, from typed evidence (assistant/processes/assessment.js). It is
- * a read: nothing here pauses, repairs or deletes anything.
+ * a read: nothing here pauses, repairs or deletes anything. Pausing,
+ * archiving, restoring and cleanup live in assistantProcessLifecycleService.
  *
  * Observations are typed per occurrence: (process, occurrenceKey, phase) is
  * unique, so a retried delivery updates one row instead of adding another,
@@ -97,12 +98,13 @@ function adapter({ feature = null, table, columns, present, history = null, resu
 const ADAPTERS = {
     automation: adapter({
         table: 'automations',
-        columns: 'id, userId, name, schedule, isEnabled, lastRun, nextRun, createdAt',
+        columns: 'id, userId, name, schedule, isEnabled, lastRun, nextRun, createdAt, archivedAt',
         resultSource: 'automation',
         present: row => ({
             ownerUserId: row.userId,
             name: row.name,
-            enabled: Boolean(row.isEnabled),
+            enabled: Boolean(row.isEnabled) && !row.archivedAt,
+            archived: Boolean(row.archivedAt),
             trigger: { kind: 'cron', schedule: row.schedule, timezone: 'UTC' },
             lastRunAt: row.lastRun || null,
             nextRunAt: row.nextRun || null,
@@ -112,11 +114,12 @@ const ADAPTERS = {
     project_trigger: adapter({
         feature: 'projects',
         table: 'project_triggers',
-        columns: 'id, userId, projectId, name, kind, schedule, eventTopic, isEnabled, lastRun, nextRun, sourceTriggerId, createdAt',
+        columns: 'id, userId, projectId, name, kind, schedule, eventTopic, isEnabled, lastRun, nextRun, sourceTriggerId, createdAt, archivedAt',
         present: row => ({
             ownerUserId: row.userId,
             name: row.name,
-            enabled: Boolean(row.isEnabled),
+            enabled: Boolean(row.isEnabled) && !row.archivedAt,
+            archived: Boolean(row.archivedAt),
             projectId: Number(row.projectId),
             trigger: row.kind === 'cron'
                 ? { kind: 'cron', schedule: row.schedule, timezone: 'UTC' }
@@ -148,12 +151,15 @@ const ADAPTERS = {
     }),
     attention_watch: adapter({
         table: 'attention_watches',
-        columns: 'id, userId, label, topic, status, fireCount, maxFires, expiresAt, lastFiredAt, itemId, createdAt',
+        columns: 'id, userId, label, topic, status, fireCount, maxFires, expiresAt, lastFiredAt, itemId, createdAt, pausedAt, archivedAt',
         resultSource: 'watch',
         present: row => ({
             ownerUserId: row.userId,
             name: row.label,
-            enabled: row.status === 'ARMED',
+            // A paused watch stays ARMED; the fire claim refuses it.
+            enabled: row.status === 'ARMED' && !row.pausedAt && !row.archivedAt,
+            archived: Boolean(row.archivedAt),
+            pausedAt: row.pausedAt || null,
             trigger: { kind: 'event', topic: row.topic, fires: Number(row.fireCount), maxFires: Number(row.maxFires) },
             status: row.status,
             lastRunAt: row.lastFiredAt || null,
@@ -165,11 +171,12 @@ const ADAPTERS = {
     }),
     followed_source: adapter({
         table: 'followed_sources',
-        columns: 'id, userId, projectId, label, kind, enabled, lastCheckedAt, nextCheckAt, createdAt',
+        columns: 'id, userId, projectId, label, kind, enabled, lastCheckedAt, nextCheckAt, createdAt, archivedAt',
         present: row => ({
             ownerUserId: row.userId,
             name: row.label,
-            enabled: Boolean(row.enabled),
+            enabled: Boolean(row.enabled) && !row.archivedAt,
+            archived: Boolean(row.archivedAt),
             projectId: row.projectId == null ? null : Number(row.projectId),
             trigger: { kind: 'poll', source: row.kind },
             lastRunAt: row.lastCheckedAt || null,
@@ -366,6 +373,7 @@ class AssistantProcessService {
      * contract exists and how it is doing. A read.
      */
     async list({ userId, now = new Date() }) {
+        const lifecycle = require('./assistantProcessLifecycleService');
         const { processes, counts } = await this.assess({ userId, now });
         return {
             processes: processes.map(entry => ({
@@ -380,7 +388,10 @@ class AssistantProcessService {
                 hasContract: Boolean(entry.contract),
                 criticality: entry.contract?.criticality || 'normal',
                 assessment: entry.assessment,
-                incident: entry.incident
+                incident: entry.incident,
+                archived: Boolean(entry.described.archived),
+                lifecycle: lifecycle.present(entry.lifecycle),
+                controls: lifecycle.controls(entry, entry.lifecycle)
             })),
             counts
         };
@@ -424,6 +435,12 @@ class AssistantProcessService {
             { owner, since: utcText(new Date(now.getTime() - ASSESS_WINDOW_DAYS * 86400000)), per: ASSESS_OBSERVATIONS }
         );
         for (const row of observed) byRef.get(`${row.processKind}:${row.processId}`)?.observations.push(row);
+        // What stewardship has done with each one (paused, archived, cleaned, kept), if anything.
+        const stewarded = await require('./assistantProcessLifecycleService').forOwner(owner);
+        for (const entry of entries) {
+            entry.lifecycle = stewarded.get(entry.ref) || null;
+            entry.described.paused = !entry.described.enabled && !entry.described.archived && entry.lifecycle?.stage === 'PAUSED';
+        }
 
         // A followed source is only polled while its owner's Attention covers research.
         if (entries.some(entry => entry.kind === 'followed_source' && entry.described.enabled)
@@ -488,11 +505,18 @@ class AssistantProcessService {
     /** Separate numbers per state; nothing here adds them into one score. */
     _counts(entries) {
         const counts = {
-            total: entries.length,
+            total: 0,
             healthy: 0, degraded: 0, blocked: 0, stalled: 0, unreachable: 0, unknown: 0,
-            notWorking: 0, retirementCandidates: 0, reviewDue: 0
+            notWorking: 0, retirementCandidates: 0, reviewDue: 0, paused: 0, archived: 0
         };
-        for (const { assessment: judged } of entries) {
+        for (const { assessment: judged, described } of entries) {
+            // An archived process is kept, not running: it is counted on its own and judged nowhere else.
+            if (described.archived) {
+                counts.archived += 1;
+                continue;
+            }
+            counts.total += 1;
+            if (described.paused) counts.paused += 1;
             counts[judged.execution] += 1;
             if (assessment.NOT_WORKING.includes(judged.execution)) counts.notWorking += 1;
             if (judged.relevance === 'retirement_candidate') counts.retirementCandidates += 1;
@@ -520,13 +544,19 @@ class AssistantProcessService {
             { kind: ref.kind, id: String(ref.id), limit: size }
         );
         const history = ref.adapter.history ? await ref.adapter.history(ref.id, size) : [];
+        const lifecycle = require('./assistantProcessLifecycleService');
         return {
             process: { kind: ref.kind, id: ref.id, ref: entry.ref, ...entry.described, dependsOn: entry.dependsOn },
             contract: entry.contract,
             observations: observed.map(row => this._presentObservation(row)),
             history,
             assessment: entry.assessment,
-            incident: entry.incident
+            incident: entry.incident,
+            lifecycle: lifecycle.present(entry.lifecycle),
+            controls: lifecycle.controls(entry, entry.lifecycle),
+            // Processes of the person's that cannot work without this one.
+            dependents: lifecycle._dependents(processes, entry.ref),
+            cleanup: await lifecycle.latestCleanup(userId, ref.kind, ref.id)
         };
     }
 

@@ -113,7 +113,7 @@ records the pilot decision, only the owner has them.**
 | Capability | Increment | What it covers |
 | --- | --- | --- |
 | `conversation` | DA-7 | Delegating, inspecting and stopping work by talking |
-| `sources` | DA-8 | Work proposed from more kinds of source |
+| `sources` | DA-8 | Work proposed from more kinds of source: the scopes `personal_chat`, `followed_source`, `job_failure`, `ci_verdict` ([delegated_opportunity_sources.md](delegated_opportunity_sources.md)) |
 | `delivery` | DA-9 | Live overview, the interruption rule, the digest, push and Discord echoes |
 | `feedback` | DA-10 | Feedback that changes selection, timing and authority |
 | `reach` | DA-11 | Repository work, editing saved notes, connecting and archiving notes, outside connectors |
@@ -142,15 +142,25 @@ records the pilot decision, only the owner has them.**
     Drafting and activating your own responsibility on the Responsibilities
     page is not part of DA-7 and stays open to everyone.
 
-  Of `reach`, repository work and shared findings have shipped. Repository
+  The wider sources of DA-8
+  ([delegated_opportunity_sources.md](delegated_opportunity_sources.md))
+  check `sources`: for anyone but the owner, activating a responsibility
+  that names `personal_chat`, `followed_source`, `job_failure` or
+  `ci_verdict` is refused with `PILOT_ONLY`.
+
+  Of `reach`, repository work, shared findings, knowledge work and outside
+  connectors have shipped. Delegated knowledge work (DA-11b) is gated as
+  `reach` like repository work. Repository
   work (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is
   gated as `reach`: committing, pushing and opening pull requests in a
   project's clone are offered to a run, and shown in the draft form, only
   for the owner, and each call checks the gate again before it reaches
   GitHub. The
   grant vocabulary contains all the `reach` operations (`repo.commit`,
-  `repo.push`, `pr.create`, and the not yet built `kg.saved.amend`,
-  `kg.edge`, `kg.archive`, `external.write`), so for anyone but the owner,
+  `repo.push`, `pr.create`, the saved-note operations `kg.saved.propose`,
+  `kg.saved.amend`, `kg.edge` and `kg.archive` of DA-11b
+  ([delegated_knowledge.md](delegated_knowledge.md)), and `external.write` of
+  DA-11d), so for anyone but the owner,
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.
@@ -160,8 +170,20 @@ records the pilot decision, only the owner has them.**
   `reach` capability: for anyone but the owner, creating, editing or
   activating such a responsibility is refused with `PILOT_ONLY` (naming the
   capability), and a finding published after the gate closed comes to its
-  person alone. Everything else delegated runs can do today (reading,
-  generated notes, project files, sandbox runs, research) is not gated.
+  person alone. Outside connectors (DA-11d,
+  [delegated_connectors.md](delegated_connectors.md)) are `reach` too, and
+  by resource, not by operation name: `read` is not otherwise gated, but a
+  grant of `read` or `external.write` on an `external` resource is refused
+  with `PILOT_ONLY` at activation and at dispatch for anyone but the owner,
+  the tools are not offered to them and the connector card is not shown.
+  Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
+  too: for anyone but the owner, activating or resuming a responsibility
+  whose updates go in a digest or contact them is refused with `PILOT_ONLY`,
+  nothing is sent out for one that is already active, the digest time is
+  not offered in Settings, and the portal is not told of changes while it
+  is open.
+  Everything else delegated runs can do today (reading, generated notes,
+  project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated

@@ -1,7 +1,8 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
 import { useMe } from '../../hooks/useSession';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, describeListening, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from './grants';
+import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './grants';
+import { SourcesPreview } from './SourcesPreview';
 import { WorkList } from './WorkList';
 
 /** One responsibility: what it grants, its work, and its lifecycle buttons. */
@@ -54,6 +55,8 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
     const listening = describeListening(item, me.assistant.name);
     const proposed = item.proposedBy === 'model';
     const actions = proposed && item.status === 'DRAFT' ? PROPOSED_DRAFT : ACTIONS[item.status] || [];
+    const noticing = describeNoticing(item);
+    const hasSources = (item.scopes?.sources || []).length > 0 && ['DRAFT', 'ACTIVE', 'PAUSED', 'NEEDS_REVIEW'].includes(item.status);
     const sharing = describeSharing(item);
     return (
         <div id={`responsibility-${item.id}`} className="list-row task-row" data-testid="responsibility-row">
@@ -65,16 +68,24 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 <ul className="assistant-grants">
                     {describeGrants(item.operations, projects).map((line) => <li key={line}>May {line}</li>)}
                     {listening && <li data-testid="responsibility-listens">{listening}</li>}
+                    {noticing && <li data-testid="responsibility-notices">{noticing}</li>}
                     {sharing && <li data-testid="responsibility-shares">{sharing}</li>}
                 </ul>
+                {hasSources && <SourcesPreview responsibilityId={item.id} revision={item.revision} />}
                 <div className="row-meta">
                     {item.rules?.autoStart ? 'Starts proposed work automatically · ' : 'Each piece of work waits for Start · '}
                     {item.expiresAt ? `Ends ${whenLabel(item.expiresAt)}` : 'No end date'}
+                    {' · '}<span data-testid="responsibility-interruption-rule">{describeInterruption(item.rules?.interruption)}</span>
                     {' · '}revision {item.revision}
                 </div>
                 {reachesGitHub(item.operations) && (
                     <div className="row-meta" data-testid="responsibility-reach">
                         Pushes and pull requests go to GitHub as you and cannot be undone from here · at most {externalOperationsPerDay(item.budgets)} a day
+                    </div>
+                )}
+                {writesOutside(item.operations) && (
+                    <div className="row-meta" data-testid="responsibility-connector-reach">
+                        Writes to outside services are made as you and cannot be undone from here · at most {externalOperationsPerDay(item.budgets)} outside operations a day
                     </div>
                 )}
                 <WorkList items={work} busy={busy} onAct={onActOnWork} />

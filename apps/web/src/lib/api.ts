@@ -2,11 +2,11 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, OperatorSchedule, OperatorSchedulesView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
-import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative, AssistantProcessList } from './types';
+import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative, AssistantProcessList, ProcessAction, ProcessActionResult, KnowledgeOverview } from './types';
 import type { AdminAssistantView, AssistantCapField } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 import type { ConfirmationReceipt, ConfirmationSurface, GateDecisionCard, GateDecisionResult, GateSurface } from './types';
-import type { AssistantAccess } from './types';
+import type { AssistantAccess, AssistantConnectors, ResponsibilitySources } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -459,11 +459,28 @@ export const api = {
     gateCard: (ref: string) => request<{ card: GateDecisionCard }>(`/api/app/assistant/gates/${encodeURIComponent(ref)}`),
     /** What the host's policy means for this person: pilot capabilities and budget defaults. */
     assistantAccess: () => request<AssistantAccess>('/api/app/assistant/access'),
+    /** The installed outside connectors, their manifests and whether this person has connected each. */
+    assistantConnectors: () => request<AssistantConnectors>('/api/app/assistant/connectors'),
+    revokeConnector: (id: string) =>
+        request<{ revoked: boolean; responsibilities: number[] }>(`/api/app/assistant/connectors/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: {} }),
+    responsibilitySources: (id: number) => request<ResponsibilitySources>(`/api/app/assistant/responsibilities/${id}/sources`),
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),
     initiativeAction: (id: number, action: string, expectedRevision: number) =>
         request<{ initiative: AssistantInitiative }>(`/api/app/assistant/initiatives/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
     /** A person's recurring processes, how each is doing, and the incidents still open. A read. */
+    assistantKnowledge: () => request<KnowledgeOverview>('/api/app/assistant/knowledge'),
+    revertKnowledgeChange: (id: number) =>
+        request<unknown>(`/api/app/assistant/knowledge/changes/${id}/revert`, { method: 'POST' }),
+    restoreKnowledgeNote: (id: number) =>
+        request<unknown>(`/api/app/assistant/knowledge/notes/${id}/restore`, { method: 'POST' }),
+    restoreKnowledgeConnection: (id: number) =>
+        request<unknown>(`/api/app/assistant/knowledge/connections/${id}/restore`, { method: 'POST' }),
     assistantProcesses: () => request<AssistantProcessList>('/api/app/assistant/processes'),
+    /** Pause, resume, archive, restore, keep or clean up one process, as the signed-in person. */
+    assistantProcessAction: (
+        process: { kind: string; id: number },
+        body: { action: ProcessAction; expectedRevision?: number; cleanupId?: number; manifestHash?: string }
+    ) => request<ProcessActionResult>(`/api/app/assistant/processes/${process.kind}/${process.id}/actions`, { method: 'POST', body }),
     acknowledgeUpdates: (items: Array<{ id: number; revision: number }>) =>
         request<{ acknowledged: number }>('/api/app/assistant/updates/acknowledge', { method: 'POST', body: { items } }),
     snoozeUpdate: (id: number, until: string) =>

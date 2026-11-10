@@ -22,6 +22,25 @@ const COLUMN_MIGRATIONS = [
     ['assistant_responsibilities', 'proposedBy', "proposedBy TEXT CHECK (proposedBy IS NULL OR proposedBy = 'model')"],
     ['assistant_responsibilities', 'proposedConversation', 'proposedConversation TEXT'],
     ['assistant_responsibilities', 'proposalKeptAt', 'proposalKeptAt TEXT'],
+    // Archiving and the claim's epistemic state (ADR 0027). An archived note
+    // stays in the table, out of retrieval; `archiveCode` is 'archived' or
+    // 'merged' (then `mergedIntoId` names the note that kept its meaning).
+    ['kg_nodes', 'archivedAt', 'archivedAt TEXT'],
+    ['kg_nodes', 'archivedBy', 'archivedBy TEXT'],
+    ['kg_nodes', 'archiveCode', 'archiveCode TEXT'],
+    ['kg_nodes', 'mergedIntoId', 'mergedIntoId INTEGER'],
+    ['kg_nodes', 'claimStatus',
+        "claimStatus TEXT NOT NULL DEFAULT 'current' CHECK (claimStatus IN ('current', 'disputed', 'superseded', 'retracted'))"],
+    // An edge carries its own revision, what it rests on, the run that made it,
+    // and a retraction record (ADR 0027). A retracted edge is kept, not live.
+    ['kg_edges', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
+    ['kg_edges', 'evidenceKind', 'evidenceKind TEXT'],
+    ['kg_edges', 'evidenceId', 'evidenceId INTEGER'],
+    ['kg_edges', 'originRunId', 'originRunId INTEGER'],
+    ['kg_edges', 'retractedAt', 'retractedAt TEXT'],
+    ['kg_edges', 'retractionCode', 'retractionCode TEXT'],
+    // A source that was withdrawn: the note keeps the row, the evidence stops counting.
+    ['kg_provenance', 'retractedAt', 'retractedAt TEXT'],
     ['project_assets', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     ['project_assets', 'pinnedAt', 'pinnedAt TEXT'],
     ['knowledge_transfers', 'requestId', 'requestId TEXT'],
@@ -220,6 +239,21 @@ const COLUMN_MIGRATIONS = [
     ['parlor_messages', 'stepsJson', 'stepsJson TEXT'],
     // Process contracts: which of the person's processes this one cannot work without.
     ['assistant_process_contracts', 'dependsOnJson', 'dependsOnJson TEXT'],
+    // Delivery of delegated work (DA-9): the one time a revision or a gate
+    // occurrence left the portal, as a digest entry or a contact.
+    ['assistant_updates', 'outboundKind', 'outboundKind TEXT'],
+    ['assistant_updates', 'outboundRevision', 'outboundRevision INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_updates', 'outboundOccurrence', 'outboundOccurrence INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_updates', 'outboundAt', 'outboundAt TEXT'],
+    // When the day's digest may go out (minutes from midnight; NULL = 09:00).
+    ['attention_policies', 'digestMinute', 'digestMinute INTEGER'],
+    // Process lifecycle (DA-5b): archived definitions stay in their own table,
+    // and a watch (which has no on/off switch of its own) can be paused.
+    ['automations', 'archivedAt', 'archivedAt TEXT'],
+    ['project_triggers', 'archivedAt', 'archivedAt TEXT'],
+    ['followed_sources', 'archivedAt', 'archivedAt TEXT'],
+    ['attention_watches', 'pausedAt', 'pausedAt TEXT'],
+    ['attention_watches', 'archivedAt', 'archivedAt TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

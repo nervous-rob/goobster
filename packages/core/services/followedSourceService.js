@@ -28,7 +28,7 @@ class FollowedSourceService {
             return { name: project.name, path: `/projects/${project.ownerId}/${project.slug}/knowledge`, project };
         }
         const topic = await db.get(`SELECT id, label FROM kg_nodes WHERE id = @id AND guildId = @guildId
-            AND scopeKey = @scopeKey AND curation <> 'memory'`,
+            AND scopeKey = @scopeKey AND curation <> 'memory' AND archivedAt IS NULL`,
         { id: id(topicNodeId), guildId: dmScopeId(userId), scopeKey: `USER:${userId}` });
         if (!topic) throw missing();
         return { name: topic.label, path: '/knowledge/notes', topic };
@@ -67,8 +67,8 @@ class FollowedSourceService {
         });
     }
     present(row) {
-        const { id, projectId, topicNodeId, url, label, kind, enabled, initialized, lastCheckedAt, nextCheckAt, lastError, disabledCount } = row;
-        return { id, projectId, topicNodeId, url, label, kind, enabled: Boolean(enabled), initialized: Boolean(initialized), lastCheckedAt, nextCheckAt, lastError, disabledCount };
+        const { id, projectId, topicNodeId, url, label, kind, enabled, initialized, lastCheckedAt, nextCheckAt, lastError, disabledCount, archivedAt } = row;
+        return { id, projectId, topicNodeId, url, label, kind, enabled: Boolean(enabled), archived: Boolean(archivedAt), initialized: Boolean(initialized), lastCheckedAt, nextCheckAt, lastError, disabledCount };
     }
     async list({ userId, projectId = null, topicNodeId = null }) {
         await this.target(userId, { projectId, topicNodeId });
@@ -90,13 +90,49 @@ class FollowedSourceService {
     }
     async setEnabled({ userId, sourceId, enabled }) {
         if (typeof enabled !== 'boolean') throw new FollowedSourceError(400, 'BAD_ENABLED', 'Choose pause or resume.');
-        await this.require(userId, sourceId);
+        const source = await this.require(userId, sourceId);
+        const archived = () => new FollowedSourceError(409, 'SOURCE_ARCHIVED', 'This source is archived. Restore it from the Assistant\'s Processes list before resuming it.');
+        if (enabled && source.archivedAt) throw archived();
         // The Postgres schema uses BIGINT flags; the same parameter also appears
         // beside an integer literal below, so make its type explicit.
-        await db.run(`UPDATE followed_sources SET enabled = CAST(@enabled AS BIGINT),
+        const result = await db.run(`UPDATE followed_sources SET enabled = CAST(@enabled AS BIGINT),
             disabledCount = disabledCount + CASE WHEN enabled = 1 AND @enabled = 0 THEN 1 ELSE 0 END,
-            claimToken = NULL, claimUntil = NULL WHERE id = @id AND userId = @userId`, { id: id(sourceId), userId, enabled: enabled ? 1 : 0 });
+            claimToken = NULL, claimUntil = NULL WHERE id = @id AND userId = @userId AND (@enabled = 0 OR archivedAt IS NULL)`, { id: id(sourceId), userId, enabled: enabled ? 1 : 0 });
+        if (enabled && !result.changes) throw archived();
         return { ok: true };
+    }
+    /**
+     * Process stewardship (documentation/process_stewardship.md), called by
+     * assistantProcessLifecycleService once it has checked who may act. These
+     * do not need the person to still reach the project the source belongs to:
+     * stopping is always allowed.
+     *
+     * Pause clears the claim, so a check that was fetching when it landed
+     * stores nothing: `started` is how many checks were abandoned that way.
+     */
+    async stewardPause({ id: sourceId, now }) {
+        const held = await db.get('SELECT claimToken, claimUntil FROM followed_sources WHERE id = @id AND enabled = 1', { id: id(sourceId) });
+        const result = await db.run(`UPDATE followed_sources SET enabled = 0, disabledCount = disabledCount + 1,
+            claimToken = NULL, claimUntil = NULL WHERE id = @id AND enabled = 1`, { id: id(sourceId) });
+        return { changed: result.changes > 0, started: result.changes > 0 && held?.claimToken && held.claimUntil > now ? 1 : 0 };
+    }
+    /** Resume a paused source; it is checked again at its next turn. Needs the person to still reach its project or topic. */
+    async stewardResume({ userId, id: sourceId }) {
+        const source = await this.require(userId, sourceId);
+        if (source.archivedAt) throw new FollowedSourceError(409, 'SOURCE_ARCHIVED', 'This source is archived. Restore it first.');
+        const result = await db.run('UPDATE followed_sources SET enabled = 1 WHERE id = @id AND enabled = 0 AND archivedAt IS NULL', { id: source.id });
+        return { changed: result.changes > 0 };
+    }
+    /** Archive a paused source: the row and every stored entry stay. */
+    async stewardArchive({ id: sourceId, now }) {
+        const result = await db.run(`UPDATE followed_sources SET archivedAt = @now, claimToken = NULL, claimUntil = NULL
+            WHERE id = @id AND enabled = 0 AND archivedAt IS NULL`, { id: id(sourceId), now });
+        return { changed: result.changes > 0 };
+    }
+    /** Restore an archived source. It stays paused. */
+    async stewardRestore({ id: sourceId }) {
+        const result = await db.run('UPDATE followed_sources SET archivedAt = NULL, enabled = 0 WHERE id = @id AND archivedAt IS NOT NULL', { id: id(sourceId) });
+        return { changed: result.changes > 0 };
     }
     async remove({ userId, sourceId }) {
         // Owners can remove inaccessible follows after membership loss.

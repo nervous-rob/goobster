@@ -48,8 +48,11 @@ with the narrowest grant that covers it. What happens:
 - In portal chat a **proposal card** appears under the reply. The card reads
   the draft from the server with your session. It shows what was recorded:
   the title, each thing it would allow and on what, whether work would wait
-  for *Start*, and when it ends. It does not show Goobster's description of
-  it, so the card and the record cannot differ.
+  for *Start*, when it ends, and how it would reach you
+  ([delegated_delivery.md](delegated_delivery.md)). It does not show
+  Goobster's description of it, so the card and the record cannot differ.
+  A proposal always keeps updates on Home: asking for a digest or a contact
+  is your own choice, made by editing the draft.
 - Asking again for the same thing in the same conversation returns the same
   draft. At most 10 unanswered proposals are kept per person.
 
@@ -124,6 +127,8 @@ show the same counts and the same items afterwards. The one thing recorded
 is that the updates it named were *delivered* to you by voice
 (`deliveredRevision` on your receipt), which is kept separate from
 reviewing them ([ADR 0017](adr/0017-initiatives-updates-processes.md)).
+The reasons for this design are in
+[ADR 0024](adr/0024-spoken-briefing.md).
 
 **It is only ever said to you alone.**
 
@@ -206,6 +211,12 @@ Home and the Inbox show, read from the server, and its buttons post to the
 same route with `surface: 'chat'` and a receipt for that card. The owning
 service decides, and a card that changed is refused with `STALE_GATE` and
 the current card, exactly as elsewhere.
+
+The receipt is bound to the card as shown: its title, its detail, its
+options with what each does, and, for a card that proposes a change to a
+note ([delegated_knowledge.md](delegated_knowledge.md)), the lines of the
+change. That holds for every kind of request, the question whether a
+process is still needed and a suggested note change included.
 
 ## API
 
