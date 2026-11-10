@@ -67,6 +67,8 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_process_observations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_incidents', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_incident_members', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_lifecycle', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_process_cleanups', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
@@ -241,6 +243,17 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_process_incident_members (incidentId, ownerUserId, processKind, processId, name, joinedAt)
              VALUES (@incidentId, @u, 'automation', @automationId, 'nightly ' || @tag, @now)`,
             { incidentId, u, automationId: String(automationId), tag, now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_lifecycle (ownerUserId, processKind, processId, name, stage, pausedAt, updatedAt)
+             VALUES (@u, 'automation', @automationId, 'nightly ' || @tag, 'PAUSED', @now, @now)`,
+            { u, automationId: String(automationId), tag, now: utc() }
+        );
+        await db.run(
+            `INSERT INTO assistant_process_cleanups
+                (ownerUserId, processKind, processId, name, manifestJson, manifestHash, lifecycleRevision, expiresAt, updatedAt)
+             VALUES (@u, 'automation', @automationId, 'nightly ' || @tag, '{"items":{"observations":[]}}', 'hash-' || @tag, 1, @now, @now)`,
+            { u, automationId: String(automationId), tag, now: utc() }
         );
 
         await db.run(`INSERT INTO memory_embeddings (guildId, channelId, authorId, authorName, content, embedding, dims, model)

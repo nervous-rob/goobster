@@ -32,6 +32,9 @@ class AutomationError extends Error {
 const changedError = (id) => new AutomationError('CHANGED',
     `Automation #${id} changed while this was being applied; refresh and try again.`);
 
+const archivedError = (row) => new AutomationError('ARCHIVED',
+    `"${row.name}" is archived. Restore it from the Assistant's Processes list before switching it on.`);
+
 /** Stored UTC text ('YYYY-MM-DD HH:MM:SS' or ISO) -> epoch ms. */
 function utcTextToMs(value) {
     if (value instanceof Date) return value.getTime();
@@ -174,7 +177,7 @@ class AutomationManagerService {
      */
     async _findById(id) {
         const row = await db.get(
-            'SELECT id, name, schedule, isEnabled, nextRun FROM automations WHERE id = @id',
+            'SELECT id, name, schedule, isEnabled, nextRun, archivedAt FROM automations WHERE id = @id',
             { id: Number(id) }
         );
         if (!row) throw new AutomationError('NOT_FOUND', `No automation #${id}.`);
@@ -230,12 +233,18 @@ class AutomationManagerService {
         const seen = { id: row.id, seenEnabled: row.isEnabled ? 1 : 0, seenSchedule: row.schedule };
         const guard = 'WHERE id = @id AND isEnabled = @seenEnabled AND schedule = @seenSchedule';
         if (enabled) {
+            if (row.archivedAt) throw archivedError(row);
             const nextRun = CronExpressionParser.parse(row.schedule, { tz: 'UTC' }).next().toDate();
+            // An archived automation cannot be switched on, whoever asks and
+            // whenever it was archived: the guard is part of the write.
             const result = await db.run(
-                `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP ${guard}`,
+                `UPDATE automations SET isEnabled = 1, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP ${guard} AND archivedAt IS NULL`,
                 { ...seen, nextRun }
             );
-            if (result.changes === 0) throw changedError(row.id);
+            if (result.changes === 0) {
+                const now = await db.get('SELECT archivedAt FROM automations WHERE id = @id', { id: row.id });
+                throw now?.archivedAt ? archivedError(row) : changedError(row.id);
+            }
             return { id: row.id, name: row.name, enabled: true, nextRun };
         }
         const result = await db.run(
@@ -246,12 +255,58 @@ class AutomationManagerService {
         return { id: row.id, name: row.name, enabled: false, nextRun: null };
     }
 
+    /**
+     * Process stewardship (documentation/process_stewardship.md), called by
+     * assistantProcessLifecycleService once it has checked who may act.
+     *
+     * Pause stops future fires in one write. A run the scheduler had already
+     * claimed is not interrupted: it finishes and delivers, and the caller is
+     * told how many such runs there were.
+     * @returns {Promise<{ changed: boolean }>}
+     */
+    async stewardPause({ id }) {
+        const result = await db.run(
+            'UPDATE automations SET isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP WHERE id = @id AND isEnabled = 1',
+            { id: Number(id) }
+        );
+        return { changed: result.changes > 0 };
+    }
+
+    /** Resume a paused automation at its next scheduled time; never an archived one. */
+    async stewardResume({ id }) {
+        const row = await this._findById(id);
+        if (row.archivedAt) throw archivedError(row);
+        if (row.isEnabled) return { changed: false };
+        await this._applyEnabled(row, true);
+        return { changed: true };
+    }
+
+    /** Archive a switched-off automation: the row and its history stay. */
+    async stewardArchive({ id, now }) {
+        const result = await db.run(
+            `UPDATE automations SET archivedAt = @now, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id AND isEnabled = 0 AND archivedAt IS NULL`,
+            { id: Number(id), now }
+        );
+        return { changed: result.changes > 0 };
+    }
+
+    /** Restore an archived automation. It stays switched off. */
+    async stewardRestore({ id }) {
+        const result = await db.run(
+            `UPDATE automations SET archivedAt = NULL, isEnabled = 0, nextRun = NULL, updatedAt = CURRENT_TIMESTAMP
+             WHERE id = @id AND archivedAt IS NOT NULL`,
+            { id: Number(id) }
+        );
+        return { changed: result.changes > 0 };
+    }
+
     /** Case-insensitive lookup by name so a chatty caller need not match case. */
     async _findByName({ userId, scope, name }) {
         const cleanName = String(name ?? '').trim();
         if (!cleanName) return null;
         return await db.get(
-            `SELECT id, name, schedule, isEnabled FROM automations
+            `SELECT id, name, schedule, isEnabled, archivedAt FROM automations
              WHERE userId = @userId AND guildId = @scope AND name = @name COLLATE NOCASE`,
             { userId, scope, name: cleanName }
         );
