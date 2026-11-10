@@ -333,6 +333,12 @@ export type InboxItem = {
     update?: InboxUpdateRef | null;
     /** A typed, still-open request for this person. Independent of `read`. */
     needsAction?: boolean;
+    /**
+     * What this person can decide right here, when the request's kind can be
+     * decided in place. Null when it is decided where it lives, is settled,
+     * or the Delegated assistant feature is off.
+     */
+    decision?: GateDecisionCard | null;
     attachments: Array<{ url: string; name: string | null }>;
     read: boolean;
     archived: boolean;
@@ -352,6 +358,23 @@ export type InboxUpdateRef = {
     gate: AssistantGate | null; gateOpen: boolean; snoozedUntil: string | null;
 };
 
+/**
+ * The decision card of one request (documentation/assistant_home.md, "Deciding
+ * a request where it is shown"). Home, the Inbox and a chat card render the
+ * same card and post the same decision; `occurrence` and `revision` name the
+ * card, so one that has changed is refused instead of applied.
+ */
+export type GateDecisionOption = { id: string; label: string; effect: string | null; danger: boolean };
+export type GateDecisionCard = {
+    ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
+    occurrence: number; revision: string; options: GateDecisionOption[];
+};
+export type GateSurface = 'home' | 'inbox' | 'chat';
+export type GateDecisionResult = {
+    decided: { ref: string; kind: string; option: string; message: string };
+    current: GateDecisionCard | null;
+};
+
 export type AssistantComponentState = 'needs_you' | 'blocked' | 'degraded' | 'working' | 'updates' | 'quiet' | 'unknown' | 'unavailable';
 export type AssistantComponent = {
     id: 'knowledge' | 'research' | 'projects' | 'processes' | 'conversations';
@@ -369,6 +392,7 @@ export type AssistantHomeResponsibility = {
 export type AssistantNeedsYouItem = {
     inboxItemId: number; kind: InboxKind; title: string; body: string | null; link: string | null; read: boolean;
     createdAt: string; update: InboxUpdateRef | null; request: string | null;
+    decision: GateDecisionCard | null;
 };
 export type AssistantBriefItem = {
     id: number; revision: number; kind: string; title: string; summary: string | null; componentIds: string[];

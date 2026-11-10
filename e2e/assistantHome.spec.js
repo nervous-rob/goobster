@@ -4,8 +4,10 @@
  *
  * Loading Home marks nothing read; one finding is one briefing item and
  * one count; a request stays in Needs you after it is read and leaves every
- * view when the domain resolves it; snooze hides without resolving; a draft
- * responsibility grants nothing until the person activates it.
+ * view when the domain resolves it; snooze hides without resolving; a
+ * request that can be decided in place is decided from Home or the Inbox by
+ * the same card, and a card that changed is refused with the current state;
+ * a draft responsibility grants nothing until the person activates it.
  */
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
@@ -17,6 +19,16 @@ const seed = async (page, data = {}) => {
     const seeded = await page.request.post('/e2e/fixtures/assistant-home', { data: { userId: USER, name: NAME, ...data } });
     expect(seeded.ok(), await seeded.text()).toBe(true);
     return seeded.json();
+};
+
+const FRIEND = '99000000000000413';
+const FRIEND_NAME = 'Ada';
+
+const friendRequest = async (page, step = 'ask') => {
+    const made = await page.request.post('/e2e/fixtures/assistant-home/friend-request', {
+        data: { userId: USER, fromId: FRIEND, fromName: FRIEND_NAME, step }
+    });
+    expect(made.ok(), await made.text()).toBe(true);
 };
 
 test.describe('assistant-first Home', () => {
@@ -97,6 +109,71 @@ test.describe('assistant-first Home', () => {
         await expect(row).toContainText('resolved');
         await page.getByTestId('inbox-view-needs_you').click();
         await expect(page.locator('.inbox-row')).toHaveCount(0);
+    });
+
+    test('a request is decided on Home, and it is settled in the Inbox too', async ({ page }) => {
+        await seed(page);
+        await friendRequest(page);
+        await login(page, { userId: USER, name: NAME });
+        const overview = page.getByTestId('assistant-overview');
+        await expect(overview.getByTestId('assistant-status')).toContainText('2 need you');
+        const asked = overview.getByTestId('assistant-needs-you-item').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(asked.getByTestId('gate-decision')).toBeVisible();
+        // A request with no decision here still only links to where it is decided.
+        const repair = overview.getByTestId('assistant-needs-you-item').filter({ hasText: 'Nightly import' });
+        await expect(repair.getByTestId('gate-decision')).toHaveCount(0);
+
+        // The Inbox shows the same request with the same choices...
+        const inboxCard = (await (await page.request.get('/api/app/inbox?view=needs_you')).json())
+            .items.find((item) => item.friend)?.decision;
+        const homeCard = (await (await page.request.get('/api/app/home')).json())
+            .assistant.needsYou.find((item) => item.decision)?.decision;
+        expect(inboxCard).toBeTruthy();
+        expect(homeCard).toEqual(inboxCard);
+
+        // ...and one press on Home settles it everywhere.
+        await asked.getByRole('button', { name: 'Accept' }).click();
+        await expect(page.locator('#toast')).toHaveText(`You and ${FRIEND_NAME} are friends now.`);
+        await expect(overview.getByTestId('assistant-needs-you-item')).toHaveCount(1);
+        await expect(overview.getByTestId('assistant-status')).toContainText('1 needs you');
+        await page.goto('/app/activity/inbox');
+        const row = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(row.getByTestId('inbox-friend-outcome')).toContainText('Accepted');
+        await expect(row.getByTestId('gate-decision')).toHaveCount(0);
+        await page.getByTestId('inbox-view-needs_you').click();
+        await expect(page.locator('.inbox-row').filter({ hasText: FRIEND_NAME })).toHaveCount(0);
+        await expect(page.locator('.inbox-row').filter({ hasText: 'Nightly import' })).toHaveCount(1);
+    });
+
+    test('a card that changed after it was shown is refused with what the request is now', async ({ page }) => {
+        await seed(page, { seed: false });
+        await friendRequest(page);
+        await login(page, { userId: USER, name: NAME });
+        await page.goto('/app/activity/inbox');
+        const row = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(row.getByTestId('gate-decision').getByRole('button')).toHaveText(['Accept', 'Decline']);
+
+        // They take it back while the card is still on screen.
+        await friendRequest(page, 'withdraw');
+        await row.getByRole('button', { name: 'Accept' }).click();
+        await expect(page.locator('#toast')).toHaveText('This request was already settled. They withdrew this request.');
+        await expect(page.locator('#toast')).toHaveClass(/error/);
+        await expect(row.getByTestId('gate-decision')).toHaveCount(0);
+        const friends = await (await page.request.get('/api/app/friends')).json();
+        expect(friends.friends).toHaveLength(0);
+
+        // They ask again: that is a new card, and the Inbox decides it too.
+        await friendRequest(page);
+        await page.reload();
+        await page.getByTestId('inbox-view-needs_you').click();
+        // The Inbox keeps the earlier notice about the same request beside the
+        // new one (it always has); either row decides the one request.
+        const again = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` }).first();
+        await again.getByTestId('gate-decision').getByRole('button', { name: 'Decline' }).click();
+        await expect(page.locator('#toast')).toHaveText('Declined - they are not told.');
+        await expect(page.locator('.inbox-row')).toHaveCount(0);
+        await page.goto('/app/');
+        await expect(page.getByTestId('assistant-needs-you-empty')).toBeVisible();
     });
 
     test('a responsibility is drafted, reviewed, activated and paused by the person', async ({ page }) => {

@@ -401,7 +401,9 @@ entitlement: 'migration', role: 'member' })`, so the shared-installation
 cap gate still applies. A refused grant (`DAILY_CAP_REQUIRED`) leaves the
 request pending and points the host at Host → Limits; the portal answers
 the 409, the DM button replies ephemerally. Whichever surface resolved it
-- the Inbox, the DM, Host → Accounts' **Waiting to be let in** list
+- the Inbox or the Needs-you list on Home (the same decision card, see
+[assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown);
+`via` is `inbox` or `home`), the DM, Host → Accounts' **Waiting to be let in** list
 (`GET /api/app/admin/access-requests`, `POST
 /api/app/admin/access-requests/:id/approve|decline`) - one `operator_audit`
 row is written by the service (`access.approve` / `access.decline`, detail
