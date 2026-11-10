@@ -166,9 +166,10 @@ test.describe('assistant-first Home', () => {
         await friendRequest(page);
         await page.reload();
         await page.getByTestId('inbox-view-needs_you').click();
-        // The Inbox keeps the earlier notice about the same request beside the
-        // new one (it always has); either row decides the one request.
-        const again = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` }).first();
+        // Only the new notice is the request: the earlier one is a record in
+        // All and asks for nothing.
+        const again = page.locator('.inbox-row').filter({ hasText: `${FRIEND_NAME} wants to be friends` });
+        await expect(again).toHaveCount(1);
         await again.getByTestId('gate-decision').getByRole('button', { name: 'Decline' }).click();
         await expect(page.locator('#toast')).toHaveText('Declined - they are not told.');
         await expect(page.locator('.inbox-row')).toHaveCount(0);

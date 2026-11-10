@@ -170,6 +170,55 @@ describe('a stale card', () => {
         expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('accepted');
     });
 
+    test('when they ask again, only the new notice is the request: the earlier one asks for nothing', async () => {
+        const { request, item: earlier, card: earlierCard } = await friendRequest();
+        // The first ask was a minute ago (the notice is keyed on when it was asked).
+        await db.run("UPDATE friendships SET createdAt = '2026-01-01 00:00:00' WHERE id = @id", { id: request.id });
+        await db.run('UPDATE inbox_items SET dedupeKey = @key WHERE id = @id',
+            { id: earlier.id, key: `friend_request:${request.id}:2026-01-01 00:00:00` });
+        await friends.cancel({ userId: B, requestId: request.id });
+        expect(await needsYou(A)).toEqual([]);
+
+        const again = await friends.request({ userId: B, targetId: A });
+        expect(again.request.id).toBe(request.id);
+        const waiting = await needsYou(A);
+        expect(waiting).toHaveLength(1);
+        expect(waiting[0].id).not.toBe(earlier.id);
+        expect(waiting[0]).toMatchObject({ needsAction: true, friend: { actionable: true }, decision: { state: 'open' } });
+        const view = await home.project({ userId: A });
+        expect(view.needsYou).toHaveLength(1);
+        expect(view.counts.needsAction).toBe(1);
+
+        // The earlier notice stays in the Inbox as a record, with nothing to press.
+        const all = (await inbox.list({ userId: A })).items;
+        expect(all.find(entry => entry.id === earlier.id)).toMatchObject({ needsAction: false, decision: null, friend: { actionable: false } });
+        expect(await gates.card({ userId: A, ref: earlierCard.ref })).toMatchObject({
+            state: 'resolved', options: [], outcome: 'This is an earlier notice. They asked again since: answer the newer request.'
+        });
+        const refused = await caught(decideCard({ ...earlierCard, revision: waiting[0].decision.revision }, 'accept'));
+        expect(refused).toMatchObject({ status: 409, code: 'STALE_GATE' });
+        expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('pending');
+
+        // The new notice decides it, once.
+        await decideCard(waiting[0].decision, 'accept');
+        expect((await db.get('SELECT status FROM friendships WHERE id = @id', { id: request.id })).status).toBe('accepted');
+        expect(await needsYou(A)).toEqual([]);
+    });
+
+    test('an old "accepted your request" note does not become a request when the roles are reversed', async () => {
+        // A asked B, B accepted (A holds the acceptance note), they parted, and now B asks A.
+        const first = await friends.request({ userId: A, targetId: B });
+        await friends.respond({ userId: B, requestId: first.request.id, accept: true });
+        await friends.remove({ userId: A, friendId: B });
+        await db.run("UPDATE friendships SET createdAt = '2026-01-01 00:00:00' WHERE id = @id", { id: first.request.id });
+        await friends.request({ userId: B, targetId: A });
+        const waiting = await needsYou(A);
+        expect(waiting).toHaveLength(1);
+        expect(waiting[0]).toMatchObject({ kind: 'invite', title: 'Bo wants to be friends' });
+        const note = (await inbox.list({ userId: A })).items.find(entry => /accepted your friend request/.test(entry.title));
+        expect(note).toMatchObject({ needsAction: false, decision: null });
+    });
+
     test('a domain refusal that means "changed under you" is reported the same way', async () => {
         const { card } = await friendRequest();
         jest.spyOn(friends, 'respond').mockRejectedValue(Object.assign(new Error('already answered'), { status: 409, code: 'REQUEST_SETTLED' }));

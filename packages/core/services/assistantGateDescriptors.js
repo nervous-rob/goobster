@@ -131,12 +131,17 @@ const friendRequest = {
         const request = found.get(String(gate.id));
         // Only the person it is addressed to may answer it.
         if (!request || request.addresseeId !== String(viewer.userId)) return null;
-        const open = request.status === 'pending';
+        // They asked again since this notice: the newer notice is the request now.
+        const earlier = gate.inboxItemId != null
+            && (await friends.staleNoticeIds({ userId: viewer.userId, itemIds: [gate.inboxItemId] })).has(Number(gate.inboxItemId));
+        const open = request.status === 'pending' && !earlier;
         return {
             state: open ? 'open' : 'resolved',
             title: `${request.requesterName} wants to be friends`,
             detail: 'Friends see when each other is in the portal and can message each other. Declining is not announced to them.',
-            outcome: open ? null : (FRIEND_OUTCOME[request.status] || 'This request is no longer open.'),
+            outcome: open ? null
+                : earlier ? 'This is an earlier notice. They asked again since: answer the newer request.'
+                    : (FRIEND_OUTCOME[request.status] || 'This request is no longer open.'),
             // The row is reused when the same person asks again; each ask is its own request.
             revision: request.createdAt,
             options: [
