@@ -11,7 +11,8 @@ grant) and [ADR 0017](0017-initiatives-updates-processes.md) (initiatives
 and updates). Behaviour is documented in
 [delegated_runs.md](../delegated_runs.md). The services are
 `assistantRunService.js` and `assistantRunnerService.js` under
-`packages/core/services/`.
+`packages/core/services/`. The entries of the tool table live one module per
+capability under `packages/core/services/assistant/runTools/`.
 
 ## Context
 
@@ -41,7 +42,13 @@ Two observations shaped the design:
    it was planned under and the acting person before every call. A name that
    is not in the table is refused and never reaches the registry. Adding a
    delegated capability is therefore an explicit entry, never a side effect
-   of adding a chat tool.
+   of adding a chat tool. The table is assembled in
+   `services/assistant/runTools/index.js` from one module per capability
+   (`searchWeb`, `lookupNotes`, `projectFiles`, `runProjectFile`,
+   `startResearch`, `generatedNotes`, `consultDocs`, `finish`); a new
+   capability is a new module and one line in that index. An entry may also
+   say when it is on offer (`available({ project, features })`: a linked
+   project, a feature that is on).
 
 2. **The checkpoint is an operation journal, not a transcript.**
    `assistant_run_operations` records each call before dispatch (`PREPARED`,

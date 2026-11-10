@@ -805,7 +805,8 @@ session to be the person's own (never a shared guild voice channel).
 ### 13.2 Opportunity sources (DA-8)
 
 Builds on: `assistant_source_cursors` and `SOURCES` in
-`assistantInitiativeService` (one cursor per source, proposals idempotent on
+`assistantInitiativeService` (one module per adapter under
+`services/assistant/sources/`; one cursor per source, proposals idempotent on
 `(responsibility, dedupeKey, sourceRevision, attempt)`), `domainEventBus`
 topics as hints only, `followed_sources`, `observatory_jobs`,
 `project_ci_watches` and the corrected `summarizeChecks` verdicts.
@@ -914,7 +915,8 @@ Rules:
 ### 13.5 Extended reach (DA-11)
 
 Every capability below is a new entry in `assistantRunService.TOOLS`
-(ADR 0018) with `needs`, `effect`, and either `atomic` or `reconcile`.
+(ADR 0018; one module per capability under `services/assistant/runTools/`)
+with `needs`, `effect`, and either `atomic` or `reconcile`.
 
 **Repository work.** Through `projectRepoService` and `utils/sealedGit.js`
 only, with the acting person's own connected GitHub token.
