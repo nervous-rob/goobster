@@ -96,9 +96,14 @@ class AssistantAccessService {
         return Boolean(account && account.role === 'operator' && account.status === 'active');
     }
 
-    /** The capability a grant operation belongs to, or null when it is not gated. */
-    capabilityForOperation(operation) {
-        return Object.prototype.hasOwnProperty.call(OPERATION_CAPABILITY, operation) ? OPERATION_CAPABILITY[operation] : null;
+    /**
+     * The capability a grant operation belongs to, or null when it is not
+     * gated. Anything on an outside connector is `reach`, reads included
+     * (DA-11d): the operation alone does not say, the resource kind does.
+     */
+    capabilityForOperation(operation, resourceKind = null) {
+        if (Object.prototype.hasOwnProperty.call(OPERATION_CAPABILITY, operation)) return OPERATION_CAPABILITY[operation];
+        return resourceKind === 'external' ? 'reach' : null;
     }
 
     /**
@@ -114,8 +119,8 @@ class AssistantAccessService {
     }
 
     /** `allows` for a grant operation; an ungated operation is always allowed. */
-    async allowsOperation(userId, operation) {
-        const capability = this.capabilityForOperation(operation);
+    async allowsOperation(userId, operation, resourceKind = null) {
+        const capability = this.capabilityForOperation(operation, resourceKind);
         if (!capability) return { ok: true, capability: null };
         return (await this.allows(userId, capability))
             ? { ok: true, capability }

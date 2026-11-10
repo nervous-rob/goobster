@@ -35,6 +35,7 @@ if (!fs.existsSync(distIndex)) {
 }
 
 const C = require('./constants');
+let e2eConnectorDouble = null;
 const db = require('@goobster/core/db');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const { ObservatoryService } = require('@goobster/core/services/observatoryService');
@@ -1201,6 +1202,58 @@ async function main() {
                 { projectId: project.id, userId }
             );
             res.json({ ok: true, projectId: project.id, slug: project.slug });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Outside connectors (assistantConnectors.spec.js, DA-11d): Goobster ships
+    // none, so the journey installs the test double (a fake in-memory
+    // notebook, tests/helpers/connectorDouble.js) and gives the person a
+    // credential for it. Safe to call twice: it re-registers the double and
+    // clears that person's rows first.
+    app.post('/e2e/fixtures/assistant-connector', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Keeper' });
+            if (req.body?.owner) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['user_integrations', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'delegate' });
+            await policies.setBoundary({ userId, category: 'general', externalWrite: true });
+            const { createDouble } = require(path.join(ROOT, 'tests/helpers/connectorDouble'));
+            e2eConnectorDouble = e2eConnectorDouble || createDouble();
+            e2eConnectorDouble.register();
+            if (req.body?.connected !== false) {
+                await db.run(
+                    "INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@userId, 'notion', 'e2e-secret-token', 'Keeper workspace')",
+                    { userId }
+                );
+            }
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // What authorize() says now for the person's first responsibility's write
+    // on the double's notebook: the next call after a revocation.
+    app.post('/e2e/fixtures/assistant-connector/authorize', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const row = await db.get(
+                'SELECT id, revision FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id LIMIT 1', { userId }
+            );
+            if (!row) return res.status(404).json({ error: 'no responsibility' });
+            const verdict = await require('@goobster/core/services/assistantResponsibilityService').authorize({
+                responsibilityId: row.id, revision: row.revision, operation: 'external.write',
+                resource: { kind: 'external', id: 'notebook:garden' }, actorUserId: userId
+            });
+            res.json({ ok: verdict.ok, code: verdict.code || null });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }

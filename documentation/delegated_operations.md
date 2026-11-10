@@ -148,7 +148,8 @@ records the pilot decision, only the owner has them.**
   that names `personal_chat`, `followed_source`, `job_failure` or
   `ci_verdict` is refused with `PILOT_ONLY`.
 
-  Of `reach`, repository work and shared findings have shipped. Repository
+  Of `reach`, repository work, shared findings and outside connectors have
+  shipped. Repository
   work (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is
   gated as `reach`: committing, pushing and opening pull requests in a
   project's clone are offered to a run, and shown in the draft form, only
@@ -166,7 +167,13 @@ records the pilot decision, only the owner has them.**
   `reach` capability: for anyone but the owner, creating, editing or
   activating such a responsibility is refused with `PILOT_ONLY` (naming the
   capability), and a finding published after the gate closed comes to its
-  person alone. Everything else delegated runs can do today (reading,
+  person alone. Outside connectors (DA-11d,
+  [delegated_connectors.md](delegated_connectors.md)) are `reach` too, and
+  by resource, not by operation name: `read` is not otherwise gated, but a
+  grant of `read` or `external.write` on an `external` resource is refused
+  with `PILOT_ONLY` at activation and at dispatch for anyone but the owner,
+  the tools are not offered to them and the connector card is not shown.
+  Everything else delegated runs can do today (reading,
   generated notes, project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
