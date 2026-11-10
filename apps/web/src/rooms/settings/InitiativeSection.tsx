@@ -187,7 +187,8 @@ export function InitiativeSection({ section, onDirty }: {
             </Field>
 
             <Field id="contact-budget" label="Contact budget"
-                hint="A cap of 0 DMs per day means everything stays in the Noticed inbox." error={budgetError}>
+                hint={`A cap of 0 DMs per day means everything stays in the Noticed inbox.${canDigest ? ' Digests and contacts from your responsibilities count against the same cap and wait out the same minutes.' : ''}`}
+                error={budgetError}>
                 <div className="settings-inline-row">
                     <label className="settings-mini">
                         <span>DMs per day</span>

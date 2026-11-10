@@ -165,7 +165,11 @@ browser takes the device over.
 directly. The **Inbox is the record**: `inboxService.deliver()` echoes
 every *newly created* item as a push that points at the row (`title`,
 kind label, `link`, `tag: inbox-<id>`), exactly as it echoes to Discord -
-bookkeeping around the item, not the item. Mentions in shared discussions
+bookkeeping around the item, not the item. One producer files quietly
+(`deliver({ push: false })`): the delegated assistant's updates, whose
+push is decided by the responsibility's interruption rule and sent later
+through `inboxService.echo()` inside the Attention contact budget
+([delegated_delivery.md](delegated_delivery.md)). Mentions in shared discussions
 (`parlorService`) and direct messages (`directMessageService`) call
 `notifyMention` / `notifyDirectMessage` with identity hints only (who,
 where). Nothing ever puts a message body, a token or an address in a

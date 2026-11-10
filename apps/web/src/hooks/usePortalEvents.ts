@@ -43,17 +43,16 @@ export function usePortalEvents(enabled: boolean): void {
         const revoked = () => { source.close(); sessionChanged(); };
         source.addEventListener('session-revoked', revoked);
         source.onerror = () => { void client.invalidateQueries({ queryKey: ['me'] }); };
+        // The server greets every (re)connection. The first greeting is the
+        // page load, which has just fetched; a later one is a reconnect.
+        const onHello = () => {
+            hellos += 1;
+            if (hellos > 1) applyInvalidation(client, AFTER_RECONNECT);
+        };
+        source.addEventListener('hello', onHello);
         const onEvent = (event: MessageEvent) => {
             let data: { invalidate?: string[] } = {};
             try { data = JSON.parse(event.data); } catch { return; }
-            // The server greets every (re)connection. The first greeting is
-            // the page load, which has just fetched; a later one is a
-            // reconnect.
-            if (event.type === 'hello') {
-                hellos += 1;
-                if (hellos > 1) applyInvalidation(client, AFTER_RECONNECT);
-                return;
-            }
             applyInvalidation(client, data.invalidate);
             // A human @-mentioned this user in a shared parlor discussion:
             // surface it anywhere in the portal (AppShell renders the notice).
@@ -74,6 +73,7 @@ export function usePortalEvents(enabled: boolean): void {
         for (const kind of KINDS) source.addEventListener(kind, onEvent as EventListener);
         return () => {
             for (const kind of KINDS) source.removeEventListener(kind, onEvent as EventListener);
+            source.removeEventListener('hello', onHello);
             source.close();
         };
     }, [client, enabled]);

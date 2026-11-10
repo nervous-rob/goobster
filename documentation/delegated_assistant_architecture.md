@@ -870,20 +870,31 @@ Rules:
 
 ### 13.3 Delivery and interruption (DA-9)
 
+*Implemented; the behaviour, the stored records and the defaults chosen are
+in [delegated_delivery.md](delegated_delivery.md). Where the built contract
+differs from the proposal below, it is stated in place.*
+
 Builds on: the portal SSE channel (`web/liveAuthorization.createSseChannel`),
 `inboxService.deliver` (Inbox first, Discord DM as a tracked echo),
 `pushService.notify`, and Attention's contact path
 (`attentionService._contact`, `attentionPolicyService` daily cap, cooldown
 and quiet hours), and `rules.interruption` already stored on the grant.
 
-- **Live overview.** `assistantUpdateService`, `assistantInitiativeService`
-  and `assistantRunService` publish `assistant.changed` on the domain bus
-  with `{ userId, kinds: ['update' | 'initiative' | 'run' | 'gate'] }`. The
+- **Live overview.** `assistantUpdateService`, `assistantInitiativeService`,
+  `assistantRunService` and `assistantResponsibilityService` publish
+  `assistant.changed` on the domain bus (through
+  `assistantLiveService.changed`) with
+  `{ userId, kinds: ['update' | 'initiative' | 'run' | 'gate'] }`. The
   portal stream forwards it as an `assistant` event to that person's
-  sessions only. The client refetches; the event carries no title or text.
-  A reconnect refetches. Progress within a run is coalesced to at most one
-  event per five seconds.
-- **Interruption rule.** Evaluated when an update's envelope is filed:
+  sessions only. The client refetches; the event carries no title, text or
+  id. A reconnect refetches. Each stream gets at most one event per five
+  seconds (the first after a 300 ms settle delay, then the union of what
+  changed), and run progress is published at most once per run in the same
+  window.
+- **Interruption rule.** Read from the live responsibility when the
+  contact or digest is decided (first when the envelope is filed, then on
+  each steward pass), so a change to `home`, a pause or a revoke applies to
+  what is still waiting:
 
   | `rules.interruption` | Finding | Open request |
   | --- | --- | --- |
@@ -892,20 +903,35 @@ and quiet hours), and `rules.interruption` already stored on the grant.
   | `immediate` | Inbox, and the day's digest | Inbox, plus one contact per gate occurrence |
 
   A finding never contacts by itself. `immediate` applies to requests that
-  block delegated work.
-- **One contact path.** A contact is requested through a new
+  block delegated work. `assistant_updates.outboundRevision`,
+  `outboundOccurrence`, `outboundKind` and `outboundAt` record the one time
+  a revision (or a gate occurrence) left the portal, claimed before anything
+  is sent.
+- **One contact path.** A contact is requested through
   `attentionService.requestContact({ userId, reason: 'assistant', updateId,
-  urgent })`, which applies the same daily cap, cooldown and quiet hours as
-  Attention's own contacts and records the contact in the same ledger. Push
-  and the Discord echo are its channels. Delegated work has no channel of
-  its own, so it cannot exceed the person's contact budget.
-- **Digest.** `assistant_digests (userId, day, updateIdsJson, sentAt)`,
-  unique per person and day. Built once per day at the person's digest time
-  from unseen updates filed since the last digest; an empty set sends
-  nothing. An update already contacted about is listed, not re-announced.
+  urgent, inboxItemId | item })`, which applies the same daily cap, cooldown
+  and quiet hours as Attention's own contacts. Attention's notices are their
+  own ledger; every other reason is recorded in `attention_contacts`
+  (reason, reference, delivery status; no text), and both are counted
+  together for the cap and the cooldown. The contact is reserved in a
+  transaction on the person's `attention_state` row before it is sent. Push
+  and the Discord echo are its channels (`inboxService.echo`). Delegated
+  work has no channel of its own, so it cannot exceed the person's contact
+  budget.
+- **Digest.** `assistant_digests (userId, day, updateIdsJson, inboxItemId,
+  sentAt)`, unique per person and day. Built once per day after the person's
+  digest time (`attention_policies.digestMinute`, default 09:00 on the
+  quiet-hours clock) from unseen updates that were waiting at that time; an
+  empty set sends nothing and records nothing. An update already contacted
+  about is left out of the digest, so the same update never arrives both
+  ways.
 - Receipts keep `deliveredRevision` separate from `acknowledgedRevision`
   (ADR 0017): a push, a DM, a digest and a spoken briefing all record
   delivery only.
+- Until the pilot decision is recorded the capability (`delivery` in
+  `assistantAccessService`) is the owner's: other accounts get no
+  `assistant` events, cannot activate a `digest` or `immediate` rule
+  (`PILOT_ONLY`), and nothing is sent for them.
 
 ### 13.4 Feedback and learned signals (DA-10)
 

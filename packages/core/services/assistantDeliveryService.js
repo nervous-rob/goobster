@@ -46,6 +46,12 @@ const DIGEST_LISTED = 10;
 const SCAN_MAX = 500;
 const DIGEST_RETENTION_DAYS = 90;
 const DIGEST_SOURCE_TYPE = 'assistant_digest';
+/**
+ * A responsibility the person stopped, or never started, sends nothing
+ * out: its updates stay on Home and in the Inbox. Resuming a paused one
+ * makes what is still waiting eligible again.
+ */
+const SILENT_STATUSES = ['DRAFT', 'PAUSED', 'REVOKED', 'ARCHIVED'];
 /** Refusals that will not change within a pass: stop asking for this person. */
 const HOLDS = ['ATTENTION_OFF', 'OUTBOUND_OFF', 'QUIET_HOURS', 'CONTACT_CAP', 'COOLDOWN', 'NO_CHANNEL'];
 
@@ -120,7 +126,8 @@ class AssistantDeliveryService {
     /**
      * Updates that could still leave the portal: filed in the Inbox at
      * their current revision, not yet sent at it, unseen, not snoozed,
-     * under a responsibility of the same person whose rule is not `home`.
+     * under a responsibility of the same person that is not stopped and
+     * whose rule is not `home`.
      */
     async _pending({ now, id = null, userId = null }) {
         const filters = [
@@ -129,6 +136,7 @@ class AssistantDeliveryService {
             'u.envelopeRevision >= u.materialRevision',
             'u.outboundRevision < u.materialRevision',
             'u.updatedAt >= @since',
+            `r.status NOT IN (${SILENT_STATUSES.map(status => `'${status}'`).join(', ')})`,
             'COALESCE(c.acknowledgedRevision, 0) < u.materialRevision',
             '(c.snoozedUntil IS NULL OR c.snoozedUntil <= @now)',
             `(r.rulesJson LIKE '%"interruption":"digest"%' OR r.rulesJson LIKE '%"interruption":"immediate"%')`
@@ -425,3 +433,4 @@ module.exports.CONTACT_WINDOW_HOURS = CONTACT_WINDOW_HOURS;
 module.exports.DIGEST_WINDOW_DAYS = DIGEST_WINDOW_DAYS;
 module.exports.DIGEST_RETENTION_DAYS = DIGEST_RETENTION_DAYS;
 module.exports.DIGEST_SOURCE_TYPE = DIGEST_SOURCE_TYPE;
+module.exports.SILENT_STATUSES = SILENT_STATUSES;

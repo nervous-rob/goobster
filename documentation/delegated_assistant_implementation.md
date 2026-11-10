@@ -72,14 +72,14 @@ increment done because its proposal exists.
 | --- | --- | --- | --- |
 | DA-0: baseline and decisions | Done: [ADR 0016](adr/0016-delegated-responsibilities.md) (pilot numbers still to be recorded by the owner) | None | Revalidated source inventory; exact schema/API/feature choices and recorded pilot policy |
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
-| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Still open: briefing feedback, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
+| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Live changes shipped with DA-9. Still open: briefing feedback, Conversations signals, project boards reading the canonical gates | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
 | DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
 | DA-4: project continuity | Planned | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
-| DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
+| DA-9: delivery and interruption | Done: `assistant.changed` and the `assistant` stream event (Home and the Responsibilities page change while open and refetch after a reconnect), the interruption rule (`home` / `digest` / `immediate`), one digest a day at the person's digest time (default 09:00), and `attentionService.requestContact()` as the one contact path, with delegated contacts and Attention's notices sharing the daily cap and cooldown; see [delegated_delivery.md](delegated_delivery.md). Owner-only until the pilot decision. Left for later increments: timing feedback (DA-10), the spoken briefing as a delivery (DA-7c), project-audience findings in a digest (DA-11) | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
 | DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
 | DA-12: operator controls and model evaluation | Planned | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
@@ -425,6 +425,13 @@ Exit scenarios:
 - A delivered push or DM records delivery, not review; Home stays highlighted.
 - The same update never arrives as both a digest entry and an immediate contact.
 - Turning Attention off stops outbound contact at once.
+
+Shipped. Each scenario is covered by `tests/assistantDeliveryService.test.js`,
+`tests/assistantLiveService.test.js` and `e2e/assistantDelivery.spec.js`.
+Decisions taken where this plan left a number or a choice open (the digest
+time, the shared cap, the rule being read at dispatch, an update already
+contacted about being left out of the digest) are listed in
+[delegated_delivery.md](delegated_delivery.md#defaults-chosen-where-the-plan-left-them-open).
 
 ### DA-10: feedback and learning
 

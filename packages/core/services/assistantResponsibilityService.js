@@ -618,6 +618,9 @@ class AssistantResponsibilityService {
                 snapshot: JSON.stringify(this.present(row))
             }
         );
+        // Every stored revision is a change the owner's open pages show
+        // (documentation/delegated_delivery.md, "Live updates").
+        require('./assistantLiveService').changed(row.ownerUserId, 'initiative');
     }
 
     /**

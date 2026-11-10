@@ -352,8 +352,10 @@ const GROUPS = [
         files: files([
             'approvalExecutor',
             'assistantGateDecisions',
+            'assistantDeliveryService',
             'assistantHomeService',
             'assistantInitiativeService',
+            'assistantLiveService',
             'assistantProcessService',
             'assistantResponsibilityService',
             'assistantRunService',

@@ -311,6 +311,25 @@ Per person: `maxContactsPerDay` (default 3), `contactCooldownMinutes` (default
 180), and optional quiet hours. Quiet hours hold *contact* only; the inbox
 keeps filling.
 
+**One contact path.** Everything that contacts a person outside the portal
+on Attention's budget goes through `attentionService.requestContact()`:
+Attention's own notices (`reason: 'attention'`) and the delegated
+assistant's digests and requests (`reason: 'assistant'`,
+[delegated_delivery.md](delegated_delivery.md)). It reads the policy fresh,
+refuses with `ATTENTION_OFF`, `OUTBOUND_OFF`, `QUIET_HOURS`, `CONTACT_CAP`,
+`COOLDOWN` or `NO_CHANNEL`, reserves the contact in a transaction before
+sending, and records it. The cap and the cooldown count both kinds
+together: a delegated contact uses one of the day's three, and so does a
+notice. Contacts that are not notices are recorded in `attention_contacts`
+(a reason, a reference and delivery status; no text; kept 30 days; deleted
+by `/forget-me`). For a notice the cooldown is a cost the score absorbs;
+for every other reason it is a hard stop. Turning Attention off stops all
+of it at once.
+
+`attention_policies.digestMinute` is the time of day the delegated
+assistant's daily digest may go out (default 09:00, on the quiet-hours
+clock). It is set in Settings → Initiative.
+
 ---
 
 ## The two heartbeats
@@ -453,7 +472,7 @@ opening) and on unattended turns (a scheduled task is not a conversation).
 Notices, the ledger behind them, armed watches, and the initiative dials. Each
 notice has a **why?** view showing the five score inputs and how they combined:
 a system that decides when to bother you should be able to explain itself.
-A notice that `_contact` also filed in the Inbox says so and links to that
+A notice that a contact also filed in the Inbox says so and links to that
 row; the Inbox row links back. Acknowledge, snooze and dismiss stay on this
 pane. The portal's Activity badge counts the Inbox row, not the notice again.
 

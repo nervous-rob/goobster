@@ -212,8 +212,11 @@ what a responsibility is and how each action is checked.
 - **Draft** from plain choices: what to look after, what it may do (search
   and read the web, read your knowledge, add and amend generated notes, run
   a research expedition, and in one of your projects: read it, edit its
-  files under folders you name, run code in the sandbox), when it ends, and
-  whether proposed work starts automatically. A draft grants nothing.
+  files under folders you name, run code in the sandbox), when it ends,
+  whether proposed work starts automatically, and how its updates reach you
+  (kept on Home, one digest a day, or a contact when it needs your decision;
+  see [delegated_delivery.md](delegated_delivery.md)). A draft grants
+  nothing.
 - **Activate** shows exactly what will be granted, as you, and until when,
   and needs your confirmation. Activation requires Attention to be on.
 - **Pause / Resume / Mark complete / Revoke / Archive** follow the lifecycle;
@@ -223,6 +226,11 @@ what a responsibility is and how each action is checked.
 Under each responsibility is its work: proposed items with *Start* and
 *Dismiss*, running and waiting items with *Cancel*, and finished items with
 their result. See [delegated_runs.md](delegated_runs.md).
+
+Home and this page change while they are open: a finding, a request, a
+piece of work or a run that changes sends the portal a reason to read
+again, never the content
+([delegated_delivery.md](delegated_delivery.md#live-updates)).
 
 Grants the form cannot express yet (repositories, processes, budgets) can be
 created through the API.
@@ -309,5 +317,8 @@ None of the GET routes writes anything.
 - Signals for the Conversations card beyond updates filed against it.
 - Project Needs-you boards still read their own query; they show the same
   gates, and the adopted Inbox items resolve from the project's state.
-- Live push of overview changes: Home refetches when opened and after an
+- Live changes for every account: the overview changes while it is open
+  for accounts with the delivery capability
+  ([delegated_delivery.md](delegated_delivery.md)); until the pilot decision
+  is recorded, other accounts' Home refetches when opened and after an
   action taken on it.
