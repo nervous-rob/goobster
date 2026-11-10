@@ -204,7 +204,9 @@ records the pilot decision, only the owner has them.**
   is open.
   Everything else delegated runs can do today (reading, generated notes,
   project files, sandbox runs, research) is not gated.
-- **Recording the decision.** *Open to everyone* records the decision with
+- **Recording the decision.** It comes at the end of the personal pilot
+  ([delegated_pilot.md](delegated_pilot.md#the-exit-decision)), after the
+  owner's thresholds and cycles are written down. *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated
   operation stop being able to at their next step, and stay as they are.

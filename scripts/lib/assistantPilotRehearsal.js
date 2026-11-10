@@ -75,7 +75,6 @@ async function rehearse({ onJourney = null } = {}) {
     const delivery = require('@goobster/core/services/assistantDeliveryService');
     const outcomes = require('@goobster/core/services/assistantOutcomeService');
     const processes = require('@goobster/core/services/assistantProcessService');
-    const incidents = require('@goobster/core/services/assistantIncidentService');
     const lifecycle = require('@goobster/core/services/assistantProcessLifecycleService');
     const inbox = require('@goobster/core/services/inboxService');
     const kg = require('@goobster/core/services/knowledgeGraphService');
@@ -1023,10 +1022,10 @@ function format(result) {
     lines.push(`${result.checks.total - result.checks.failed} of ${result.checks.total} checks passed on prompt ${result.prompt}.`);
     if (result.outcomes) {
         lines.push('');
-        lines.push('Outcome summary for the rehearsal\'s owner (the same summary Assistant > Responsibilities shows):');
+        lines.push('Outcome summary for the rehearsal\'s owner (what the Responsibilities page shows for a real pilot):');
         for (const row of result.outcomes.responsibilities) {
-            lines.push(`  ${row.title}: ${row.runs.completed} of ${row.runs.total} runs completed, ${row.verified.total} verified, `
-                + `${row.reported.findings} findings, ${row.requests.asked} requests, ${row.refusals.total} refused calls, ${row.cost.tokens} tokens`);
+            lines.push(`  ${row.title}: runs completed ${row.runs.completed} of ${row.runs.total}, checked results ${row.verified.total}, `
+                + `findings reported ${row.reported.findings}, requests ${row.requests.asked}, calls refused ${row.refusals.total}, tokens ${row.cost.tokens}`);
         }
     }
     return lines.join('\n');

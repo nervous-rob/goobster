@@ -319,7 +319,8 @@ stop-all had halted, delegated work
 ## What is stored
 
 - `assistant_runs`: which responsibility revision the run used, as whom,
-  what it spent, and its result title and summary.
+  what it spent, the prompt version, provider and model it was given, and
+  its result title and summary.
 - `assistant_run_operations`: each step, its status and the text it
   retrieved.
 
@@ -372,6 +373,15 @@ instructions of a repair run or to a tool's definition). The optional [evaluatio
 fixed, fictional responsibilities against a real provider and records what
 the model did, with that version and the model used. It is not part of
 `npm test` or CI.
+
+Every run records the same three things when it starts: the prompt version
+label, and the provider and model it was routed to (your own connection
+when you have one, otherwise the installation's). They are names, never
+content, and a resumed attempt records them again, since the route may
+have changed. They are on the run you read back (`promptVersion`,
+`provider`, `model`) and in the
+[outcome summary](delegated_pilot.md#the-outcome-summary), which also says
+what your responsibilities achieved and what it cost.
 
 ## Outside connectors
 

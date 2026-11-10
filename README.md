@@ -215,6 +215,7 @@ decisions from the hardening cycle live in `documentation/adr/`.
 | Private single-user pilot (task, measurements, cycle record and exit decision) | `documentation/pilot_plan.md` |
 | Owner-judged research evaluation (30 fixed-evidence questions, optional live runner and review artifacts) | `documentation/research_evaluation.md` |
 | Delegated-run evaluation (ten fixed, fictional responsibilities against a real provider, optional, recorded with model and prompt version) | `documentation/delegated_evaluation.md` |
+| Delegated-work personal pilot (runbook, headless rehearsal `npm run pilot:rehearsal`, outcome summary; thresholds, cycle record and exit decision template) | `documentation/delegated_pilot.md`, `documentation/delegated_pilot_record.md` |
 | Research brief (write-once brief from an Expedition's evidence, edit overlay, owner review, acceptance and use, Markdown export, pilot measurement) | `documentation/research_brief.md` |
 
 ### Planned product work

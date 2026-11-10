@@ -203,12 +203,19 @@ and the prompt version are all stated.
   an opportunity are not in it; they have no case yet.
 - `label` is both, for example `v1-4d0fc7f25c3d`. It is what goes in the
   "Model and prompt version" row of a
-  [pilot cycle](delegated_assistant_implementation.md#da-6-observed-personal-pilot),
+  [pilot cycle](delegated_pilot_record.md#cycle-record),
   with the provider and model from the same manifest; the "Caps in force"
   row comes from the manifest's `caps`.
 
 Two records with the same label were produced by the same instructions and
 tool definitions.
+
+Every delegated run records the same label when it starts, with the
+provider and model it was routed to (`assistant_runs.promptVersion`,
+`provider`, `model`), and the
+[outcome summary](delegated_pilot.md#the-outcome-summary) shows them per
+responsibility. A pilot cycle and an evaluation run with the same label and
+model are comparable.
 
 ## What a green run means
 
@@ -222,8 +229,6 @@ which is what the pilot measures.
 
 ## Not built yet
 
-- Recording the prompt version on each production run. Today it is in the
-  evaluation's records only.
 - A case for repository work. It shipped (DA-11a) without one: a case
   needs a stand-in remote and a stand-in GitHub in the harness. Its tools
   are offered only to a responsibility that grants them, so the first six cases

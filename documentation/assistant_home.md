@@ -394,6 +394,15 @@ Archived processes are behind *Show archived*. What a process does is still
 edited where you made it.
 See [process_stewardship.md](process_stewardship.md#retiring-a-process).
 
+At the bottom, **What your responsibilities did** summarizes the last 7, 14,
+30 or 90 days for each responsibility: results the system checked itself
+apart from findings a run only reported, what it asked of you, what was
+refused or stopped, what it cost and per checked result, and the provider,
+model and prompt version its runs were given. It is a read, shown once a
+responsibility has been activated, and it says what it cannot know (whether
+a result was useful to you). See
+[delegated_pilot.md](delegated_pilot.md#the-outcome-summary).
+
 ## API
 
 - `GET /api/app/home` gains `assistant` (`assistantHomeService.project`):
