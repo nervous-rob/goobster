@@ -369,5 +369,5 @@ Feature id: `assistant`. Responsibilities: versioned, human-activated grants of 
 - **Depends on:** nothing
 - **Owns:** 1 portal route group
 - **Host override:** `GOOBSTER_FEATURE_ASSISTANT=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
-- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md), [delegated_runs.md](delegated_runs.md), [process_stewardship.md](process_stewardship.md)
+- **Documentation:** [delegated_responsibilities.md](delegated_responsibilities.md), [delegated_runs.md](delegated_runs.md), [delegated_plan_steps.md](delegated_plan_steps.md), [process_stewardship.md](process_stewardship.md)
 - **Reference:** [configuration.md](configuration.md) for every key, [commands.md](commands.md) for the commands.

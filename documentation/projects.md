@@ -1339,6 +1339,7 @@ identifier stays `mission` everywhere below; only the visible word is Plan.
 - Tool: observatory action `mission` (`missionAction`: propose / get /
   update / add_step / start_step / complete_step / add_evidence /
   review / cancel). Approval, start, and complete are human-only.
+  `stepKind=agent` with `artifacts=` adds an assistant step.
 - Portal: the **Plan** view on a project (`/projects/:owner/:slug/plan`;
   the older `mission` segment still opens it), plus the open plan and its
   next action on Overview
@@ -1363,7 +1364,18 @@ the slot.
   predicate); a zero-row update throws so `addStep` cannot race
   `start()`. Adding or editing steps after approval clears the
   approval and returns the mission to `DRAFT`.
-- Steps of four kinds: `expedition`, `job`, `watch`, `human`. Execution
+- Steps of five kinds: `expedition`, `job`, `watch`, `human`, `agent`.
+  An `agent` step (shown as *assistant*) is never started by a person
+  (`AGENT_STEP_DELEGATED`): a delegated responsibility that grants
+  `plan.step.execute` on the project carries it out, only in the plan
+  revision a person approved and started, and it is marked done only
+  after the files it names were checked. Its child is an
+  `assistant_runs` row (`agentRunId`, attempt key `assistant_run:<id>`),
+  its authorization is recorded on the step (`authorizationKind`,
+  `grantResponsibilityId`, `grantRevision`), never as a confirmation
+  receipt, and its budget is `maxAgentRuns` (default 3). See
+  [delegated_plan_steps.md](delegated_plan_steps.md) and
+  [ADR 0019](adr/0019-delegated-plan-steps.md). For the other kinds, execution
   is `READY → STARTING → RUNNING` with an attempt key written onto the
   child job / expedition / watch. Expeditions are created as `DRAFT`,
   linked, then dispatched. `reconcileStartingSteps` runs on bot/api
@@ -1375,7 +1387,9 @@ the slot.
   linked child as its launching owner (project membership already
   authorized the mission action).
 - Evidence links to claims, project notes, jobs, and assets (`for` /
-  `against` / `neutral`, optionally tied to a criterion). Automatic
+  `against` / `neutral`, optionally tied to a criterion). A delegated
+  step links its own kind, `agent_run`, always `neutral`; people and the
+  chat tool cannot link that kind. Automatic
   rollup is `supported` / `contested` / `unassessed` (deduped links;
   claims must be on this project unless explicitly imported).
   `met` / `unmet` / `mixed` are reserved for the human review.

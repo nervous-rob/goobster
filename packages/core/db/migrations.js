@@ -149,6 +149,18 @@ const COLUMN_MIGRATIONS = [
     ['project_mission_steps', 'repoName', 'repoName TEXT'],
     ['project_mission_steps', 'branch', 'branch TEXT'],
     ['project_mission_steps', 'requireGreenCi', 'requireGreenCi INTEGER NOT NULL DEFAULT 0'],
+    // Delegated plan-step execution (ADR 0019): the run link, who authorized
+    // the dispatch, the grant it ran under, and the human retry count.
+    ['project_mission_steps', 'agentRunId', 'agentRunId INTEGER'],
+    ['project_mission_steps', 'authorizationKind', 'authorizationKind TEXT'],
+    ['project_mission_steps', 'grantResponsibilityId', 'grantResponsibilityId INTEGER'],
+    ['project_mission_steps', 'grantRevision', 'grantRevision INTEGER'],
+    ['project_mission_steps', 'retryCount', 'retryCount INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_initiatives', 'planStepId', 'planStepId INTEGER'],
+    ['assistant_initiatives', 'planRevision', 'planRevision INTEGER'],
+    // Listed so the SQLite rebuild that widens the evidence kind CHECK can
+    // carry both columns over from any older shape of the table.
+    ['project_mission_evidence', 'label', 'label TEXT'],
     ['project_mission_evidence', 'provenanceJson', 'provenanceJson TEXT'],
     ['project_mission_approval_receipts', 'kind', "kind TEXT NOT NULL DEFAULT 'approve'"],
     ['observatory_jobs', 'executionAttemptId', 'executionAttemptId TEXT'],
