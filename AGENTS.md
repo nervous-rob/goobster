@@ -60,14 +60,25 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   `Ready! Logged in as <tag>`.
 
 - **Lint, smoke, typecheck, build, and tests all pass and are enforced in CI**
-  (`.github/workflows/ci.yml`), across two engine jobs. The `test (sqlite)` job runs `npm run lint`
+  (`.github/workflows/ci.yml`). The `static checks` job runs `npm run lint`
   (ESLint flat config in `eslint.config.js`, zero errors required), `npm run smoke` (every module
-  must `require()` cleanly with a minimal config), `npm run typecheck:web`, `npm run build:web`,
-  and the named Jest groups in `tests/ciGroups.js`. The `test (postgres)` job re-runs those groups
+  must `require()` cleanly with a minimal config), `npm run typecheck:web`, `npm run build:web`
+  and the group inventory. The `test (sqlite, …)` jobs run the named Jest groups in
+  `tests/ciGroups.js`, and the `test (postgres, …)` jobs re-run those groups
   against a pgvector container with `GOOBSTER_DB_URL` set, so a change has to pass on **both**
-  database engines. A new `tests/*.test.js` file must be added to exactly one group or the
-  inventory step fails. Optional live provider tests (`npm run test:live`) run on trusted
+  database engines. Each engine is split into parallel shards (two on SQLite, four on Postgres);
+  a shard is a matrix entry in `ci.yml` that lists the groups it runs. `both engines` is the one
+  check that covers all of them. A new `tests/*.test.js` file must be added to exactly one group
+  or the inventory step fails. Optional live provider tests (`npm run test:live`) run on trusted
   `main` pushes and `workflow_dispatch` only; they are not part of `both engines`.
+
+- **CI runs as parallel shards, and a new push cancels the previous run of the same pull
+  request.** Verify locally (lint, smoke, typecheck, build, `npm run test:groups:check`, the
+  affected groups on both engines) and push once. A shard can be no faster than its longest
+  test file: today those are `dbMigration` on Postgres, `nativePostgresKinds`,
+  `dockerPostgresKinds` and `dataReset`. Put slow new tests in a new file rather than adding
+  them to one of those. If a shard grows past the others, move a group id between the `groups`
+  lists in `ci.yml` (`documentation/adr/0007-ci-test-groups.md`).
 
 - **Claude Code cloud sessions: `scripts/cloud-setup.sh` is the environment setup script.**
   Put `bash scripts/cloud-setup.sh` (or the file's contents) in the cloud environment's
@@ -110,8 +121,15 @@ Standard commands live in `package.json` and `README.md`; prefer those. Key ones
   { webapp: { enabled: true, devMode: true } } }))` against a throwaway SQLite
   file — no Discord token. Run `npm run build:web` then `npm run test:e2e`.
   First time on a machine: `npm run test:e2e:install` (`npx playwright install
-  --with-deps chromium`). CI's `test (playwright)` job does the same. The
-  `both engines` aggregator does not wait on this job.
+  --with-deps chromium`). CI does the same in five parallel shards
+  (`node scripts/e2e-shard.js <n> 5`, planned from `e2e/shard-durations.json`), each with its own
+  server and database, and reports them together as `test (playwright)`. A spec file must
+  therefore not depend on what another spec file left behind. The `both engines` aggregator
+  does not wait on these jobs. CI retries a failed journey once, so a fixture route in
+  `e2e/server.js` must be safe to call twice for the same user. Locally, unset the provider
+  and Discord variables this VM injects (`OPENAI_API_KEY`, `DISCORD_BOT_TOKEN` and the rest)
+  and remove a leftover root `config.json` first; with them set, several journeys see a
+  configured installation and fail in ways CI never does.
 
 - **Memory recall uses the sqlite-vec extension** (loaded in `packages/core/db/index.js`, prebuilts for x64 and
  ARM64) with per-dimension `memory_vec_<dims>` virtual tables, falling back to a brute-force
