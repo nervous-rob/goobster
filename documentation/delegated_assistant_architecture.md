@@ -865,11 +865,12 @@ the same card.
 
 Deciding in place is behind the pilot gate on every surface:
 `assistantGateService` asks `assistantAccessService.allows(userId,
-'conversation')` in `card()`, `cardForInboxItem()` and `decide()`. An
-account the gate does not include is offered no card (Home links to the
-request and the Inbox keeps its own buttons and routes, as with the
-feature off) and `decide` answers 403 `PILOT_ONLY` before it looks the
-request up.
+'conversation')` in `card()`, `cardForInboxItem()`, `projectBoard()` and
+`decide()`. An account the gate does not include is offered no card (Home
+and the project board link to the request, and the Inbox keeps its own
+buttons and routes, as with the feature off) and `decide` answers 403
+`PILOT_ONLY` before it looks the request up. The surface is the caller's
+word, so no surface is exempt.
 
 As built, three things differ from the proposal above them:
 

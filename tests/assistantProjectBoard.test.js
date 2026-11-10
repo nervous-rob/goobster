@@ -31,6 +31,8 @@ const responsibilities = require('@goobster/core/services/assistantResponsibilit
 const policies = require('@goobster/core/services/attentionPolicyService');
 const missions = require('@goobster/core/services/projectMissionService');
 const identityService = require('@goobster/core/services/identityService');
+const access = require('@goobster/core/services/assistantAccessService');
+const instanceState = require('@goobster/core/services/instanceStateService');
 const identityConfig = require('@goobster/core/config/identityConfig');
 const eventBusService = require('@goobster/core/services/eventBusService');
 const { createWebAppApp, createWebAppContext } = require('@goobster/core/web/appApi');
@@ -67,6 +69,11 @@ beforeEach(async () => {
     for (const [id, name] of [[A, 'Ada'], [B, 'Bo']]) {
         await identityService.ensureLegacyPrincipal({ discordId: id, displayName: name });
     }
+    // Deciding from a card is a pilot capability (documentation/delegated_operations.md).
+    // These suites describe the board once the host has opened it; the
+    // owner-only state has its own suite below.
+    await instanceState.remove(access.KEY_PILOT);
+    await access.recordDecision({ scope: 'everyone' });
 });
 
 const caught = async (promise) => promise.then(() => null, error => error);
@@ -361,6 +368,44 @@ describe('the routes', () => {
         expect(listed.status).toBe(200);
         expect(listed.json.cards.map(entry => entry.id)).toEqual([`approve:${mission.id}`]);
         expect(listed.json.cards[0].decision).toBeUndefined();
+    });
+});
+
+describe('until the pilot decision is recorded', () => {
+    beforeEach(async () => {
+        await instanceState.remove(access.KEY_PILOT);
+    });
+
+    test('someone who is not the owner sees their request on the board with nothing to press, and decides it in the plan', async () => {
+        const { args, mission } = await drafted();
+        await gates.adoptProjectGates({ userId: A });
+        const card = cardOf(await board(A, { project: 'lab' }), `approve:${mission.id}`);
+        // The request is theirs and is the same one the Inbox holds; only the card to press is withheld.
+        const [item] = await needsYou(A);
+        expect(card).toMatchObject({ column: 'approve', mine: true, waitingOn: null, decision: null });
+        expect(card.gate).toMatchObject({ ref: expect.any(String), inboxItemId: item.id });
+        expect(item.decision).toBeNull();
+        expect((await home.project({ userId: A })).needsYou[0].decision).toBeNull();
+        expect(await caught(gates.decide({
+            userId: A, ref: card.gate.ref, option: 'approve', occurrence: 1, revision: 'anything', surface: 'project'
+        }))).toMatchObject({ status: 403, code: access.REFUSAL_CODE, details: { capability: 'conversation' } });
+        expect((await missions.get(args)).status).toBe('DRAFT');
+        // The plan's own approval is untouched by the gate, and resolves the request everywhere.
+        await approveAsHuman(args);
+        expect((await missions.get(args)).status).toBe('APPROVED');
+        expect(cardOf(await board(A, { project: 'lab' }), `approve:${mission.id}`)).toBeUndefined();
+    });
+
+    test('the owner is offered the card on the board and decides from it', async () => {
+        const { args, mission } = await drafted();
+        await identityService.grantAccount({ principalId: A, entitlement: 'bootstrap', role: 'operator' });
+        await gates.adoptProjectGates({ userId: A });
+        const card = cardOf(await board(A, { project: 'lab' }), `approve:${mission.id}`);
+        expect(card.decision).toMatchObject({ kind: 'project_approve', state: 'open' });
+        await gates.decide({
+            userId: A, ref: card.gate.ref, option: 'approve', occurrence: card.decision.occurrence, revision: card.decision.revision, surface: 'project'
+        });
+        expect((await missions.get(args)).status).toBe('APPROVED');
     });
 });
 

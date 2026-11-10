@@ -435,6 +435,10 @@ class AssistantGateService {
             userId: viewer,
             identityKeys: gateCards.filter(card => String(card.ownerId) === viewer).map(card => `${IDENTITY_PREFIX}${card.id}`)
         });
+        // Deciding from a card is a pilot capability on every surface: a
+        // person outside it still sees the request, linked to its plan and
+        // to the Inbox, and decides it there.
+        const mayDecideHere = gateCards.length > 0 && await this._pilotAllows(viewer);
         const cards = [];
         for (const card of board.cards || []) {
             if (!GATE_COLUMNS.has(card.column)) {
@@ -445,7 +449,7 @@ class AssistantGateService {
             const update = mine ? updates.get(`${IDENTITY_PREFIX}${card.id}`) : null;
             const open = Boolean(update?.gate && !update.gate.resolved);
             let decision = null;
-            if (open && this.gateDecisions.has(update.gate.kind)) {
+            if (open && mayDecideHere && this.gateDecisions.has(update.gate.kind)) {
                 try {
                     const described = await this._card({
                         ref: String(update.id),

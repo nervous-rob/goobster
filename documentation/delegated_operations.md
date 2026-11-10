@@ -125,8 +125,9 @@ records the pilot decision, only the owner has them.**
   of DA-7 has shipped, and all of it checks `conversation`:
   - *Deciding a request from its card* (DA-7a,
     [assistant_home.md](assistant_home.md#who-is-offered-a-card-the-pilot-gate))
-    on Home, in the Inbox and in chat. Anyone but the owner is offered no
-    card and the decide route answers `PILOT_ONLY`. Their requests are
+    on Home, in the Inbox, on a project board and in chat. Anyone but the
+    owner is offered no card and the decide route answers `PILOT_ONLY`,
+    whichever surface the caller names. Their requests are
     still listed and counted, and are answered where they live: a friend
     request with the Inbox's own buttons, a mission plan in its project.
     (DA-7a shipped before this gate existed and was open to every account

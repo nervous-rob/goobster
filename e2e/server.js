@@ -903,6 +903,9 @@ async function main() {
             const missions = require('@goobster/core/services/projectMissionService');
             const name = String(req.body?.name || 'Asker');
             await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: name });
+            // The pilot gate: only the owner is offered a decision card until the host
+            // decides otherwise. `owner` makes this person one; give them an id no other journey uses.
+            if (req.body?.owner === true) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
             for (const [table, column] of [
                 ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
                 ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],

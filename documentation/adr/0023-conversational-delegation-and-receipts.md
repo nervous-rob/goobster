@@ -131,9 +131,13 @@ not offered to an unattended turn or to a person who could only be refused.
 The same gate covers deciding a request from its card on every surface,
 Home and the Inbox included. DA-7a shipped those cards before the gate
 existed, which left them open to every account; `assistantGateService`
-now asks the gate in `card()`, `cardForInboxItem()` and `decide()`, so an
-account outside the pilot is offered no card and keeps the Inbox's own
-buttons, exactly as when the feature is off.
+now asks the gate in `card()`, `cardForInboxItem()`, `projectBoard()` and
+`decide()`, so an account outside the pilot is offered no card and keeps
+the Inbox's own buttons, exactly as when the feature is off. The project
+board (DA-4b, ADR 0021) posts to the same `decide()` with the surface
+`project`. A surface is whatever the caller says it is, so exempting one
+would exempt them all; the board's button is gated with the rest, and its
+card still links to the Plan and the Inbox.
 
 ### 6. Confirmation happens in the portal only
 

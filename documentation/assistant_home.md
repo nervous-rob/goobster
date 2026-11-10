@@ -129,7 +129,10 @@ view of those same requests. They are not a second list.
   waiting to start carry the same *Approve plan* / *Start mission* button as
   on Home and in the Inbox. Pressing it on the board is the same decision
   (it is recorded with the surface `project`) and settles the request
-  everywhere. Other gates link to the Plan, where they are decided.
+  everywhere. Other gates link to the Plan, where they are decided. The
+  button is offered to whoever the [pilot gate](#who-is-offered-a-card-the-pilot-gate)
+  includes; for anyone else the card is the same request without it, and
+  links to the Plan and to the Inbox.
 - **A request is its owner's.** A project's gates are addressed to the
   project's owner. If you are a member, the card is shown as *Waiting on the
   owner*, without buttons, and is not counted as yours.
@@ -211,7 +214,9 @@ conversational increment, so it is behind the pilot gate
 ([delegated_operations.md](delegated_operations.md), capability
 `conversation`). Until the host records the pilot decision, only the
 installation's owner (an account with the operator role) is offered a card
-or can decide through one, on Home, in the Inbox and in chat alike.
+or can decide through one, on Home, in the Inbox, on a project board and
+in chat alike. The surface is named by the caller, so the gate is the same
+for all four: none of them is a way around it.
 
 For everyone else nothing about the request itself changes: it is still
 listed under Needs you and counted, on Home and in the Inbox. What differs
@@ -220,7 +225,8 @@ is where it is answered:
 - a friend request keeps the Inbox's own *Accept* / *Decline* buttons, and
   Home's row links to it (*In Inbox*);
 - a mission plan to approve or start keeps its *Open* link to the project,
-  where it is approved or started as before;
+  where it is approved or started as before, and its card on the project
+  board links to the Plan and to the Inbox;
 - a request to join is only ever shown to a host, who is an owner.
 
 The decide route answers 403 `PILOT_ONLY` for an account the gate does not

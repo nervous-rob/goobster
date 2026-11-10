@@ -314,6 +314,15 @@ describe('proposing a responsibility', () => {
         expect(await row(result._card.id)).toMatchObject({ rulesJson: '{}', budgetsJson: '{}' });
     });
 
+    test('where it takes requests from is the person\'s to say: a proposal cannot set it', async () => {
+        const plain = await row((await proposed({ title: 'Plain' })).id);
+        const result = await tool('proposeResponsibility', {
+            title: 'Listening', operations: [KG_ADD], scopes: { sources: ['parlor', 'project_chat'] }, sources: ['parlor']
+        });
+        expect((await row(result._card.id)).scopesJson).toBe(plain.scopesJson);
+        expect(plain.scopesJson).not.toMatch(/parlor|project_chat/);
+    });
+
     test('the same proposal in the same conversation is one draft; a pile of unanswered ones is refused', async () => {
         const first = await proposed();
         const again = await tool('proposeResponsibility', { title: 'Keep my garden notes current', operations: [KG_ADD] });
@@ -556,6 +565,12 @@ describe('the human confirmation receipt', () => {
             id: draft.id, ops: JSON.stringify([KG_ADD, READ_WEB, READ_NOTES])
         });
         expect(await activate(edited, fresh)).toMatchObject(refused);
+        // Where it takes requests from is part of the grant too.
+        const again = (await mint(edited)).receipt;
+        await db.run('UPDATE assistant_responsibilities SET scopesJson = @scopes WHERE id = @id', {
+            id: draft.id, scopes: JSON.stringify({ sources: ['parlor'] })
+        });
+        expect(await activate(edited, again)).toMatchObject(refused);
 
         expect((await allRows()).map(r => r.status)).toEqual(['DRAFT', 'DRAFT', 'DRAFT']);
         expect((await receiptRows()).filter(r => r.consumedAt)).toEqual([]);
