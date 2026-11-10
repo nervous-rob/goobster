@@ -45,7 +45,14 @@ integrated flow work was to try it on real data.
 3. **What cannot be known is named, not estimated.** Whether a finding was
    useful, whether an action was unwanted and whether chat stayed responsive
    are returned as `notMeasured` and shown on the page. The owner records
-   them in the pilot record. Notes created and tool calls appear nowhere as
+   them in the pilot record. The typed answers a person gave
+   ([ADR 0031](0031-delegated-feedback-and-learned-rates.md)) are counted as
+   given, per responsibility and kind; a finding with no answer is counted
+   neither way, and no score or "cost per useful result" is derived, because
+   work a person asked for offers no *useful* answer and silence is not a
+   verdict. The undoable change that records *this is wrong* or *keep this
+   wording* is counted as the person's answer, not as a change the
+   responsibility made. Notes created and tool calls appear nowhere as
    a measure; writes are reported as changes made, changes undone and
    outside writes.
 4. **Cost comes from the work ledger, and says when it does not.** Tokens
@@ -77,8 +84,9 @@ integrated flow work was to try it on real data.
    that already holds a responsibility, and stands in only for what is
    outside the process (the model, workspace files, Notion, the followed
    source, Discord). It runs the same periodic pass the installation runs,
-   on a clock it advances. The same code is a Jest spec, so journeys A to G
-   are checked on both engines in CI.
+   on a clock it advances. The same code is a Jest spec, so journeys A to G,
+   the feedback flow and the host's controls are checked on both engines in
+   CI.
 
 ## Consequences
 
@@ -96,5 +104,6 @@ integrated flow work was to try it on real data.
 
 ## Not decided here
 
-Reading feedback on findings into the summary (DA-10), measuring foreground
-responsiveness, and keeping the pilot record in the product.
+A usefulness score or a cost per useful result derived from feedback,
+measuring foreground responsiveness, and keeping the pilot record in the
+product.

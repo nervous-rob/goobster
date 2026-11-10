@@ -71,14 +71,15 @@ Cycle: ____ of ____, from ____ to ____
 | --- | --- |
 | Responsibility and policy version | Resources, allowed actions, limits, review boundaries; the revision of each responsibility, and what changed since the last cycle |
 | Trigger and authority | Human instruction or source change; why the work was eligible |
-| Expected and actual useful result | Checked results (plan steps, repairs); findings reported, and of those the ones you accepted as useful; corrected assumptions; justified no-ops |
+| Expected and actual useful result | Checked results (plan steps, repairs); findings reported, and of those the ones you said were useful, already known or wrong, and your judgement of the ones you gave no answer on; corrected assumptions; justified no-ops |
 | Actions and consequences | Note, project and process changes; outside writes; what was undone or rolled back, and whether rollback was available |
 | Human effort | Requests asked, answered and still waiting; approvals; corrections; anything you had to start or orchestrate by hand |
-| Delivery | Updates on Home; digests and contacts actually sent; duplicates; anything irrelevant or badly timed |
+| Delivery | Updates on Home; digests and contacts actually sent; duplicates; anything irrelevant or badly timed (the times you said *Wrong time*) |
 | Resources | Tokens, searches, compute; tokens per checked result; held or estimated figures noted |
 | Model and prompt version | Provider and model id of the runs, and the prompt version label (`v<version>-<fingerprint>`), from the summary's "Ran on" line |
 | Caps in force | The five caps, and which of them the host set |
 | Reliability | Refused calls by code, runs stopped before a result, writes left to check, failures, revoked access, concurrent edits, retries, unwanted actions |
+| What it learned | Sources slowed by your answers or by what you dismissed and ignored, hours marked as a wrong time, and anything you reset |
 | Foreground responsiveness | Whether chat stayed responsive while background work ran (your own observation; nothing measures it) |
 | Against the thresholds | Which were met, which were not |
 | Decision | Keep the policy, narrow or widen it explicitly (say what changes), repair the machinery, or stop |

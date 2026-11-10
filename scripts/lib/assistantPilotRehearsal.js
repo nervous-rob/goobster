@@ -34,7 +34,8 @@ const JOURNEYS = [
     { id: 'E', title: 'Authority, concurrency and partial availability' },
     { id: 'F', title: 'Review and delivery stay consistent' },
     { id: 'G', title: 'The Inbox is told apart from Needs you' },
-    { id: 'H', title: 'The host\'s controls, the pilot gate and the record' }
+    { id: 'H', title: 'Feedback changes one thing and widens nothing' },
+    { id: 'I', title: 'The host\'s controls, the pilot gate and the record' }
 ];
 
 const utc = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
@@ -74,6 +75,8 @@ async function rehearse({ onJourney = null } = {}) {
     const access = require('@goobster/core/services/assistantAccessService');
     const delivery = require('@goobster/core/services/assistantDeliveryService');
     const outcomes = require('@goobster/core/services/assistantOutcomeService');
+    const feedback = require('@goobster/core/services/assistantFeedbackService');
+    const changes = require('@goobster/core/services/knowledgeChangeSetService');
     const processes = require('@goobster/core/services/assistantProcessService');
     const lifecycle = require('@goobster/core/services/assistantProcessLifecycleService');
     const inbox = require('@goobster/core/services/inboxService');
@@ -390,6 +393,7 @@ async function rehearse({ onJourney = null } = {}) {
             await sweep();
             const mine = (await listUpdates(owner)).filter(update => update.initiativeId === id);
             const finding = mine.find(update => update.kind === 'finding');
+            world.finding = finding || null;
             check('the run is reported as one finding', mine.filter(update => update.kind === 'finding').length === 1, mine.map(update => update.kind));
             check('one request is waiting in Needs you', await needsYou(owner) === 1);
             if (finding) await updates.acknowledge({ userId: owner, items: [{ id: finding.id, revision: finding.revision }] });
@@ -862,10 +866,108 @@ async function rehearse({ onJourney = null } = {}) {
         });
 
         /* -------------------------------------------------------------- */
-        /* H. The host's controls, the pilot gate and the record           */
+        /* H. Feedback changes one thing and widens nothing                */
         /* -------------------------------------------------------------- */
 
-        await journey('H', async ({ check, skip }) => {
+        await journey('H', async ({ check }) => {
+            const { knowledge, work, finding } = world;
+            if (!check('journey A left a finding to answer', Boolean(finding))) return;
+            const grantRow = () => db.get(
+                'SELECT status, revision, operationsJson, budgetsJson, scopesJson, rulesJson FROM assistant_responsibilities WHERE id = @id', { id: knowledge.id }
+            );
+            const rate = () => db.get(
+                "SELECT weight, acceptances, dismissals FROM assistant_source_weights WHERE responsibilityId = @rid AND adapter = 'followed_source'", { rid: knowledge.id }
+            );
+            const grantBefore = await grantRow();
+            const written = await db.get("SELECT * FROM kg_nodes WHERE guildId = @scope AND label = 'Winter ferry timetable 2027'", { scope });
+            const say = (kind, extra = {}) => feedback.give({ userId: owner, updateId: finding.id, kind, ...extra });
+
+            const state = await feedback.stateForUpdate({ userId: owner, updateId: finding.id });
+            check('a finding from a source that notices things by itself offers the answers that would change something',
+                ['useful', 'already_knew', 'wrong', 'less_of_this', 'keep_wording', 'stop_responsibility'].every(kind => state?.offered.includes(kind)), state?.offered);
+
+            // Useful: one count in favour of that source, and nothing else.
+            const before = await rate();
+            const useful = await say('useful');
+            const counted = await rate();
+            check('"useful" is one count in favour of that source and changes no rate', useful.existing === false && useful.feedback.effect.code === 'COUNTED'
+                && Number(counted?.acceptances) === Number(before?.acceptances || 0) + 1 && Number(counted.weight) === 1, { before, counted });
+            const twice = await say('useful');
+            check('saying it again is the same answer, counted once', twice.existing === true
+                && Number((await rate()).acceptances) === Number(counted.acceptances), twice.message);
+
+            // This is wrong: the note the run wrote is marked, nothing is deleted, and it can be undone.
+            const wrong = await say('wrong');
+            const disputed = await noteRow(written.id);
+            const [changeId] = wrong.feedback.effect.changeSetIds || [];
+            check('"this is wrong" marks the note the run wrote as disputed and deletes nothing', wrong.feedback.effect.code === 'CORRECTION_OPENED'
+                && disputed.claimStatus === 'disputed' && disputed.content === written.content && !disputed.archivedAt, { claimStatus: disputed.claimStatus });
+            check('the note the person saved is not touched by it', (await noteRow(world.note.id)).content === 'First crossing 07:10. Last crossing 18:40. Book ahead.');
+            await changes.revert({ id: changeId, userId: owner });
+            check('and Undo puts the note back', ((await noteRow(written.id)).claimStatus || 'current') === 'current');
+
+            // Less of this: that one source may propose less often for this responsibility.
+            const less = await say('less_of_this');
+            const learned = (await feedback.learned({ userId: owner })).find(row => row.responsibilityId === knowledge.id && row.adapter === 'followed_source');
+            check('"less of this" lowers how often that one source may propose, from 3 a day to 2', less.feedback.effect.code === 'RATE_LOWERED'
+                && learned?.usual === 3 && learned.cap === 2 && learned.lowered === 1, learned);
+
+            // Work the person asked for is never slowed.
+            const asked = await db.get(
+                "SELECT id FROM assistant_updates WHERE audienceUserId = @owner AND responsibilityId = @rid AND kind = 'finding' AND gateJson IS NULL ORDER BY id LIMIT 1",
+                { owner, rid: work.id }
+            );
+            const askedState = asked ? await feedback.stateForUpdate({ userId: owner, updateId: asked.id }) : null;
+            check('a finding from work the person asked for offers no answer that would slow it', Boolean(askedState)
+                && !askedState.offered.includes('less_of_this') && !askedState.offered.includes('useful'), askedState?.offered);
+            check('and asking for one anyway changes nothing', asked
+                && await refused(() => feedback.give({ userId: owner, updateId: asked.id, kind: 'less_of_this' })) === 'NOT_OFFERED');
+
+            // Stopping from feedback is the ordinary pause, with the revision the person was shown.
+            check('"stop this responsibility" is the ordinary pause or revoke, with the revision shown', state?.stop?.actions.includes('pause')
+                && state.stop.revision === grantBefore.revision, state?.stop);
+            const stale = await refused(() => say('stop_responsibility', { stop: 'pause', expectedRevision: grantBefore.revision + 7 }));
+            check('and with a revision that is not the current one it stops nothing', stale === 'REVISION_CONFLICT' && (await grantRow()).status === 'ACTIVE', stale);
+
+            // Wrong time: the hour a finding was sent outside the portal, and only for delegated updates.
+            const sent = await db.get(
+                "SELECT id FROM assistant_updates WHERE audienceUserId = @owner AND outboundKind = 'digest' AND outboundAt IS NOT NULL ORDER BY id DESC LIMIT 1", { owner }
+            );
+            if (check('journey F left a finding that went out in the digest', Boolean(sent))) {
+                const timing = await feedback.give({ userId: owner, updateId: sent.id, kind: 'wrong_time' });
+                const policy = await policies.get(owner);
+                check('"wrong time" marks the hour it was sent, and nothing about the source', timing.feedback.effect.code === 'HOUR_AVOIDED'
+                    && timing.feedback.effect.hour === 9 && JSON.stringify(policy.avoidHours) === '[9]'
+                    && Number((await rate()).weight) === 0.5, { effect: timing.feedback.effect, avoidHours: policy.avoidHours });
+                const later = (days, hour, minute) => {
+                    const today = new Date(clock);
+                    return new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate() + days, hour, minute, 0));
+                };
+                await updates.publish({
+                    audience: { userId: owner }, identityKey: 'rehearsal:storm-watch', kind: 'finding', title: 'Storm warning for Thursday',
+                    summary: 'Crossings resume on Sunday.', components: ['research'], responsibilityId: knowledge.id, deliver: true
+                });
+                const dmsBefore = seen.dms.length;
+                const held = await delivery.sweep({ now: later(2, 9, 1) });
+                check('the next digest is held in that hour', held.digests === 0 && seen.dms.length === dmsBefore, held);
+                const out = await delivery.sweep({ now: later(2, 10, 1) });
+                check('and goes out when the hour has passed', out.digests === 1 && seen.dms.length === dmsBefore + 1, out);
+            }
+
+            // Nothing learned widens anything, the pilot gate holds, and what was learned can be put back.
+            check('no answer changed the grant, its limits or its revision', JSON.stringify(await grantRow()) === JSON.stringify(grantBefore));
+            check('someone who is not the owner cannot give feedback while the pilot is closed',
+                await refused(() => feedback.give({ userId: member, updateId: finding.id, kind: 'useful' })) === 'PILOT_ONLY');
+            const reset = await feedback.resetRate({ userId: owner, responsibilityId: knowledge.id, adapter: 'followed_source' });
+            check('Reset returns the source to its usual rate and keeps the answers on record', reset.reset === true && !(await rate())
+                && (await feedback.stateForUpdate({ userId: owner, updateId: finding.id })).given.includes('less_of_this'), reset);
+        });
+
+        /* -------------------------------------------------------------- */
+        /* I. The host's controls, the pilot gate and the record           */
+        /* -------------------------------------------------------------- */
+
+        await journey('I', async ({ check, skip }) => {
             const { work, say } = world;
 
             // Stop everything: queued work stays queued and no model is called.
@@ -982,6 +1084,9 @@ async function rehearse({ onJourney = null } = {}) {
                 && knowledgeRow?.verified.total === 0, { work: workRow?.verified, upkeep: upkeepRow?.verified, knowledge: knowledgeRow?.verified });
             check('note proposals are counted by what the person decided', knowledgeRow?.notes.proposed === 2 && knowledgeRow.notes.applied === 1
                 && knowledgeRow.notes.dismissed === 1, knowledgeRow?.notes);
+            check('the person\'s answers are counted as theirs, not as the responsibility\'s changes', knowledgeRow?.feedback.useful === 1
+                && knowledgeRow.feedback.wrong === 1 && knowledgeRow.feedback.lessOfThis === 1 && knowledgeRow.feedback.wrongTime === 1
+                && knowledgeRow.notes.direct === 0 && workRow?.feedback.useful === 0, { feedback: knowledgeRow?.feedback, notes: knowledgeRow?.notes });
             check('refused calls and withdrawn work are counted where they happened', knowledgeRow?.refusals.total === 1 && workRow?.work.withdrawn === 1,
                 { refusals: knowledgeRow?.refusals, work: workRow?.work });
             if (world.outside) check('the outside change is counted against its responsibility', by(world.outside)?.changes.outside === 1, by(world.outside)?.changes);
@@ -1022,10 +1127,13 @@ function format(result) {
     lines.push(`${result.checks.total - result.checks.failed} of ${result.checks.total} checks passed on prompt ${result.prompt}.`);
     if (result.outcomes) {
         lines.push('');
+        // The typed answers the person gave; what was only left untouched is not an answer.
+        const answers = (row) => Object.entries(row.feedback || {}).reduce((sum, [kind, n]) => sum + (kind === 'ignored' ? 0 : n), 0);
         lines.push('Outcome summary for the rehearsal\'s owner (what the Responsibilities page shows for a real pilot):');
         for (const row of result.outcomes.responsibilities) {
             lines.push(`  ${row.title}: runs completed ${row.runs.completed} of ${row.runs.total}, checked results ${row.verified.total}, `
-                + `findings reported ${row.reported.findings}, requests ${row.requests.asked}, calls refused ${row.refusals.total}, tokens ${row.cost.tokens}`);
+                + `findings reported ${row.reported.findings}, requests ${row.requests.asked}, answers given ${answers(row)}, `
+                + `calls refused ${row.refusals.total}, tokens ${row.cost.tokens}`);
         }
     }
     return lines.join('\n');

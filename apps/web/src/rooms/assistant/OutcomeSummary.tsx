@@ -10,15 +10,16 @@ import type { AssistantOutcomeCounts, AssistantOutcomeRow } from '../../lib/type
  *
  * A read, with nothing to press but the period. Results that code checked
  * (a plan step whose files were verified, a repair whose next run worked)
- * are shown apart from results a run only reported. It never shows notes
+ * are shown apart from results a run only reported. The answers the person
+ * gave with the Feedback control are counted as given. It never shows notes
  * created or tool calls as a measure of success, and it says what it cannot
- * know: whether a result was useful is the person's to judge.
+ * know: a result nobody answered is counted neither way.
  */
 
 const PERIODS = [7, 14, 30, 90];
 
 const NOT_MEASURED_TEXT: Record<string, string> = {
-    usefulness: 'whether a result was useful to you',
+    usefulness: 'whether a result you gave no answer on was useful to you',
     unwanted_actions: 'whether anything it did was unwanted',
     foreground_responsiveness: 'how responsive chat stayed while it worked'
 };
@@ -64,6 +65,24 @@ function attentionText(counts: AssistantOutcomeCounts): string | null {
     return parts.length ? `${parts.join('. ')}.` : null;
 }
 
+/** What the person said about its findings and proposals, in their own words for it. */
+function answersText(counts: AssistantOutcomeCounts): string | null {
+    const said = counts.feedback;
+    const parts = [
+        said.useful > 0 ? `${number(said.useful)} useful` : null,
+        said.alreadyKnew > 0 ? `${number(said.alreadyKnew)} already knew` : null,
+        said.wrong > 0 ? `${number(said.wrong)} wrong` : null,
+        said.lessOfThis > 0 ? `${number(said.lessOfThis)} less of this` : null,
+        said.wrongTime > 0 ? `${number(said.wrongTime)} wrong time` : null,
+        said.keptWording > 0 ? `${number(said.keptWording)} keep this wording` : null,
+        said.stopped > 0 ? `${number(said.stopped)} stop this responsibility` : null
+    ].filter(Boolean);
+    const sentences = [];
+    if (parts.length) sentences.push(`You said: ${parts.join(', ')}.`);
+    if (said.ignored > 0) sentences.push(`${plural(said.ignored, 'item')} left untouched for a week.`);
+    return sentences.length ? sentences.join(' ') : null;
+}
+
 function costText(counts: AssistantOutcomeCounts): string {
     const parts = [`${number(counts.cost.tokens)} tokens`];
     if (counts.tokensPerVerified !== null) parts.push(`${number(counts.tokensPerVerified)} per checked result`);
@@ -107,6 +126,7 @@ export function OutcomeSummary() {
             <ul>
                 {data.responsibilities.map((row) => {
                     const attention = attentionText(row);
+                    const answers = answersText(row);
                     const models = modelText(row);
                     return (
                         <li key={row.id} data-testid="outcome-row" data-responsibility={row.id}>
@@ -114,6 +134,7 @@ export function OutcomeSummary() {
                             {row.status !== 'ACTIVE' && <span className="hint"> ({row.status.toLowerCase().replace('_', ' ')})</span>}
                             <div data-testid="outcome-results">{resultsText(row)}</div>
                             {attention && <div className="hint" data-testid="outcome-attention">{attention}</div>}
+                            {answers && <div className="hint" data-testid="outcome-answers">{answers}</div>}
                             <div className="hint" data-testid="outcome-cost">Cost: {costText(row)}</div>
                             {models && <div className="hint" data-testid="outcome-models">Ran on {models}.</div>}
                         </li>

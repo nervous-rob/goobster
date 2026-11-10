@@ -243,6 +243,10 @@ an unknown id are all `NOT_FOUND` (404).
 | `assistant_source_weights` | `responsibilityId`, `ownerUserId`, `adapter`, `weight`, `dismissals`, `acceptances` | Until reset; 180 days after the responsibility ended; deleted with the responsibility |
 | `attention_policies.avoidHours` | The marked hours | With the policy |
 
+The [outcome summary](delegated_pilot.md#the-outcome-summary) on the
+Assistant page counts the answers you gave, per responsibility and kind,
+and the items you left untouched for a week; it derives no score from them.
+
 No title, summary, note text or message is in either table. `/forget-me`
 deletes both, the privacy audit counts them, the account export includes
 them, and the transparency report shows the number of answers given, the

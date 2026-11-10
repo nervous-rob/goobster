@@ -10,6 +10,9 @@
  *  - what was changed, what was asked of the person and how they answered,
  *    what was refused, undone, rolled back or stopped for review;
  *  - what left the portal (digest entries and contacts);
+ *  - what the person said about it (delegated_feedback.md): the typed
+ *    answers they gave on findings and proposals, and what was left
+ *    untouched for a week;
  *  - cost, read from the work ledger through costReportService: settled
  *    tokens of the runs, of the message labels judged for the
  *    responsibility and of the research a run started. That service ships
@@ -18,7 +21,8 @@
  *
  * It does not decide whether a result was useful, whether an action was
  * wanted, or how responsive foreground chat stayed: those are the person's
- * to record, and `notMeasured` says so. It never counts notes created or
+ * to record, and `notMeasured` says so. The answers a person gave are
+ * counted as given; a finding with no answer is counted neither way. It never counts notes created or
  * tool calls as success. It returns counts and names, never a title of a
  * finding, a prompt or a result text.
  */
@@ -35,6 +39,14 @@ const DAY_MS = 86_400_000;
 const LIVE = new Set(['ACTIVE', 'PAUSED', 'NEEDS_REVIEW']);
 /** What this summary cannot know; the pilot record has a line for each. */
 const NOT_MEASURED = Object.freeze(['usefulness', 'unwanted_actions', 'foreground_responsiveness']);
+
+/** `assistant_feedback.kind` to its count in the summary. */
+const FEEDBACK_SLOT = Object.freeze({
+    useful: 'useful', already_knew: 'alreadyKnew', wrong: 'wrong', less_of_this: 'lessOfThis', wrong_time: 'wrongTime',
+    keep_wording: 'keptWording', stop_responsibility: 'stopped', ignored: 'ignored'
+});
+/** Changes to a note the person made themselves from a finding: their answer, not the responsibility's change. */
+const FEEDBACK_POLICY = new Set(['FEEDBACK_WRONG', 'FEEDBACK_KEEP']);
 
 const utcText = (date) => date.toISOString().slice(0, 19).replace('T', ' ');
 const parse = (text, fallback) => { try { return JSON.parse(text || '') ?? fallback; } catch { return fallback; } };
@@ -62,6 +74,7 @@ function emptyCounts() {
         stopped: { total: 0, byCode: {} },
         review: 0,
         delivery: { updates: 0, digest: 0, contacts: 0 },
+        feedback: { useful: 0, alreadyKnew: 0, wrong: 0, lessOfThis: 0, wrongTime: 0, keptWording: 0, stopped: 0, ignored: 0 },
         cost: { tokens: 0, heldTokens: 0, searches: 0, computeSeconds: 0, resources: {}, failures: 0, provisional: false }
     };
 }
@@ -203,11 +216,13 @@ class AssistantOutcomeService {
 
         // Changes to the person's saved notes: suggested, applied by them, dismissed, undone.
         const notes = await db.all(
-            `SELECT responsibilityId AS rid, kind, status, COUNT(*) AS n FROM kg_change_sets
+            `SELECT responsibilityId AS rid, kind, status, policyCode, COUNT(*) AS n FROM kg_change_sets
              WHERE userId = @owner AND responsibilityId IS NOT NULL AND createdAt >= @since AND createdAt <= @until
-             GROUP BY responsibilityId, kind, status`, scope
+             GROUP BY responsibilityId, kind, status, policyCode`, scope
         );
         for (const row of notes) {
+            // "This is wrong" and "keep this wording" are recorded as changes so they can be undone; they are counted as answers below.
+            if (FEEDBACK_POLICY.has(row.policyCode)) continue;
             const found = touch(row.rid);
             if (!found) continue;
             const n = Number(row.n);
@@ -269,6 +284,18 @@ class AssistantOutcomeService {
             if (!found) continue;
             if (row.kind === 'digest') found.counts.delivery.digest += Number(row.n);
             else if (row.kind === 'contact') found.counts.delivery.contacts += Number(row.n);
+        }
+
+        // What the person said about it, and what they left untouched for a week.
+        const said = await db.all(
+            `SELECT responsibilityId AS rid, kind, COUNT(*) AS n FROM assistant_feedback
+             WHERE userId = @owner AND responsibilityId IS NOT NULL AND createdAt >= @since AND createdAt <= @until
+             GROUP BY responsibilityId, kind`, scope
+        );
+        for (const row of said) {
+            const found = touch(row.rid);
+            const slot = FEEDBACK_SLOT[row.kind];
+            if (found && slot) found.counts.feedback[slot] += Number(row.n);
         }
 
         if (ledger) await this._costs({ ledger, byId, runOwner, since: window.since, owner });

@@ -1401,7 +1401,7 @@ async function main() {
             for (const [table, column] of [
                 ['kg_change_sets', 'userId'], ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'],
                 ['assistant_initiatives', 'ownerUserId'], ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'],
-                ['attention_policies', 'userId'], ['usage_reservations', 'payer']
+                ['attention_policies', 'userId'], ['usage_reservations', 'payer'], ['assistant_feedback', 'userId']
             ]) {
                 await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
             }
@@ -1451,7 +1451,15 @@ async function main() {
             await run(plan, { planStepId: 9102, tokens: 800, days: 2 });
             await run(plan, { planStepId: 9103, tokens: 500, days: 12 });
             await run(plan, { planStepId: 9104, status: 'FAILED', stopCode: 'VERIFICATION_FAILED', tokens: 400, days: 3 });
-            // The notes: one finding and one refused call; nothing was checked.
+            // The notes: one finding and one refused call; nothing was checked. The person said the
+            // finding was useful and that an earlier one was wrong, and left one proposal untouched.
+            for (const kind of ['useful', 'wrong', 'ignored']) {
+                await db.insert(
+                    `INSERT INTO assistant_feedback (userId, responsibilityId, adapter, kind, effectCode)
+                     VALUES (@userId, @rid, 'followed_source', @kind, 'COUNTED')`,
+                    { userId, rid: notes.id, kind }
+                );
+            }
             const finding = await run(notes, { tokens: 600 });
             await db.insert(
                 `INSERT INTO assistant_run_operations (runId, ownerUserId, tool, argsHash, effect, status, refusalCode, resultText)

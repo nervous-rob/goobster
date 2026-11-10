@@ -47,12 +47,15 @@ test.describe('the outcome summary', () => {
         const notes = rows.filter({ hasText: 'Keep what I know about the crossing current' });
         await expect(notes.getByTestId('outcome-results')).toHaveText('No checked results. 1 finding reported.');
         await expect(notes.getByTestId('outcome-attention')).toHaveText('1 call refused.');
+        // What the person said about it is counted as said; the plan, with no answer, shows no line.
+        await expect(notes.getByTestId('outcome-answers')).toHaveText('You said: 1 useful, 1 wrong. 1 item left untouched for a week.');
+        await expect(plan.getByTestId('outcome-answers')).toHaveCount(0);
         await expect(notes.getByTestId('outcome-cost')).toHaveText('Cost: 600 tokens, 600 per result.');
 
         await expect(summary.getByTestId('outcome-totals'))
             .toHaveText('In total: 3 checked results (3 plan steps). 1 finding reported. Cost: 3,500 tokens, 1,167 per checked result.');
         await expect(summary.getByTestId('outcome-not-measured')).toContainText(
-            'It cannot tell whether a result was useful to you, whether anything it did was unwanted, how responsive chat stayed while it worked'
+            'It cannot tell whether a result you gave no answer on was useful to you, whether anything it did was unwanted, how responsive chat stayed while it worked'
         );
         await expect(summary.getByTestId('outcome-not-measured')).toContainText(`Runs started now are given prompt ${seeded.prompt}.`);
         await expect(summary.getByTestId('outcome-not-measured')).not.toContainText('not final');
@@ -68,7 +71,8 @@ test.describe('the outcome summary', () => {
         expect(body.outcomes.period.days).toBe(7);
         expect(body.outcomes.costSource).toBe('ledger');
         expect(body.outcomes.totals).toMatchObject({
-            verified: { planSteps: 2, repairs: 0, total: 2 }, reported: { findings: 1 }, refusals: { total: 1 }, cost: { tokens: 3000 }
+            verified: { planSteps: 2, repairs: 0, total: 2 }, reported: { findings: 1 }, refusals: { total: 1 }, cost: { tokens: 3000 },
+            feedback: { useful: 1, wrong: 1, ignored: 1 }
         });
     });
 

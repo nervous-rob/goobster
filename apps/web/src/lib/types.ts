@@ -707,6 +707,11 @@ export type AssistantOutcomeCounts = {
     stopped: { total: number; byCode: Record<string, number> };
     review: number;
     delivery: { updates: number; digest: number; contacts: number };
+    /** The typed answers the person gave (delegated_feedback.md), and what they left untouched for a week. */
+    feedback: {
+        useful: number; alreadyKnew: number; wrong: number; lessOfThis: number; wrongTime: number;
+        keptWording: number; stopped: number; ignored: number;
+    };
     cost: {
         tokens: number; heldTokens: number; searches: number; computeSeconds: number;
         resources: Record<string, number>; failures: number; provisional: boolean;

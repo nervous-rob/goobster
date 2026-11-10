@@ -1,7 +1,7 @@
 ---
 title: Delegated work - the personal pilot (runbook, rehearsal, outcome summary)
 kind: guide
-summary: How the owner of an installation runs the first personal pilot of delegated work - what to set up first (Attention, the feature, a provider, optionally Notion and process grants), rehearsing the whole flow against a throwaway database with npm run pilot:rehearsal, recording thresholds before judging, the one project and three responsibilities, the conservative starting policy, the daily routine and how requests reach Needs you, recording each cycle, reading the outcome summary on the Responsibilities page (checked results apart from reported ones, cost per checked result, the prompt and model each run was given), stopping everything, and recording the exit decision in Host → Delegated work.
+summary: How the owner of an installation runs the first personal pilot of delegated work - what to set up first (Attention, the feature, a provider, optionally Notion and process grants), rehearsing the whole flow against a throwaway database with npm run pilot:rehearsal, recording thresholds before judging, the one project and three responsibilities, the conservative starting policy, the daily routine, how requests reach Needs you and how to say what you thought with the Feedback control, recording each cycle, reading the outcome summary on the Responsibilities page (checked results apart from reported ones, the answers you gave, cost per checked result, the prompt and model each run was given), stopping everything, and recording the exit decision in Host → Delegated work.
 when: Starting, running or ending the personal pilot of delegated work; checking that the integrated flow works before trusting it with real resources; finding where a pilot number comes from; understanding what the outcome summary counts and what it cannot know; creating a responsibility the draft form cannot express (process repair or pause, daily budgets); deciding whether to open the pilot capabilities to everyone.
 tags: [assistant, responsibilities, delegation, pilot, runbook, rehearsal, outcomes, cost, evaluation, host]
 feature: assistant
@@ -75,7 +75,8 @@ the record lists it under `skip` and in `notCovered`.
 | E. Authority, concurrency and partial availability | A call outside the grant is refused and the run goes on. A suggestion against a note that changed is not made. Two runner passes start a piece of work once. With no provider the work waits and Home still loads, and it is picked up again later. A model call cannot activate a responsibility. A collaborator who lost access gets no model call and no file. |
 | F. Review and delivery stay consistent | The same update published again is one update at a new revision and one Inbox item. Reading an old revision leaves the new one unread. Home and the Inbox count the same things. At most one digest a day goes out, at the digest time. |
 | G. The Inbox is told apart from Needs you | The Inbox holds more than Needs you. Marking everything read answers nothing. Dismissing the suggestion settles it and leaves the note as it was. |
-| H. The host's controls, the pilot gate and the record | Stop all holds queued work and Home says so; resume runs it. Pilot capabilities are the owner's until the decision is recorded and close again when it is reversed. One write to a granted Notion page lands with its reference; a write elsewhere and a write over the daily limit are refused. Every run records the prompt version, provider and model it was given, and the outcome summary counts a checked result apart from a reported one. |
+| H. Feedback changes one thing and widens nothing | *Useful* is one count for that source and is counted once however often it is said. *This is wrong* marks the note the run wrote as disputed, deletes nothing and can be undone. *Less of this* lowers how often that one source may propose, from 3 a day to 2. Work you asked for is never slowed. Stopping from the Feedback control is the ordinary pause, refused on a stale revision. *Wrong time* holds the next digest in that hour and nothing else. No answer changes the grant, its limits or its revision; nobody but the owner can answer while the pilot is closed; **Reset** puts the rate back. |
+| I. The host's controls, the pilot gate and the record | Stop all holds queued work and Home says so; resume runs it. Pilot capabilities are the owner's until the decision is recorded and close again when it is reversed. One write to a granted Notion page lands with its reference; a write elsewhere and a write over the daily limit are refused. Every run records the prompt version, provider and model it was given, and the outcome summary counts a checked result apart from a reported one and your answers as yours. |
 
 What the rehearsal does **not** show: whether a real model makes good use of
 the tools (that is the [evaluation set](delegated_evaluation.md), which costs
@@ -101,7 +102,7 @@ On the installation (you are the host):
    pass ran in the last 15 minutes; otherwise a quiet card reads *Status
    unknown* and the overview says when it was last checked.
 4. **You are the owner.** The pilot capabilities (conversation, wider
-   sources, delivery, reach, repair) are open only to an active operator
+   sources, delivery, feedback, reach, repair) are open only to an active operator
    account until you record the decision
    ([the pilot gate](delegated_operations.md#the-pilot-gate)). Leave it at
    *Host only* for the whole pilot.
@@ -268,9 +269,23 @@ Once a day is enough.
    what was suggested, applied and archived, with **Undo**. *Processes* shows
    whether each process is working and whether it is still needed, with
    **Pause**, **Resume**, **Archive** and **Restore**.
-5. **Tell it when it is wrong.** "Goobster, stop" or "Goobster, actually ..."
-   in the conversation where you asked withdraws what was asked for there.
-   **Pause** on a responsibility holds everything under it.
+5. **Say what you thought.** A finding on Home and a piece of work on the
+   Responsibilities page each have a **Feedback** control with up to seven
+   answers ([delegated_feedback.md](delegated_feedback.md)). Each changes
+   exactly one thing and says what: *Useful* and *Already knew* move a
+   count for the source it came from; *This is wrong* marks the note the
+   run wrote as disputed (undo it under *Changes to your notes*); *Less of
+   this* lets that source propose less often; *Wrong time* stops delegated
+   updates being sent in that hour; *Keep this wording* makes the note
+   yours; *Stop this responsibility* is the ordinary pause or revoke. No
+   answer is text, none reaches a model, and nothing learned can widen a
+   grant or raise a limit. The answers are what the pilot record's
+   "accepted as useful" and "corrections" lines are read from, so give
+   them as you read, not at the end of the cycle.
+6. **Tell it when it is wrong about the work itself.** "Goobster, stop" or
+   "Goobster, actually ..." in the conversation where you asked withdraws
+   what was asked for there. **Pause** on a responsibility holds
+   everything under it.
 
 Things that look like faults and are not:
 
@@ -283,6 +298,15 @@ Things that look like faults and are not:
   ([the daily cap](delegated_opportunity_sources.md#the-daily-cap)).
   Requests you address to Goobster in a conversation are not capped that
   way.
+- **A source proposes less than it used to.** You said *Less of this*, or
+  dismissed or ignored its proposals: every 5 more against than in favour
+  take one proposal a day off, never below one a day; only *Less of this*,
+  said three times, silences a source. The responsibility's row shows
+  "Learned from your feedback" with **Reset**. Work you asked for is never
+  slowed.
+- **A digest was held with `WRONG_TIME`.** You marked that hour. Settings →
+  *Hours marked as a wrong time* lists them, each with *Remove*; save to
+  apply.
 - **A repair shows as under way for a day.** It is confirmed by the
   process's own next scheduled run, not by the check straight after it.
 - **A digest was not sent.** One a day, at your digest time or as soon after
@@ -300,10 +324,10 @@ and fill it in. Where each line comes from:
 | --- | --- |
 | Responsibility and policy version | The responsibility's row: its grant, limits and revision number |
 | Trigger and authority | Each piece of work on the Responsibilities page says what it came from |
-| Expected and actual useful result | The outcome summary's checked results and reported findings, and **your own judgement of each finding** |
-| Actions and consequences | *Changes to your notes*, the project's files and history, *Processes*, and the outcome summary's changes, undone changes and outside writes |
+| Expected and actual useful result | The outcome summary's checked results and reported findings, its "You said" line (*useful*, *already knew*), and **your own judgement of each finding you gave no answer on** |
+| Actions and consequences | *Changes to your notes*, the project's files and history, *Processes*, and the outcome summary's changes, undone changes, outside writes and the times you said *This is wrong* |
 | Human effort | The outcome summary's requests asked and answered, plus what you had to correct or start by hand |
-| Delivery | The outcome summary's updates, digests and contacts, plus what you noticed as duplicate or irrelevant |
+| Delivery | The outcome summary's updates, digests and contacts and the times you said *Wrong time*, plus what you noticed as duplicate or irrelevant |
 | Resources | The outcome summary's tokens, searches and compute |
 | Model and prompt version | The outcome summary's "Ran on" line |
 | Caps in force | Host → Delegated work |
@@ -325,6 +349,12 @@ appears once a responsibility has been activated.
   that found nothing needing you is counted apart from a finding.
 - **What it asked of you**: requests filed and how many are still waiting,
   and note suggestions with how many you applied and dismissed.
+- **What you said**: the answers you gave with the Feedback control, by
+  kind, and how many items you left untouched for a week
+  ([delegated_feedback.md](delegated_feedback.md)). They are counted as
+  given. The undoable record of *This is wrong* and *Keep this wording* is
+  a change to a note, and is counted here as your answer, not as a change
+  the responsibility made.
 - **What it changed**: changes made, how many of them outside Goobster, and
   changes undone (a note change you undid, a repair that was rolled back).
 - **What went wrong or was held back**: calls refused (by code in the API),
@@ -349,9 +379,18 @@ shown as held, and the summary says the figures are not final. An
 installation without the research feature has no ledger report; there the
 runs' own counts are used and the summary says so (`costSource: "runs"`).
 
-**What it cannot tell you**, and says so on the page: whether a result was
-useful to you, whether anything it did was unwanted, and how responsive
-chat stayed while it worked. Record those yourself.
+**What it cannot tell you**, and says so on the page: whether a result you
+gave no answer on was useful to you, whether anything it did was unwanted,
+and how responsive chat stayed while it worked. Record those yourself. A
+finding nobody answered is counted neither as useful nor as not; work you
+asked for by name offers no *Useful* answer at all, so judge it in the
+record.
+
+**Cost per useful result** is yours to work out, because "useful" is yours:
+divide the tokens by the results you count (the checked results, plus the
+findings you said were useful, plus any you judge useful in the record).
+The page gives tokens per checked result as the one ratio that needs no
+judgement.
 
 The summary is your own data and is not behind the pilot gate. It holds
 counts, codes and names (provider, model, prompt label, your
@@ -366,7 +405,9 @@ GET /api/app/assistant/outcomes?days=14
 answer is `{ outcomes: { period, prompt, responsibilities, totals,
 costSource, notMeasured } }`. Each entry of `responsibilities`, and `totals`,
 carries `work`, `runs`, `verified`, `reported`, `changes`, `notes`,
-`repairs`, `requests`, `refusals`, `stopped`, `review`, `delivery`, `cost`,
+`repairs`, `requests`, `refusals`, `stopped`, `review`, `delivery`,
+`feedback` (`useful`, `alreadyKnew`, `wrong`, `lessOfThis`, `wrongTime`,
+`keptWording`, `stopped`, `ignored`), `cost`,
 `tokensPerVerified` and `tokensPerResult`; an entry also carries its
 `limits` and `models`. A responsibility that is active, paused or waiting
 for review is always listed; one that has ended is listed only if it did
@@ -404,6 +445,9 @@ make the installation match it:
   CI, but the judgement that this is useful to other people is yours.
 - **Your own responsibilities.** Revoke what you are not keeping. An end
   date you set at the start ends the rest by itself.
+- **What it learned.** A source you slowed stays slowed, and an hour you
+  marked stays marked, whatever you decide; note in the record which you
+  are keeping and **Reset** the rest.
 
 The existing gates for running on a real host and for a second account
 remain in force; this pilot does not replace them.
@@ -419,8 +463,9 @@ remain in force; this pilot does not replace them.
 
 ## Not built
 
-- **Usefulness in the summary.** The summary does not read feedback on
-  findings; whether a finding was accepted is recorded by hand.
+- **A usefulness figure.** The summary counts the answers you gave; it
+  does not turn them into a score or a cost per useful result, and a
+  finding you gave no answer on is recorded by hand.
 - **Foreground responsiveness.** Nothing measures how long chat took while
   background work ran.
 - **A rehearsal with a real model.** The real-model check is the

@@ -9,7 +9,9 @@
  * measure; requests, refusals, withdrawals and rollbacks are counted where
  * they happened; cost comes from the work ledger, or from the runs' own
  * counts where the ledger's report is not installed, and says which; the
- * period and the owner bound everything; and the summary carries counts and
+ * period and the owner bound everything; what the person said about a
+ * finding is counted as their answer, never as the responsibility's own
+ * change; and the summary carries counts and
  * names, never a title or a result text.
  */
 
@@ -57,7 +59,7 @@ beforeEach(async () => {
         'kg_change_sets', 'assistant_process_repairs', 'assistant_run_operations', 'assistant_runs', 'assistant_initiatives',
         'assistant_source_cursors', 'assistant_update_receipts', 'assistant_updates', 'assistant_responsibility_revisions',
         'assistant_responsibilities', 'attention_policies', 'attention_items', 'inbox_items', 'usage_reservations',
-        'resource_events', 'work_failures'
+        'resource_events', 'work_failures', 'assistant_feedback', 'assistant_source_weights'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -121,11 +123,23 @@ async function operation(runId, tool, { effect = 'read', status = 'SUCCEEDED', r
     );
 }
 
-async function changeSet(responsibility, kind, status, { createdAt = ago(1) } = {}) {
+async function changeSet(responsibility, kind, status, { createdAt = ago(1), policy = null } = {}) {
     return db.insert(
-        `INSERT INTO kg_change_sets (userId, guildId, scopeKey, kind, status, responsibilityId, operationsJson, createdAt)
-         VALUES (@owner, @guild, @scope, @kind, @status, @rid, '[]', @createdAt)`,
-        { owner: responsibility.ownerUserId, guild: `dm:${responsibility.ownerUserId}`, scope: `USER:${responsibility.ownerUserId}`, kind, status, rid: responsibility.id, createdAt }
+        `INSERT INTO kg_change_sets (userId, guildId, scopeKey, kind, status, responsibilityId, operationsJson, policyCode, createdAt)
+         VALUES (@owner, @guild, @scope, @kind, @status, @rid, '[]', @policy, @createdAt)`,
+        {
+            owner: responsibility.ownerUserId, guild: `dm:${responsibility.ownerUserId}`, scope: `USER:${responsibility.ownerUserId}`,
+            kind, status, rid: responsibility.id, policy, createdAt
+        }
+    );
+}
+
+/** An answer the person gave about a finding or a proposal (delegated_feedback.md), as assistantFeedbackService leaves it. */
+async function answer(responsibility, kind, { createdAt = ago(1) } = {}) {
+    return db.insert(
+        `INSERT INTO assistant_feedback (userId, responsibilityId, adapter, kind, effectCode, createdAt)
+         VALUES (@owner, @rid, 'followed_source', @kind, 'COUNTED', @createdAt)`,
+        { owner: responsibility.ownerUserId, rid: responsibility.id, kind, createdAt }
     );
 }
 
@@ -239,6 +253,13 @@ describe('what is counted', () => {
         await changeSet(notes, 'saved_note_edit', 'REVERTED');
         await changeSet(notes, 'direct_change', 'APPLIED');
         await changeSet(notes, 'direct_change', 'REVERTED');
+        // What the person said: counted as their answers. The undoable record of "this is wrong" and
+        // "keep this wording" is a change to a note, and is not the responsibility's change.
+        for (const kind of ['useful', 'useful', 'already_knew', 'wrong', 'less_of_this', 'wrong_time', 'keep_wording', 'stop_responsibility', 'ignored', 'ignored', 'ignored']) {
+            await answer(notes, kind);
+        }
+        await changeSet(notes, 'direct_change', 'APPLIED', { policy: 'FEEDBACK_WRONG' });
+        await changeSet(notes, 'direct_change', 'REVERTED', { policy: 'FEEDBACK_KEEP' });
         await update(notes, { outbound: 'digest' });
         await update(notes, { outbound: 'digest' });
         await update(notes, { gate: true, resolved: true, outbound: 'contact' });
@@ -270,6 +291,7 @@ describe('what is counted', () => {
             stopped: { total: 2, byCode: { LEASE_LOST: 1, UNCERTAIN_WRITE: 1 } },
             review: 1,
             delivery: { updates: 4, digest: 2, contacts: 1 },
+            feedback: { useful: 2, alreadyKnew: 1, wrong: 1, lessOfThis: 1, wrongTime: 1, keptWording: 1, stopped: 1, ignored: 3 },
             cost: { searches: 2, computeSeconds: 30 },
             limits: { modelTokens: 50000, searches: 4, repairAttempts: 2, interruption: 'digest' }
         });
@@ -279,8 +301,9 @@ describe('what is counted', () => {
         ]));
         expect(result.totals).toMatchObject({
             runs: { total: 9, completed: 4 }, verified: { planSteps: 2, repairs: 2, total: 4 }, reported: { findings: 1, noChange: 1 },
-            refusals: { total: 2 }, requests: { asked: 2 }
+            refusals: { total: 2 }, requests: { asked: 2 }, feedback: { useful: 2, wrong: 1, ignored: 3 }
         });
+        expect(row(result, plan).feedback).toEqual({ useful: 0, alreadyKnew: 0, wrong: 0, lessOfThis: 0, wrongTime: 0, keptWording: 0, stopped: 0, ignored: 0 });
         // Counts and names only: no title of a piece of work, an update or a result, and no result text.
         expect(JSON.stringify(result)).not.toMatch(/A private/);
     });
@@ -293,15 +316,19 @@ describe('what is counted', () => {
         await repair(mine, 'SUCCEEDED', { verified: true, appliedAt: ago(20) });
         await changeSet(mine, 'saved_note_edit', 'APPLIED', { createdAt: ago(20) });
         await update(mine, { gate: true, createdAt: ago(20) });
+        await answer(mine, 'useful', { createdAt: ago(20) });
         await run(theirs, { planStepId: 3 });
+        await answer(theirs, 'wrong');
 
         const recent = await summary();
         expect(recent.responsibilities.map(entry => entry.title)).toEqual(['Mine']);
         expect(row(recent, mine)).toMatchObject({
-            work: { proposed: 1 }, runs: { total: 1 }, verified: { planSteps: 1, repairs: 0, total: 1 }, notes: { proposed: 0 }, requests: { asked: 0 }
+            work: { proposed: 1 }, runs: { total: 1 }, verified: { planSteps: 1, repairs: 0, total: 1 }, notes: { proposed: 0 }, requests: { asked: 0 },
+            feedback: { useful: 0, wrong: 0 }
         });
         expect(row(await summary({ days: 30 }), mine)).toMatchObject({
-            work: { proposed: 2 }, runs: { total: 2 }, verified: { planSteps: 2, repairs: 1, total: 3 }, notes: { proposed: 1, applied: 1 }, requests: { asked: 1, open: 1 }
+            work: { proposed: 2 }, runs: { total: 2 }, verified: { planSteps: 2, repairs: 1, total: 3 }, notes: { proposed: 1, applied: 1 }, requests: { asked: 1, open: 1 },
+            feedback: { useful: 1, wrong: 0 }
         });
         expect((await outcomes.summarize({ userId: B })).responsibilities.map(entry => entry.title)).toEqual(['Theirs']);
     });
