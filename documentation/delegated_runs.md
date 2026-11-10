@@ -125,6 +125,7 @@ for model capacity.
 | failed (`PROVIDER_ERROR`, `NO_RESULT`) | *Try again* starts a new attempt. |
 | waiting (`CHILD_PENDING`) | Its research expedition is still working. |
 | needs review (`OPERATION_UNCERTAIN`) | After an interruption, a file write or sandbox run may or may not have happened and the run could not tell. Check the project, then *Try again* or dismiss. |
+| failed (`INTERRUPTED_BY_RESTORE`) | The installation was restored from a backup while the run was working. It is not resumed. A step in progress may or may not have happened: check, then *Try again* starts a new attempt. |
 
 **A crash or restart does not repeat work.** Every step is written to a
 journal before and after it happens. The interrupted work goes back to
@@ -138,6 +139,17 @@ from the journal instead of doing them again. For a step that was in flight:
   being written it counts as done, otherwise the run stops for your review;
 - a sandbox run and an expedition carry the step's id: if a job or
   expedition with that id exists it is adopted, never started twice.
+
+**A restore from a backup is different: it never resumes work.** A run that
+was working when the backup was taken comes back *failed* with
+`INTERRUPTED_BY_RESTORE`, together with its piece of work, and gets one
+failure record in the work ledger (`assistant_run`, code only). That covers
+a run in flight, a run waiting to resume after a restart, and work a runner
+had claimed but not yet opened. Nothing requeues it: the lease is cleared,
+and only your own *Try again* starts a new attempt with a new journal. Work
+that was queued, proposed or waiting (on a budget, an expedition or you) was
+not in flight and is left as it was; it continues once the host resumes the
+paused installation ([backup_and_restore.md](backup_and_restore.md)).
 
 ## What is stored
 

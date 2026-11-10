@@ -3,9 +3,10 @@
  * shared agent loop, under the responsibility's grant.
  *
  * What makes a run safe to leave unattended:
- *  - The model is offered a fixed, explicit set of tools (TOOLS below). Each
- *    one names the operation and resource it needs, and `authorize()` is
- *    asked before every call. A tool that is not in the table does not run.
+ *  - The model is offered a fixed, explicit set of tools (TOOLS, one module
+ *    per capability under ./assistant/runTools). Each one names the
+ *    operation and resource it needs, and `authorize()` is asked before
+ *    every call. A tool that is not in the table does not run.
  *  - Every call is journaled in `assistant_run_operations` before it is
  *    dispatched and after it returns. A resumed run replays finished calls
  *    from the journal instead of repeating them; a write left in flight by a
@@ -29,20 +30,15 @@ const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const workFailureService = require('./workFailureService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
+const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
 
 /** Used when the responsibility sets no budget of its own (per UTC day). */
 const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20, computeSeconds: 120 };
 const MAX_ROUNDS = 8;
 const RUN_DEADLINE_MS = 10 * 60 * 1000;
 const REPLY_TOKENS = 1200;
-const RESULT_CHARS = 16_000;
-const SUMMARY_CHARS = 2000;
-const FILE_CHARS = 12_000;
-const WRITE_CHARS = 200_000;
 /** How soon a run waiting on its expedition looks again (events usually wake it sooner). */
 const CHILD_RECHECK_MS = 5 * 60 * 1000;
-
-const sha = (value) => crypto.createHash('sha256').update(value).digest('hex');
 
 /** authorize() codes after which the run cannot continue at all. */
 const STOP_CODES = new Set([
@@ -62,11 +58,6 @@ function nextDay(now = new Date()) {
     return new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1, 0, 5));
 }
 
-function clip(text, max) {
-    const value = String(text ?? '');
-    return value.length > max ? `${value.slice(0, max - 1)}…` : value;
-}
-
 /** Stable hash of a tool's arguments (key order does not matter). */
 function argsHash(args) {
     const sorted = (value) => {
@@ -80,373 +71,10 @@ function argsHash(args) {
 }
 
 /**
- * The tools a run may be offered. `needs(args, ctx)` returns the operation
- * and resource `authorize()` must allow, or null for a tool that touches
- * nothing of the person's (public docs, the run's own report). `effect`
- * decides crash recovery: a read is safe to repeat, a write is not - unless
- * it is `atomic`: a write to our own database that commits in the same
- * transaction as its journal row, so "in flight" means "did not happen".
+ * The tools a run may be offered: one module per capability under
+ * ./assistant/runTools (the spec contract is described in its index).
  */
-const TOOLS = {
-    searchWeb: {
-        effect: 'read',
-        budget: 'searches',
-        definition: {
-            name: 'searchWeb',
-            description: 'Search the web and return a short sourced summary. Each search counts against a small daily budget; search only for what the task needs.',
-            parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to search for.' } }, required: ['query'] }
-        },
-        needs: () => ({ operation: 'read', resource: { kind: 'web' } }),
-        async run({ query }) {
-            if (!query || typeof query !== 'string') return 'A search query is required.';
-            return require('./perplexityService').search(query);
-        }
-    },
-    lookupNotes: {
-        effect: 'read',
-        definition: {
-            name: 'lookupNotes',
-            description: 'Look up what is already in the person\'s own notes, memories and saved files about a topic.',
-            parameters: { type: 'object', properties: { query: { type: 'string', description: 'What to look up.' } }, required: ['query'] }
-        },
-        needs: () => ({ operation: 'read', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run({ query }, ctx) {
-            return require('../utils/toolsRegistry').execute('lookupNotes', {
-                query: String(query || ''), about: 'me', interactionContext: ctx.interactionContext
-            });
-        }
-    },
-    listProjectFiles: {
-        effect: 'read',
-        definition: {
-            name: 'listProjectFiles',
-            description: 'List one folder of the linked project\'s workspace ("" is the top folder).',
-            parameters: { type: 'object', properties: { dir: { type: 'string', description: 'Workspace-relative folder.' } } }
-        },
-        needs: ({ dir }, ctx) => (ctx.project
-            ? { operation: 'read', resource: { kind: 'project', id: String(ctx.project.id), path: String(dir || '').replace(/\/+$/, '') || undefined } }
-            : { refuse: 'NO_PROJECT' }),
-        async run({ dir }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Projects are not available on this installation.';
-            const listing = await projects.listFiles({
-                userId: ctx.actor, project: ctx.project.slug, owner: ctx.project.ownerId, path: String(dir || '')
-            });
-            const entries = (listing.files || listing.entries || []).slice(0, 200);
-            return entries.length
-                ? entries.map(entry => `${entry.kind === 'directory' ? 'dir ' : 'file'} ${entry.path}${entry.kind === 'directory' ? '/' : ` (${entry.size} bytes)`}`).join('\n')
-                : 'That folder is empty.';
-        }
-    },
-    readProjectFile: {
-        effect: 'read',
-        definition: {
-            name: 'readProjectFile',
-            description: 'Read one text file from the linked project\'s workspace.',
-            parameters: { type: 'object', properties: { path: { type: 'string', description: 'Workspace-relative file path.' } }, required: ['path'] }
-        },
-        needs: ({ path }, ctx) => (ctx.project
-            ? { operation: 'read', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
-            : { refuse: 'NO_PROJECT' }),
-        async run({ path }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Projects are not available on this installation.';
-            const file = await projects.readWorkspaceFile({
-                userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), purpose: 'portal'
-            });
-            ctx.fileHashes.set(String(path), sha(file.bytes));
-            if (!/^text\/|json|xml|yaml|javascript|markdown/.test(file.mime)) return `That file is ${file.mime}, not text (${file.size} bytes).`;
-            return clip(file.bytes.toString('utf8'), FILE_CHARS);
-        }
-    },
-    writeProjectFile: {
-        effect: 'write',
-        component: 'projects',
-        definition: {
-            name: 'writeProjectFile',
-            description: 'Create or replace one text file in the linked project\'s workspace. To change an existing file, read it with readProjectFile first in this same task; a file that changed since you read it is refused. The previous version stays in the project\'s history.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Workspace-relative file path.' },
-                    content: { type: 'string', description: 'The whole new file.' }
-                },
-                required: ['path', 'content']
-            }
-        },
-        needs: ({ path }, ctx) => (ctx.project
-            ? { operation: 'file.edit', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
-            : { refuse: 'NO_PROJECT' }),
-        async _current(path, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return { missing: true };
-            try {
-                const file = await projects.readWorkspaceFile({
-                    userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), purpose: 'portal'
-                });
-                return { hash: sha(file.bytes) };
-            } catch (error) {
-                if (error?.code === 'NOT_FOUND') return { missing: true };
-                throw error;
-            }
-        },
-        /** After a crash: the file holding exactly this content means the write happened. */
-        async reconcile({ path, content }, ctx) {
-            const current = await this._current(path, ctx);
-            if (!current.missing && current.hash === sha(Buffer.from(String(content ?? '')))) {
-                return { state: 'done', result: `Wrote ${String(path)}.` };
-            }
-            return { state: 'unknown' };
-        },
-        async run({ path, content }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Not written: projects are not available on this installation.';
-            const text = String(content ?? '');
-            if (text.length > WRITE_CHARS) return `Not written: the file is longer than ${WRITE_CHARS} characters.`;
-            const current = await this._current(path, ctx);
-            if (!current.missing) {
-                const seen = ctx.fileHashes.get(String(path));
-                if (!seen) return 'Not written: that file exists. Read it with readProjectFile first.';
-                if (seen !== current.hash) return 'Not written: the file changed since you read it. Read it again before deciding.';
-            }
-            await projects.writeWorkspaceFile({
-                userId: ctx.actor, slug: ctx.project.slug, owner: ctx.project.ownerId, relativePath: String(path || ''), bytes: Buffer.from(text)
-            });
-            ctx.fileHashes.set(String(path), sha(Buffer.from(text)));
-            return `Wrote ${String(path)}.`;
-        }
-    },
-    runProjectFile: {
-        effect: 'write',
-        budget: 'computeSeconds',
-        component: 'projects',
-        definition: {
-            name: 'runProjectFile',
-            description: 'Run one .py, .js or .sh file from the linked project in the sandbox (no network) and return its output. Each run counts against a small daily compute budget.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    path: { type: 'string', description: 'Workspace-relative file to run.' },
-                    args: { type: 'array', items: { type: 'string' } }
-                },
-                required: ['path']
-            }
-        },
-        needs: ({ path }, ctx) => (ctx.project
-            ? { operation: 'sandbox.run', resource: { kind: 'project', id: String(ctx.project.id), path: String(path || '') } }
-            : { refuse: 'NO_PROJECT' }),
-        _attempt: (ctx) => `assistant_run:${ctx.run.id}:${ctx.opId}`,
-        /** After a crash: the job row with this attempt id says whether it ran. */
-        async reconcile(_args, ctx) {
-            const job = await db.get(
-                'SELECT id, status, exitCode FROM observatory_jobs WHERE executionAttemptId = @attempt', { attempt: this._attempt(ctx) }
-            );
-            if (!job) return { state: 'absent' };
-            if (['COMPLETED', 'FAILED', 'CANCELLED'].includes(job.status)) {
-                return { state: 'done', result: `Ran as job #${job.id}: ${String(job.status).toLowerCase()} (exit ${job.exitCode ?? '?'}). Its output is in the project's Runs.` };
-            }
-            return { state: 'unknown' };
-        },
-        async run({ path, args }, ctx) {
-            const projects = requireOptional('./projectService', { feature: 'projects' });
-            if (!projects) return 'Not run: projects are not available on this installation.';
-            const started = Date.now();
-            try {
-                const outcome = await projects.runFile({
-                    userId: ctx.actor, project: ctx.project.slug, owner: ctx.project.ownerId, path: String(path || ''),
-                    args: Array.isArray(args) ? args.map(String) : [], background: false,
-                    startedBy: 'assistant', executionAttemptId: this._attempt(ctx)
-                });
-                const result = outcome.result || {};
-                return clip(
-                    `Ran ${String(path)} as job #${outcome.jobId ?? '?'}: ${result.ok ? 'ok' : 'failed'} (exit ${result.exitCode ?? '?'}).\n`
-                    + `stdout:\n${result.stdout || ''}\nstderr:\n${result.stderr || ''}`, RESULT_CHARS
-                );
-            } finally {
-                ctx.compute += Math.max(1, Math.round((Date.now() - started) / 1000));
-            }
-        }
-    },
-    startResearch: {
-        effect: 'write',
-        component: 'research',
-        definition: {
-            name: 'startResearch',
-            description: 'Start one focused research expedition on a topic: it reads sources over several minutes and writes sourced, generated notes. Use it only when a few web searches are not enough. This task pauses until it finishes and then continues with its findings. At most one per task.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    topic: { type: 'string', description: 'What to research (under 200 characters).' },
-                    intent: { type: 'string', description: 'What the person needs to learn from it.' }
-                },
-                required: ['topic']
-            }
-        },
-        // It searches and it writes notes: both must be delegated.
-        needs: () => ({
-            operation: 'research', resource: { kind: 'web' },
-            also: [{ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }]
-        }),
-        _attempt: (ctx) => `assistant_run:${ctx.run.id}:${ctx.opId}`,
-        async _find(attempt) {
-            return db.get(
-                'SELECT id, status, summary, stopReason FROM spitball_expeditions WHERE executionAttemptId = @attempt', { attempt }
-            );
-        },
-        _describe(expedition) {
-            if (expedition.status === 'COMPLETED') {
-                return `Research expedition #${expedition.id} finished. ${clip(expedition.summary || 'It wrote its notes; use lookupNotes to read them.', 3000)}`;
-            }
-            if (expedition.status === 'FAILED' || expedition.status === 'CANCELLED') {
-                return `Research expedition #${expedition.id} ${expedition.status.toLowerCase()} without a result.`;
-            }
-            return `Started research expedition #${expedition.id}. This task pauses until it finishes.`;
-        },
-        /** After a crash: an expedition carrying this attempt id means it was started. */
-        async reconcile(_args, ctx) {
-            const expedition = await this._find(this._attempt(ctx));
-            if (!expedition) return { state: 'absent' };
-            ctx.child = expedition;
-            return { state: 'done', result: this._describe(expedition) };
-        },
-        /** On a resumed run: say how the expedition ended, not that it started. */
-        async replay(prior, ctx) {
-            const expedition = await this._find(`assistant_run:${ctx.run.id}:${prior.id}`);
-            if (!expedition) return prior.resultText || '';
-            ctx.child = expedition;
-            return this._describe(expedition);
-        },
-        async run({ topic, intent }, ctx) {
-            if (ctx.child) return 'Not started: this task already ran its one research expedition.';
-            const expeditions = requireOptional('./spitballExpeditionService', { feature: 'expeditions' });
-            if (!expeditions) return 'Not started: research expeditions are not available on this installation.';
-            const expedition = await expeditions.createExpedition({
-                userId: ctx.actor, seed: String(topic || ''), intent: intent ? String(intent) : null,
-                depth: 'focused', executionAttemptId: this._attempt(ctx)
-            });
-            ctx.child = { id: expedition.id, status: 'QUEUED' };
-            return this._describe(ctx.child);
-        }
-    },
-    listGeneratedNotes: {
-        effect: 'read',
-        definition: {
-            name: 'listGeneratedNotes',
-            description: 'List the notes you (not the person) wrote earlier and may still amend, with their id and revision.',
-            parameters: { type: 'object', properties: {} }
-        },
-        needs: () => ({ operation: 'read', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run(_args, ctx) {
-            const notes = await require('./knowledgeGraphService').listGeneratedNotes({ guildId: ctx.scope, userId: ctx.actor });
-            return notes.length
-                ? notes.map(note => `#${note.id} (revision ${note.revision}) ${note.label}: ${clip(note.content || '', 400)}`).join('\n')
-                : 'There are no generated notes yet.';
-        }
-    },
-    addGeneratedNote: {
-        effect: 'write',
-        atomic: true,
-        component: 'knowledge',
-        definition: {
-            name: 'addGeneratedNote',
-            description: 'Add one new note to the person\'s knowledge, marked as generated by you. Only for something sourced and worth keeping. It never replaces an existing note: a title that exists is refused.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    title: { type: 'string', description: 'A short, specific title.' },
-                    content: { type: 'string', description: 'The note, with where it came from.' }
-                },
-                required: ['title', 'content']
-            }
-        },
-        needs: () => ({ operation: 'kg.generated.add', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run({ title, content }, ctx) {
-            const added = await require('./knowledgeGraphService').addGeneratedNote({
-                guildId: ctx.scope, userId: ctx.actor, label: title, content, originRunId: ctx.run.id
-            });
-            if (!added.ok) {
-                return {
-                    EXISTS: 'Not added: a note with that title already exists. Do not overwrite it.',
-                    CAPACITY: 'Not added: the person\'s knowledge is full. Report the finding instead.',
-                    BAD_REQUEST: 'Not added: a title and content are required.'
-                }[added.code];
-            }
-            return `Added as note #${added.id}.`;
-        }
-    },
-    amendGeneratedNote: {
-        effect: 'write',
-        atomic: true,
-        component: 'knowledge',
-        definition: {
-            name: 'amendGeneratedNote',
-            description: 'Replace the text of a note you generated earlier. Pass the id and revision from listGeneratedNotes. A note the person has edited or saved is theirs and cannot be amended.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    id: { type: 'integer' },
-                    revision: { type: 'integer', description: 'The revision you read.' },
-                    content: { type: 'string', description: 'The full new text.' }
-                },
-                required: ['id', 'revision', 'content']
-            }
-        },
-        needs: () => ({ operation: 'kg.generated.amend', resource: { kind: 'knowledge', id: 'personal' } }),
-        async run({ id, revision, content }, ctx) {
-            const amended = await require('./knowledgeGraphService').amendGeneratedNote({
-                guildId: ctx.scope, userId: ctx.actor, nodeId: id, content, expectedRevision: revision
-            });
-            if (!amended.ok) {
-                return {
-                    NOT_FOUND: 'Not amended: no such note.',
-                    NOT_GENERATED: 'Not amended: the person has edited or saved that note, so it is theirs. Report your suggestion instead.',
-                    REVISION_CONFLICT: 'Not amended: the note changed since you read it. Read it again before deciding.',
-                    BAD_REQUEST: 'Not amended: content and the revision you read are required.'
-                }[amended.code];
-            }
-            return `Amended; it is now revision ${amended.revision}.`;
-        }
-    },
-    consultDocs: {
-        effect: 'read',
-        definition: {
-            name: 'consultDocs',
-            description: 'Search Goobster\'s own public documentation.',
-            parameters: { type: 'object', properties: { query: { type: 'string' } }, required: ['query'] }
-        },
-        needs: () => null,
-        async run({ query }, ctx) {
-            return require('../utils/toolsRegistry').execute('consultDocs', {
-                action: 'search', query: String(query || ''), interactionContext: ctx.interactionContext
-            });
-        }
-    },
-    finish: {
-        effect: 'read',
-        definition: {
-            name: 'finish',
-            description: 'Report the result and end the task. outcome "finding" = there is something the person should know; "no_change" = you checked and nothing needs their attention. Call this exactly once, last.',
-            parameters: {
-                type: 'object',
-                properties: {
-                    outcome: { type: 'string', enum: ['finding', 'no_change'] },
-                    title: { type: 'string', description: 'One specific sentence: the result.' },
-                    summary: { type: 'string', description: 'Why it matters for this responsibility, what you checked and the sources. Plain text.' }
-                },
-                required: ['outcome', 'title']
-            }
-        },
-        needs: () => null,
-        async run(args, ctx) {
-            ctx.result = {
-                outcome: args.outcome === 'no_change' ? 'NO_CHANGE' : 'DONE',
-                title: clip(String(args.title || '').trim(), 200),
-                summary: clip(String(args.summary || '').trim(), SUMMARY_CHARS)
-            };
-            return 'Recorded. Stop now.';
-        }
-    }
-};
+const TOOLS = require('./assistant/runTools');
 
 class AssistantRunService {
     constructor() {
@@ -750,13 +378,10 @@ class AssistantRunService {
         const budgets = this.budgets(responsibility);
         const used = await this._usedToday(responsibility.id, run.id, now);
         const { features } = require('../features/featureState');
-        const offered = new Set(Object.keys(TOOLS).filter((name) => {
-            if (name.includes('Project') && !project) return false;
-            if (name === 'runProjectFile' && features.enforcedOff('sandbox')) return false;
-            if (name.includes('GeneratedNote') && features.enforcedOff('knowledge')) return false;
-            if (name === 'startResearch' && (features.enforcedOff('expeditions') || features.enforcedOff('knowledge'))) return false;
-            return true;
-        }));
+        // Each tool says when it is on offer (a linked project, a feature that is on).
+        const offered = new Set(Object.keys(TOOLS).filter((name) => (
+            typeof TOOLS[name].available === 'function' ? Boolean(TOOLS[name].available({ project, features })) : true
+        )));
 
         const ctx = {
             run, actor, project, budgets, used, offered,
