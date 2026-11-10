@@ -165,8 +165,12 @@ Two observations shaped the design:
 - **Editing saved notes, edges and archiving** (`kg.saved.amend`, `kg.edge`,
   `kg.archive`): edges have no evidence or retraction history yet.
 - **Repository operations** (`repo.commit`, `repo.push`, `pr.create`).
-- **Process actions** (DA-5) and **plan-driven project work** (DA-4).
-- **Project audiences.** A run's finding goes to the owner only.
+- **Process actions** (DA-5). **Plan-driven project work** was added by
+  DA-4a in [ADR 0019](0019-delegated-plan-steps.md), which also adds
+  `available({ planStep })`, `final`, `source: 'private'` and
+  `publishes: 'project'` to the tool spec.
+- **Project audiences.** A run's finding goes to the owner only. (Added later
+  by DA-11c: see `documentation/delegated_project_findings.md`.)
 
 ## Consequences
 

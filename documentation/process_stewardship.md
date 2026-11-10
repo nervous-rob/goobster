@@ -32,7 +32,7 @@ does is still edited where you made it.
 It builds on the process catalog, contracts and typed observations described
 in [delegated_responsibilities.md](delegated_responsibilities.md#processes).
 The design decisions are in
-[ADR 0019](adr/0019-process-assessment-and-incidents.md) (assessment and
+[ADR 0020](adr/0020-process-assessment-and-incidents.md) (assessment and
 incidents) and [ADR 0022](adr/0022-process-retirement.md) (pause, archive,
 restore and cleanup).
 

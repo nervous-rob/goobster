@@ -1,5 +1,5 @@
 /**
- * Process incidents and what the assistant says about them (DA-5a, ADR 0019).
+ * Process incidents and what the assistant says about them (DA-5a, ADR 0020).
  *
  * `assistantProcessService.assess()` judges each process on every read and
  * records nothing. This service is the part that remembers: on the steward

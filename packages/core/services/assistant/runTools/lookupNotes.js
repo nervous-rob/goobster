@@ -6,6 +6,7 @@
 module.exports = {
     lookupNotes: {
         effect: 'read',
+        source: 'private',
         definition: {
             name: 'lookupNotes',
             description: 'Look up what is already in the person\'s own notes, memories and saved files about a topic.',

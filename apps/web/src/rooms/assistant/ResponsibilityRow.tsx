@@ -1,6 +1,7 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
+import { useMe } from '../../hooks/useSession';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, type Project } from './grants';
+import { describeGrants, describeListening, describeSharing, type Project } from './grants';
 import { WorkList } from './WorkList';
 
 /** One responsibility: what it grants, its work, and its lifecycle buttons. */
@@ -43,6 +44,9 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
     onActOnWork: (work: AssistantInitiative, action: string) => void;
 }) {
     const whenLabel = useDateLabel();
+    const me = useMe();
+    const listening = describeListening(item, me.assistant.name);
+    const sharing = describeSharing(item);
     return (
         <div id={`responsibility-${item.id}`} className="list-row task-row" data-testid="responsibility-row">
             <div className="row-body">
@@ -51,6 +55,8 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 {item.outcome && <div className="hint">{item.outcome}</div>}
                 <ul className="assistant-grants">
                     {describeGrants(item.operations, projects).map((line) => <li key={line}>May {line}</li>)}
+                    {listening && <li data-testid="responsibility-listens">{listening}</li>}
+                    {sharing && <li data-testid="responsibility-shares">{sharing}</li>}
                 </ul>
                 <div className="row-meta">
                     {item.rules?.autoStart ? 'Starts proposed work automatically · ' : 'Each piece of work waits for Start · '}

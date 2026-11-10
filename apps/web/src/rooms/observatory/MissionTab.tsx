@@ -1,9 +1,11 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { Link } from '@tanstack/react-router';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
+import { useMe } from '../../hooks/useSession';
 import { whenLabel } from './format';
 import { StepCode, useStepCode, type StepCodeLink } from './StepCode';
 
@@ -11,7 +13,7 @@ type Criterion = { id: string; text: string };
 type Choice = { id: string; label: string };
 type Step = {
     id: number;
-    kind: 'expedition' | 'job' | 'watch' | 'human';
+    kind: 'expedition' | 'job' | 'watch' | 'human' | 'agent';
     title: string;
     description?: string | null;
     status: string;
@@ -21,8 +23,15 @@ type Step = {
         choices?: Choice[];
         allowOther?: boolean;
         selectedId?: string;
+        /** Agent steps: what to do and the files the step must produce. */
+        instructions?: string;
+        artifacts?: string[];
     };
     code?: StepCodeLink | null;
+    /** Who authorised the current attempt: a person pressing Start, or a delegated responsibility (ADR 0019). */
+    authorization?: 'human' | 'delegated' | null;
+    delegation?: { actingUserId: string | null; runId: number | null; responsibilityId: number | null; grantRevision: number | null } | null;
+    retryCount?: number;
 };
 type Evidence = {
     id: number;
@@ -58,9 +67,41 @@ type Mission = {
 };
 type HistoryRow = { id: number; title: string; status: string; completedAt?: string | null };
 
-const STEP_KINDS: Array<Step['kind']> = ['expedition', 'job', 'watch', 'human'];
+const STEP_KINDS: Array<Step['kind']> = ['expedition', 'job', 'watch', 'human', 'agent'];
 /** Visible names for the step kinds (the ids are API vocabulary). */
-const STEP_KIND_LABELS: Record<Step['kind'], string> = { expedition: 'research', job: 'run', watch: 'watch', human: 'human' };
+const STEP_KIND_LABELS: Record<Step['kind'], string> = { expedition: 'research', job: 'run', watch: 'watch', human: 'human', agent: 'assistant' };
+const EVIDENCE_KIND_LABELS: Record<string, string> = { job: 'run', agent_run: 'assistant run' };
+
+/**
+ * Where an assistant step stands. Nobody presses Start on one: a delegated
+ * responsibility with "carry out agent steps" on this project picks it up
+ * once the plan is approved and started.
+ */
+function AgentStepState({ step, missionStatus, meId }: { step: Step; missionStatus: string; meId?: string }) {
+    const mine = Boolean(step.delegation?.actingUserId && step.delegation.actingUserId === meId);
+    const link = mine && step.delegation?.responsibilityId
+        ? <> <Link to="/assistant" hash={`responsibility-${step.delegation.responsibilityId}`}>Open the responsibility →</Link></>
+        : null;
+    let text: string | null = null;
+    if (step.status === 'STARTING' || step.status === 'RUNNING') {
+        text = mine ? 'Your assistant is carrying this out under a responsibility you delegated.' : 'A collaborator\'s assistant is carrying this out under their delegated responsibility.';
+    } else if (step.status === 'DONE' && step.authorization === 'delegated') {
+        text = 'Carried out by a delegated assistant. Its files were checked before the step was marked done.';
+    } else if (step.status === 'FAILED' && step.authorization === 'delegated') {
+        text = 'The assistant could not finish this or its result did not pass the check. Retry lets it try again.';
+    } else if (step.status === 'READY' && missionStatus === 'ACTIVE') {
+        text = 'Waiting for an assistant. It runs under a responsibility that may carry out this plan\'s assistant steps.';
+    } else if (step.status === 'PENDING' || step.status === 'READY') {
+        text = 'An assistant carries this out once the plan is approved and started. Nobody starts it by hand.';
+    }
+    if (!text) return null;
+    return (
+        <p className="hint" data-testid="agent-step-state">
+            {text}{link}
+            {!link && step.status === 'READY' && missionStatus === 'ACTIVE' ? <> <Link to="/assistant">Responsibilities →</Link></> : null}
+        </p>
+    );
+}
 
 export function MissionTab({
     slug,
@@ -247,6 +288,7 @@ function MissionView({
     onReview: (notes: string, verdict: string) => void;
     onComplete: (notes: string, verdict: string) => void;
 }) {
+    const me = useMe();
     const stepCode = useStepCode(slug, ownerId, mission.id, mission.steps.some((step) => step.code));
     const [stepKind, setStepKind] = useState<Step['kind']>('human');
     const [stepTitle, setStepTitle] = useState('');
@@ -317,11 +359,18 @@ function MissionView({
                                 && step.status !== 'DONE'
                                 && step.status !== 'SKIPPED';
                             return (
-                            <div key={step.id} className="list-row task-row">
+                            <div key={step.id} className="list-row task-row" data-testid="plan-step" data-step-kind={step.kind}>
                                 <div className="row-body">
-                                    <span className="badge">{step.status}</span>
+                                    <span className="badge" data-testid="plan-step-status">{step.status}</span>
                                     <strong>{step.title}</strong>
-                                    <div className="row-meta">{step.kind}{step.description ? ` · ${step.description}` : ''}</div>
+                                    <div className="row-meta">{STEP_KIND_LABELS[step.kind] || step.kind}{step.description ? ` · ${step.description}` : ''}</div>
+                                    {step.kind === 'agent' && step.actionParams?.instructions ? (
+                                        <p className="hint">{step.actionParams.instructions}</p>
+                                    ) : null}
+                                    {step.kind === 'agent' && step.actionParams?.artifacts?.length ? (
+                                        <p className="row-meta">Must produce: {step.actionParams.artifacts.join(', ')}</p>
+                                    ) : null}
+                                    {step.kind === 'agent' && <AgentStepState step={step} missionStatus={mission.status} meId={me?.user.id} />}
                                     {step.actionParams?.prompt ? (
                                         <p className="hint">{step.actionParams.prompt}</p>
                                     ) : null}
@@ -357,7 +406,7 @@ function MissionView({
                                             && step.status !== 'DONE' && step.status !== 'SKIPPED'}
                                     />
                                 </div>
-                                {mission.status === 'ACTIVE' && (step.status === 'READY' || step.status === 'PENDING') && step.kind !== 'human' && (
+                                {mission.status === 'ACTIVE' && (step.status === 'READY' || step.status === 'PENDING') && step.kind !== 'human' && step.kind !== 'agent' && (
                                     <button type="button" className="btn" disabled={busy} onClick={() => onStartStep(step.id)}>Start</button>
                                 )}
                                 {humanOpen && (
@@ -367,6 +416,9 @@ function MissionView({
                                         disabled={busy || (choices.length > 0 && !answerByStep[step.id])}
                                         onClick={() => onCompleteStep(step.id, answerByStep[step.id])}
                                     >{choices.length ? 'Answer' : 'Done'}</button>
+                                )}
+                                {mission.status === 'ACTIVE' && step.kind === 'agent' && (step.status === 'READY' || step.status === 'RUNNING') && (
+                                    <button type="button" className="btn" disabled={busy} onClick={() => onCompleteStep(step.id)}>Mark done</button>
                                 )}
                                 {['ACTIVE', 'BLOCKED'].includes(mission.status) && step.status === 'FAILED' && (
                                     <button type="button" className="btn primary" disabled={busy} onClick={() => onRetryStep(step.id)}>Retry</button>
@@ -405,8 +457,19 @@ function MissionView({
                             value={stepChoices}
                             onChange={(e) => setStepChoices(e.target.value)} />
                     )}
+                    {stepKind === 'agent' && (
+                        <>
+                            <input className="input" placeholder="Files it must produce (comma-separated), e.g. docs/summary.md"
+                                value={stepParam} data-testid="agent-step-artifacts"
+                                onChange={(e) => setStepParam(e.target.value)} />
+                            <input className="input" placeholder="What the assistant should do (optional)"
+                                value={stepChoices} maxLength={1500}
+                                onChange={(e) => setStepChoices(e.target.value)} />
+                        </>
+                    )}
                     <button type="button" className="btn" disabled={busy || !stepTitle.trim()
                         || (stepKind === 'job' && !stepParam.trim())
+                        || (stepKind === 'agent' && !stepParam.trim())
                         || (stepKind === 'watch' && !stepParam.trim())}
                         onClick={() => {
                             const choiceLabels = stepChoices.split(/;|\n/).map((s) => s.trim()).filter(Boolean);
@@ -414,9 +477,11 @@ function MissionView({
                                 ? { asset: stepParam.trim() }
                                 : stepKind === 'watch'
                                     ? { topic: stepParam.trim() }
-                                    : stepKind === 'human' && choiceLabels.length >= 2
-                                        ? { choices: choiceLabels.map((label) => ({ label })), prompt: stepTitle.trim() }
-                                        : undefined;
+                                    : stepKind === 'agent'
+                                        ? { artifacts: stepParam.split(',').map((part) => part.trim()).filter(Boolean), instructions: stepChoices.trim() || undefined }
+                                        : stepKind === 'human' && choiceLabels.length >= 2
+                                            ? { choices: choiceLabels.map((label) => ({ label })), prompt: stepTitle.trim() }
+                                            : undefined;
                             onAddStep({ kind: stepKind, title: stepTitle.trim(), actionParams });
                             setStepTitle('');
                             setStepParam('');
@@ -434,9 +499,9 @@ function MissionView({
                 : (
                     <ul className="obs-mission-evidence">
                         {mission.evidence.map((item) => (
-                            <li key={item.id}>
+                            <li key={item.id} data-testid="plan-evidence">
                                 <span className="badge">{item.polarity}</span>
-                                {item.kind} #{item.refId}
+                                {EVIDENCE_KIND_LABELS[item.kind] || item.kind} #{item.refId}
                                 {item.label ? ` — ${item.label}` : ''}
                                 {item.criterionId ? ` · ${item.criterionId}` : ''}
                             </li>

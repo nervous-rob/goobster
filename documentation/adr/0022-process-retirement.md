@@ -5,7 +5,7 @@
 Accepted for DA-5b of the
 [delegated assistant plan](../delegated_assistant_implementation.md): pause,
 resume, archive, restore and exact cleanup of recurring processes. It builds
-on [ADR 0019](0019-process-assessment-and-incidents.md) (the assessment that
+on [ADR 0020](0020-process-assessment-and-incidents.md) (the assessment that
 says a process's purpose is over), [ADR 0016](0016-delegated-responsibilities.md)
 (`authorize()` and the `process.*` operations) and
 [ADR 0017](0017-initiatives-updates-processes.md) (canonical updates and
@@ -174,7 +174,7 @@ to act, narrower in what it removes, and never automatic without a grant.
 | Manifest lifetime | 1 hour | Long enough to read a preview, short enough to stay true |
 | Manifest size | 5,000 ids per type | Bounded statement and row size; more takes a second cleanup |
 | Unopened results | Never a reason to pause or ask | SPEC section 8 |
-| Attention off | The person's own actions work; the assistant asks nothing and pauses nothing | Same gate as incidents (ADR 0019, decision 15) |
+| Attention off | The person's own actions work; the assistant asks nothing and pauses nothing | Same gate as incidents (ADR 0020, decision 15) |
 | Stewardship rows of a running process | Pruned 180 days after their last change | Matches incidents and updates |
 
 ## What is deliberately not here

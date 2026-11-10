@@ -654,6 +654,9 @@ async function main() {
         const userId = String(req.body.userId);
         if (req.body.advance) { sourceNow += 3600_000; sourceVersion++; res.json({ ok: true }); return; }
         await db.run('DELETE FROM followed_sources WHERE userId = @userId', { userId });
+        // The journey prepares one research draft and asserts it is the only
+        // one. A retried journey seeds again, so the first attempt's draft goes.
+        await db.run('DELETE FROM spitball_expeditions WHERE userId = @userId', { userId });
         await policies.enroll({ userId, initiative: 'observe' });
         const project = await ensureProject({ userId, name: 'Source following fixture' });
         await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user', mutations: { upsert: [{ type: 'concept', label: 'Followed topic fixture', content: 'An explicitly kept research topic.' }] } });
@@ -789,6 +792,26 @@ async function main() {
             if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
             const processes = require('@goobster/core/services/assistantProcessService');
             const incidents = require('@goobster/core/services/assistantIncidentService');
+            // Safe to call twice for one person (CI retries a journey): what an
+            // earlier call made, and what was said about it, goes first.
+            const said = await db.all(
+                "SELECT id FROM assistant_updates WHERE audienceUserId = @userId AND kind = 'process'", { userId }
+            );
+            for (const { id } of said) {
+                await db.run('DELETE FROM assistant_update_receipts WHERE updateId = @id', { id });
+                await db.run(
+                    "DELETE FROM inbox_items WHERE userId = @userId AND sourceType = 'assistant_update' AND sourceId LIKE @prefix",
+                    { userId, prefix: `${id}:%` }
+                );
+                await db.run('DELETE FROM assistant_updates WHERE id = @id', { id });
+            }
+            for (const [table, column] of [
+                ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
+                ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
+                ['attention_items', 'userId'], ['automations', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
             const nextRun = new Date(Date.now() + 86_400_000).toISOString().slice(0, 19).replace('T', ' ');
             const make = async (name, outcomes) => {
                 const id = Number(await db.insert(
@@ -873,6 +896,196 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         } finally {
             aiService.chat = original;
+        }
+    });
+    // Host controls for delegated work (hostAssistant.spec.js): back to a
+    // fresh installation's state - running, default caps, no pilot decision -
+    // so a failed journey cannot leave every later spec's runs stopped.
+    app.post('/e2e/fixtures/assistant-controls/reset', express.json(), async (_req, res) => {
+        try {
+            const control = require('@goobster/core/services/assistantControlService');
+            const access = require('@goobster/core/services/assistantAccessService');
+            const state = require('@goobster/core/services/instanceStateService');
+            await control.resumeAll();
+            for (const key of [control.KEY_CAPS, control.KEY_PAUSED, access.KEY_PILOT]) await state.remove(key);
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Delegated plan steps (assistantPlanStep.spec.js, ADR 0019): a dedicated
+    // person with Attention on, their own project, and a DRAFT plan holding
+    // one assistant step. The person approves and starts the plan and
+    // delegates in the browser; nothing here approves anything.
+    app.post('/e2e/fixtures/assistant-plan-step', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const missions = require('@goobster/core/services/projectMissionService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Planner' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'Charting choice') });
+            await missions.create({
+                userId, project: project.slug,
+                title: 'Choose a charting library',
+                objective: 'Decide between library X and library Y.',
+                successCriteria: ['A written comparison exists'],
+                steps: [{
+                    kind: 'agent', title: 'Write the comparison',
+                    actionParams: { instructions: 'Compare the two libraries from their documentation.', artifacts: ['docs/comparison.md'] }
+                }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One runner pass with a scripted model. `written: true` writes the file
+    // the step requires before reporting; otherwise it only claims to have.
+    app.post('/e2e/fixtures/assistant-plan-step/run', express.json(), async (req, res) => {
+        const aiService = require('@goobster/core/services/aiService');
+        const original = aiService.chat;
+        const report = [{ id: 'p2', name: 'reportStepResult', arguments: JSON.stringify({
+            outcome: 'done', title: 'Wrote the comparison of X and Y', summary: 'Compared both from their documentation.',
+            artifacts: ['docs/comparison.md'], criteria: ['c1']
+        }) }];
+        const rounds = req.body?.written
+            ? [[{ id: 'p1', name: 'writeProjectFile', arguments: JSON.stringify({ path: 'docs/comparison.md', content: '# Comparison\nLibrary X renders faster.\n' }) }], report]
+            : [report];
+        aiService.chat = async () => ({ content: '', toolCalls: rounds.shift() || [] });
+        try {
+            const runner = require('@goobster/core/services/assistantRunnerService');
+            res.json(await runner.tick({ wait: true }));
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        } finally {
+            aiService.chat = original;
+        }
+    });
+    // Conversation requests and the project board (assistantConversation.spec.js,
+    // ADR 0021): a dedicated person with Attention on, their own project
+    // with its conversation, and a DRAFT plan waiting for their approval.
+    // Safe to call again for the same person: it starts them over.
+    app.post('/e2e/fixtures/assistant-conversation', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const missions = require('@goobster/core/services/projectMissionService');
+            const name = String(req.body?.name || 'Asker');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: name });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['parlor_conversations', 'ownerId'], ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'API choice') });
+            const conversation = await parlorService.ensureProjectConversation({
+                project: { id: project.id, ownerId: userId, name: project.name }, members: []
+            });
+            const mission = await missions.create({
+                userId, project: project.slug,
+                title: 'Choose a web framework',
+                objective: 'Decide between framework X and framework Y.',
+                successCriteria: ['A decision is written down'],
+                steps: [{ kind: 'human', title: 'Pick the framework' }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id, missionId: mission.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The person says something in a conversation (stored exactly as the
+    // portal stores it; no persona answers), then the assistant takes its
+    // next look at their responsibilities.
+    app.post('/e2e/fixtures/assistant-conversation/say', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const message = await parlorService.postMessage({
+                userId, userName: String(req.body?.name || 'Asker'), conversationId: Number(req.body?.conversationId),
+                content: String(req.body?.text || ''), notify: false
+            });
+            const seen = await require('@goobster/core/services/assistantInitiativeService').reconcile({ userId });
+            res.json({ ok: true, messageId: message.id, ...seen });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One runner pass with a scripted model that reports a finding. No provider.
+    app.post('/e2e/fixtures/assistant-conversation/run', express.json(), async (_req, res) => {
+        const aiService = require('@goobster/core/services/aiService');
+        const original = aiService.chat;
+        const rounds = [[{ id: 'c1', name: 'finish', arguments: JSON.stringify({
+            outcome: 'finding', title: 'Framework X and framework Y compared',
+            summary: 'X is smaller and starts faster; Y has more plugins. Neither was chosen.'
+        }) }]];
+        aiService.chat = async () => ({ content: '', toolCalls: rounds.shift() || [] });
+        try {
+            res.json(await require('@goobster/core/services/assistantRunnerService').tick({ wait: true }));
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        } finally {
+            aiService.chat = original;
+        }
+    });
+    // Findings shared with a project's members (assistantProjectAudience.spec.js,
+    // documentation/delegated_project_findings.md): the installation's owner
+    // (an operator, with Attention on) with a project and its conversation, a
+    // collaborator seated in both, and someone outside the project. The
+    // pilot decision is cleared so the owner-only gate applies. Safe to call
+    // again: it starts all three over.
+    app.post('/e2e/fixtures/assistant-project-audience', express.json(), async (req, res) => {
+        try {
+            const ids = ['ownerId', 'memberId', 'outsiderId'].map(key => String(req.body?.[key] || ''));
+            if (ids.some(id => !/^\d{5,20}$/.test(id))) return res.status(400).json({ error: 'ids' });
+            const [ownerId, memberId, outsiderId] = ids;
+            const names = { [ownerId]: 'Ada', [memberId]: 'Bo', [outsiderId]: 'Cy' };
+            for (const userId of ids) {
+                await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: names[userId] });
+                const mine = await db.all('SELECT id FROM observatory_projects WHERE userId = @userId', { userId });
+                for (const { id } of mine) await db.run('DELETE FROM project_members WHERE projectId = @id', { id });
+                for (const [table, column] of [
+                    ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                    ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                    ['parlor_conversations', 'ownerId'], ['observatory_projects', 'userId']
+                ]) {
+                    await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+                }
+            }
+            await db.run("DELETE FROM assistant_updates WHERE audienceKind = 'project' AND producerUserId = @ownerId", { ownerId });
+            await db.run("DELETE FROM instance_state WHERE key = 'assistantPilot'");
+            await identityService.grantAccount({ principalId: ownerId, entitlement: 'bootstrap', role: 'operator' });
+            await policies.enroll({ userId: ownerId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId: ownerId, name: String(req.body?.project || 'Shared lab') });
+            await db.run(
+                'INSERT INTO project_members (projectId, userId, userName, invitedBy) VALUES (@projectId, @userId, @userName, @ownerId)',
+                { projectId: project.id, userId: memberId, userName: names[memberId], ownerId }
+            );
+            const conversation = await parlorService.ensureProjectConversation({
+                project: { id: project.id, ownerId, name: project.name },
+                members: [{ userId: memberId, userName: names[memberId] }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The pass that files a project's open requests in the person's Inbox.
+    app.post('/e2e/fixtures/assistant-conversation/adopt', express.json(), async (req, res) => {
+        try {
+            const gates = require('@goobster/core/services/assistantGateService');
+            res.json({ ok: true, ...(await gates.adoptProjectGates({ userId: String(req.body?.userId || '') })) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
         }
     });
     // The domain resolving a request (what a repair approval would do).

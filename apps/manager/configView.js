@@ -84,6 +84,7 @@ async function readOverrides(settings, { fs = nodeFs, reachability = null } = {}
             const defaults = require('@goobster/core/services/instanceDefaultsService');
             return {
                 limits: await state.get('limits'),
+                assistantCaps: await state.get('assistantCaps'),
                 defaults: await defaults.get()
             };
         });

@@ -2656,7 +2656,7 @@ CREATE TABLE IF NOT EXISTS project_missions (
     successCriteriaJson TEXT NOT NULL,
     -- Optional UTC deadline (YYYY-MM-DD HH:MM:SS)
     deadline TEXT,
-    -- Optional JSON { maxExpeditions, maxJobs, maxWatches, notes }
+    -- Optional JSON { maxExpeditions, maxJobs, maxWatches, maxAgentRuns, notes }
     budgetJson TEXT,
     status TEXT NOT NULL DEFAULT 'DRAFT'
         CHECK (status IN ('DRAFT', 'APPROVED', 'ACTIVE', 'BLOCKED', 'REVIEW', 'COMPLETED', 'CANCELLED')),
@@ -2685,7 +2685,9 @@ CREATE TABLE IF NOT EXISTS project_mission_steps (
     id INTEGER PRIMARY KEY,
     missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
     userId TEXT NOT NULL,
-    kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human')),
+    -- `agent` (ADR 0019): carried out by a delegated run under a
+    -- responsibility, never started from a human surface or a chat tool.
+    kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human', 'agent')),
     title TEXT NOT NULL,
     description TEXT,
     status TEXT NOT NULL DEFAULT 'PENDING'
@@ -2721,7 +2723,22 @@ CREATE TABLE IF NOT EXISTS project_mission_steps (
     -- step done until that branch's CI is green.
     repoName TEXT,
     branch TEXT,
-    requireGreenCi INTEGER NOT NULL DEFAULT 0 CHECK (requireGreenCi IN (0, 1))
+    requireGreenCi INTEGER NOT NULL DEFAULT 0 CHECK (requireGreenCi IN (0, 1)),
+    -- Delegated execution of an `agent` step (ADR 0019). The delegation
+    -- authorization record lives here and on the timeline, never in
+    -- project_mission_approval_receipts: which run carries the current
+    -- attempt (assistant_runs.id; its executionAttemptId is
+    -- 'assistant_run:<id>'), whether a person or a responsibility
+    -- dispatched it ('human' | 'delegated'), and the responsibility and
+    -- grant revision the dispatch was authorized under.
+    agentRunId INTEGER,
+    authorizationKind TEXT,
+    grantResponsibilityId INTEGER,
+    grantRevision INTEGER,
+    -- Times a person retried this step after it failed. Part of the
+    -- source revision a responsibility proposes work from, so a retry is
+    -- a new opportunity and a failure is never re-run by itself.
+    retryCount INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_project_mission_steps_mission
@@ -2730,6 +2747,7 @@ CREATE INDEX IF NOT EXISTS idx_project_mission_steps_user ON project_mission_ste
 CREATE INDEX IF NOT EXISTS idx_project_mission_steps_job ON project_mission_steps(jobId);
 CREATE INDEX IF NOT EXISTS idx_project_mission_steps_expedition ON project_mission_steps(expeditionId);
 CREATE INDEX IF NOT EXISTS idx_project_mission_steps_watch ON project_mission_steps(watchId);
+CREATE INDEX IF NOT EXISTS idx_project_mission_steps_agent_run ON project_mission_steps(agentRunId);
 
 CREATE TABLE IF NOT EXISTS project_mission_evidence (
     id INTEGER PRIMARY KEY,
@@ -2737,13 +2755,18 @@ CREATE TABLE IF NOT EXISTS project_mission_evidence (
     userId TEXT NOT NULL,
     -- Optional link to a success-criterion id from successCriteriaJson
     criterionId TEXT,
-    kind TEXT NOT NULL CHECK (kind IN ('claim', 'note', 'job', 'artifact')),
-    -- research_claims.id / kg_nodes.id / observatory_jobs.id / project_assets.id
+    -- `agent_run` (ADR 0019) is linked only by the service when a delegated
+    -- run's step result passed verification; provenanceJson then holds the
+    -- verified artifact manifest (paths, sizes, hashes).
+    kind TEXT NOT NULL CHECK (kind IN ('claim', 'note', 'job', 'artifact', 'agent_run')),
+    -- research_claims.id / kg_nodes.id / observatory_jobs.id / project_assets.id / assistant_runs.id
     refId INTEGER NOT NULL,
     label TEXT,
     polarity TEXT NOT NULL DEFAULT 'for'
         CHECK (polarity IN ('for', 'against', 'neutral')),
-    -- { scope: 'project'|'imported', expeditionId?, sourceProjectId? }
+    -- { scope: 'project'|'imported', expeditionId?, sourceProjectId? }, or for
+    -- agent_run: { scope: 'project', stepId, authorization: 'delegated',
+    --   responsibilityId, grantRevision, artifacts: [{ path, bytes, sha256 }] }
     provenanceJson TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -3524,7 +3547,9 @@ CREATE TABLE IF NOT EXISTS assistant_responsibility_revisions (
 CREATE TABLE IF NOT EXISTS assistant_source_cursors (
     id INTEGER PRIMARY KEY,
     responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
-    -- attention_item | project_plan
+    -- attention_item | project_plan | project_plan_step | conversation_request
+    -- (conversation_request keeps one row per responsibility: sourceId
+    -- 'messages', sourceRevision the last parlor_messages.id examined)
     sourceKind TEXT NOT NULL,
     sourceId TEXT NOT NULL,
     -- Opaque fingerprint of the source's material state at the last scan
@@ -3576,6 +3601,21 @@ CREATE TABLE IF NOT EXISTS assistant_initiatives (
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     endedAt TEXT,
+    -- Plan-step reference (ADR 0019): the `agent` step this attempt carries
+    -- out (project_mission_steps.id) and the approved plan revision it was
+    -- proposed under. Dispatch refuses when the plan has moved on.
+    planStepId INTEGER,
+    planRevision INTEGER,
+    -- Where a conversation-derived attempt came from (ADR 0021): JSON
+    -- { kind: 'parlor_message', surface: 'project'|'parlor', conversationId,
+    --   messageId, speakerUserId, audience: { kind, projectId?|conversationId? } }.
+    -- References only; the message text is read again, under the current
+    -- access check, whenever it is shown or used.
+    originJson TEXT,
+    -- SUPERSEDED only: what replaced it, as a reference
+    -- ('parlor:<conversationId>:<messageId>' for a change of direction said
+    -- in a conversation, 'plan:<missionId>' for a plan that moved on).
+    supersededBy TEXT,
     UNIQUE (responsibilityId, dedupeKey, sourceRevision, attempt)
 );
 
@@ -3771,7 +3811,7 @@ CREATE TABLE IF NOT EXISTS assistant_run_operations (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_run_operations_owner ON assistant_run_operations(ownerUserId, createdAt);
 
--- Process incidents (DA-5a, ADR 0019): one row per cause and occurrence.
+-- Process incidents (DA-5a, ADR 0020): one row per cause and occurrence.
 -- incidentKey is 'cause:<CODE>' for an upstream cause several processes
 -- share, else 'process:<kind>:<id>'. OPEN while anything in it is failing,
 -- RECOVERING through the cooldown, then RESOLVED; a later failure streak is

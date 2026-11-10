@@ -153,6 +153,80 @@ CREATE TABLE project_decisions (
 );
 `;
 
+// Project plans before delegated plan-step execution (ADR 0019): the step
+// kind and evidence kind CHECKs had no `agent` / `agent_run`, and steps had
+// no delegation columns.
+const PRE_AGENT_STEPS = `
+CREATE TABLE observatory_projects (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    slug TEXT NOT NULL,
+    name TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE project_missions (
+    id INTEGER PRIMARY KEY,
+    projectId INTEGER NOT NULL REFERENCES observatory_projects(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    title TEXT NOT NULL,
+    objective TEXT NOT NULL,
+    successCriteriaJson TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'DRAFT',
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE project_mission_steps (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    kind TEXT NOT NULL CHECK (kind IN ('expedition', 'job', 'watch', 'human')),
+    title TEXT NOT NULL,
+    description TEXT,
+    status TEXT NOT NULL DEFAULT 'PENDING'
+        CHECK (status IN ('PENDING', 'READY', 'STARTING', 'RUNNING', 'BLOCKED', 'DONE', 'SKIPPED', 'FAILED')),
+    dependsOnJson TEXT,
+    requiresApproval INTEGER NOT NULL DEFAULT 0 CHECK (requiresApproval IN (0, 1)),
+    expeditionId INTEGER,
+    jobId INTEGER,
+    watchId INTEGER,
+    actionParamsJson TEXT,
+    executionAttemptId TEXT,
+    startedByUserId TEXT,
+    planRevision INTEGER NOT NULL DEFAULT 0,
+    sortOrder INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    startedAt TEXT,
+    finishedAt TEXT,
+    repoName TEXT,
+    branch TEXT,
+    requireGreenCi INTEGER NOT NULL DEFAULT 0 CHECK (requireGreenCi IN (0, 1))
+);
+CREATE TABLE project_mission_evidence (
+    id INTEGER PRIMARY KEY,
+    missionId INTEGER NOT NULL REFERENCES project_missions(id) ON DELETE CASCADE,
+    userId TEXT NOT NULL,
+    criterionId TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('claim', 'note', 'job', 'artifact')),
+    refId INTEGER NOT NULL,
+    label TEXT,
+    polarity TEXT NOT NULL DEFAULT 'for'
+        CHECK (polarity IN ('for', 'against', 'neutral')),
+    provenanceJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+`;
+const PRE_AGENT_STEPS_ROWS = [
+    `INSERT INTO observatory_projects (id, "userId", slug, name) VALUES (1, 'u1', 'lab', 'Lab')`,
+    `INSERT INTO project_missions (id, "projectId", "userId", title, objective, "successCriteriaJson", status)
+     VALUES (1, 1, 'u1', 'Bench', 'Measure recall', '[]', 'ACTIVE')`,
+    `INSERT INTO project_mission_steps (id, "missionId", "userId", kind, title, status, "repoName", branch, "requireGreenCi", "executionAttemptId")
+     VALUES (1, 1, 'u1', 'job', 'Run the benchmark', 'RUNNING', 'bench', 'feature/x', 1, 'attempt-1')`,
+    `INSERT INTO project_mission_evidence (id, "missionId", "userId", "criterionId", kind, "refId", label, polarity, "provenanceJson")
+     VALUES (1, 1, 'u1', 'c1', 'job', 7, 'The run', 'for', '{"scope":"project"}')`
+];
+
 // Observatory before pipeline reliability landed: jobs had no explicit
 // parent, no frozen output contract, and no stable error code; event
 // triggers were project-wide with no source filters.
@@ -496,6 +570,49 @@ describe('SQLite: upgrading an existing database', () => {
         ).run()).toThrow(/UNIQUE/);
     });
 
+    test('pre-delegation plans keep their steps and evidence and accept agent steps and agent_run evidence', () => {
+        const file = seedDatabase(PRE_AGENT_STEPS, PRE_AGENT_STEPS_ROWS);
+
+        const database = bootstrap(file);
+
+        // Nothing lost, including the code link an older rebuild did not carry.
+        expect(database.prepare(
+            `SELECT kind, title, status, repoName, branch, requireGreenCi, executionAttemptId,
+                    agentRunId, authorizationKind, grantResponsibilityId, grantRevision, retryCount
+             FROM project_mission_steps`
+        ).all()).toEqual([{
+            kind: 'job', title: 'Run the benchmark', status: 'RUNNING', repoName: 'bench', branch: 'feature/x', requireGreenCi: 1,
+            executionAttemptId: 'attempt-1', agentRunId: null, authorizationKind: null, grantResponsibilityId: null, grantRevision: null, retryCount: 0
+        }]);
+        expect(database.prepare('SELECT criterionId, kind, refId, label, polarity, provenanceJson FROM project_mission_evidence').all())
+            .toEqual([{ criterionId: 'c1', kind: 'job', refId: 7, label: 'The run', polarity: 'for', provenanceJson: '{"scope":"project"}' }]);
+
+        database.prepare(
+            `INSERT INTO project_mission_steps (missionId, userId, kind, title, authorizationKind, agentRunId)
+             VALUES (1, 'u1', 'agent', 'Write the report', 'delegated', 4)`
+        ).run();
+        database.prepare(
+            `INSERT INTO project_mission_evidence (missionId, userId, criterionId, kind, refId, polarity)
+             VALUES (1, 'u1', '', 'agent_run', 4, 'neutral')`
+        ).run();
+        expect(() => database.prepare(
+            `INSERT INTO project_mission_steps (missionId, userId, kind, title) VALUES (1, 'u1', 'robot', 'x')`
+        ).run()).toThrow(/CHECK/);
+        expect(database.pragma('foreign_key_check')).toEqual([]);
+
+        const fresh = bootstrap(seedDatabase(''));
+        for (const table of ['project_mission_steps', 'project_mission_evidence', 'assistant_initiatives']) {
+            expect(shapeOf(database, table)).toEqual(shapeOf(fresh, table));
+        }
+        // Where a conversation request came from, and what replaced a superseded attempt (DA-4b).
+        expect(database.prepare("SELECT name FROM pragma_table_info('assistant_initiatives')").all().map(r => r.name))
+            .toEqual(expect.arrayContaining(['originJson', 'supersededBy']));
+
+        // Reopening changes nothing.
+        const before = database.prepare('SELECT name, sql FROM sqlite_master ORDER BY name').all();
+        expect(bootstrap(file).prepare('SELECT name, sql FROM sqlite_master ORDER BY name').all()).toEqual(before);
+    });
+
     test('a pre-pipeline Observatory keeps its jobs and triggers and gains parentage, contracts, and filters', () => {
         const file = seedDatabase(PRE_PIPELINE, PRE_PIPELINE_ROWS);
 
@@ -780,6 +897,55 @@ describePostgres('Postgres: upgrading an existing database', () => {
             `INSERT INTO project_decisions ("projectId", "missionId", "userId", question)
              VALUES (1, 1, 'u1', 'third')`
         )).rejects.toThrow();
+    });
+
+    test('pre-delegation plans keep their steps and evidence and accept agent steps and agent_run evidence', async () => {
+        const schemaName = await seedSchema(PRE_AGENT_STEPS, PRE_AGENT_STEPS_ROWS);
+
+        const adapter = await bootstrap(schemaName);
+
+        const steps = await adapter.rawQuery(
+            `SELECT kind, title, status, "repoName", branch, "requireGreenCi", "executionAttemptId",
+                    "agentRunId", "authorizationKind", "grantResponsibilityId", "grantRevision", "retryCount"
+             FROM project_mission_steps`
+        );
+        expect(steps.rows).toEqual([{
+            kind: 'job', title: 'Run the benchmark', status: 'RUNNING', repoName: 'bench', branch: 'feature/x', requireGreenCi: 1,
+            executionAttemptId: 'attempt-1', agentRunId: null, authorizationKind: null, grantResponsibilityId: null, grantRevision: null, retryCount: 0
+        }]);
+        const kept = await adapter.rawQuery('SELECT "criterionId", kind, "refId", label, polarity FROM project_mission_evidence');
+        expect(kept.rows).toEqual([{ criterionId: 'c1', kind: 'job', refId: 7, label: 'The run', polarity: 'for' }]);
+
+        await adapter.rawQuery(
+            `INSERT INTO project_mission_steps (id, "missionId", "userId", kind, title, "authorizationKind", "agentRunId")
+             VALUES (2, 1, 'u1', 'agent', 'Write the report', 'delegated', 4)`
+        );
+        await adapter.rawQuery(
+            `INSERT INTO project_mission_evidence (id, "missionId", "userId", "criterionId", kind, "refId", polarity)
+             VALUES (2, 1, 'u1', '', 'agent_run', 4, 'neutral')`
+        );
+        await expect(adapter.rawQuery(
+            `INSERT INTO project_mission_steps (id, "missionId", "userId", kind, title) VALUES (3, 1, 'u1', 'robot', 'x')`
+        )).rejects.toThrow();
+
+        // One CHECK per column: the old ones were replaced, not added to.
+        const checks = await adapter.rawQuery(
+            `SELECT t.relname AS "table", pg_get_constraintdef(c.oid) AS def FROM pg_constraint c
+             JOIN pg_class t ON t.oid = c.conrelid
+             JOIN pg_namespace n ON n.oid = t.relnamespace
+             WHERE t.relname IN ('project_mission_steps', 'project_mission_evidence')
+               AND c.contype = 'c' AND n.nspname = current_schema()`
+        );
+        const defs = checks.rows.map(r => r.def);
+        expect(defs.filter(def => def.includes("'expedition'"))).toHaveLength(1);
+        expect(defs.filter(def => def.includes("'agent'"))).toHaveLength(1);
+        expect(defs.filter(def => def.includes("'claim'"))).toHaveLength(1);
+        expect(defs.filter(def => def.includes("'agent_run'"))).toHaveLength(1);
+        const columns = await adapter.rawQuery(
+            `SELECT column_name FROM information_schema.columns
+             WHERE table_schema = current_schema() AND table_name = 'assistant_initiatives'`
+        );
+        expect(columns.rows.map(r => r.column_name)).toEqual(expect.arrayContaining(['planStepId', 'planRevision', 'originJson', 'supersededBy']));
     });
 
     test('a pre-pipeline Observatory keeps its jobs and triggers and gains parentage, contracts, and filters', async () => {

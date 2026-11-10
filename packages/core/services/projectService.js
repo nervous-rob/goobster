@@ -950,6 +950,7 @@ class ObservatoryService {
         } catch { /* the discussion may never have been created */ }
         // Share links / members / invites cascade with the project row;
         // the dashboard file and workspace tree are removed by hand.
+        await requireOptional('./assistantUpdateService', { feature: 'assistant' })?.forgetProject(row.id);
         await db.run('DELETE FROM observatory_projects WHERE id = @id', { id: row.id });
         try { fs.rmSync(row.dir, { recursive: true, force: true }); } catch { /* best effort */ }
         this.history.forgetProject(row);
@@ -3511,9 +3512,21 @@ class ObservatoryService {
         }
 
         try {
-            const board = await require('./projectMissionService').listNeedsYou({ userId, project: row.slug, owner: row.ownerId });
+            // The same read as the Needs-you board: over the canonical gates
+            // when the delegated assistant is installed, so a card here says
+            // whether it waits on this person or on the project's owner.
+            const params = { userId, project: row.slug, owner: row.ownerId };
+            const gates = requireOptional('./assistantGateService', { feature: 'assistant' });
+            const board = gates ? await gates.projectBoard(params) : await require('./projectMissionService').listNeedsYou(params);
             const cards = board?.cards || [];
-            out.needsYou = { count: cards.length, cards: cards.slice(0, 5).map(card => ({ id: card.id, column: card.column, title: card.title, detail: card.detail || null })) };
+            out.needsYou = {
+                count: cards.length,
+                cards: cards.slice(0, 5).map(card => ({
+                    id: card.id, column: card.column, title: card.title, detail: card.detail || null,
+                    mine: card.mine !== false, waitingOn: card.waitingOn || null,
+                    gate: card.gate || null, decision: card.decision || null
+                }))
+            };
         } catch { /* missions are optional here */ }
 
         const found = this.readInstructions(row);
@@ -4326,6 +4339,12 @@ class ObservatoryService {
                 present: false
             });
         } catch { /* the parlor catches up on next ensure */ }
+        // What they read of the project's findings no longer reaches them (it
+        // follows membership), and the record of having read it goes too.
+        try {
+            await requireOptional('./assistantUpdateService', { feature: 'assistant' })
+                ?.forgetMemberReceipts({ projectId: row.id, userId: target });
+        } catch { /* the retention sweep deletes what this missed */ }
         await this._notifyProjectHumans({
             projectId: row.id,
             kind: 'project-members',

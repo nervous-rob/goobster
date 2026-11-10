@@ -11,7 +11,7 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, type Project } from './assistant/grants';
+import { describeGrants, describeListening, type Project } from './assistant/grants';
 import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
@@ -56,7 +56,10 @@ export function AssistantRoom() {
     }, [hash, processesReady]);
     const workByResponsibility = new Map<number, AssistantInitiative[]>();
     for (const item of workQ.data?.initiatives || []) {
-        if (item.status === 'SUPERSEDED') continue;
+        // Work a newer look at the same source replaced is history. A request
+        // the person withdrew by changing direction stays, so they can see
+        // what was stopped and start it again.
+        if (item.status === 'SUPERSEDED' && !item.origin) continue;
         const list = workByResponsibility.get(item.responsibilityId) || [];
         if (list.length < 5) list.push(item);
         workByResponsibility.set(item.responsibilityId, list);
@@ -73,8 +76,9 @@ export function AssistantRoom() {
 
     async function act(item: Responsibility, action: string, question?: string) {
         const grants = describeGrants(item.operations, projectById);
+        const listening = describeListening(item, me.assistant.name);
         const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
+            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
             : question;
         if (ask && !await confirm(ask)) return;
         setBusy(item.id);

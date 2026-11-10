@@ -1,5 +1,5 @@
 /**
- * Process health and relevance as pure functions (DA-5a, ADR 0019;
+ * Process health and relevance as pure functions (DA-5a, ADR 0020;
  * documentation/process_stewardship.md). No database: the inputs are the
  * adapter's description, the contract and typed observations.
  *
