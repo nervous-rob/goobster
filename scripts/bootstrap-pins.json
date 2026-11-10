@@ -14,22 +14,22 @@
         }
     },
     "appimagetool": {
-        "version": "1.9.0",
-        "source": "https://github.com/AppImage/appimagetool/releases/tag/1.9.0",
+        "version": "1.9.1",
+        "source": "https://github.com/AppImage/appimagetool/releases/tag/1.9.1",
         "upstream": {
             "repository": "AppImage/appimagetool",
             "track": "versions",
-            "tag": "1.9.0",
-            "commit": "81ee1db4946780292cd046d4c269a9b4fd7bc29d",
+            "tag": "1.9.1",
+            "commit": "8c8c91f762b412a19f4e8d2c4b35afb98f2d7c81",
             "uploader": "github-actions[bot]"
         },
         "x64": {
-            "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage",
-            "sha256": "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1"
+            "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage",
+            "sha256": "ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0"
         },
         "arm64": {
-            "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-aarch64.AppImage",
-            "sha256": "04f45ea45b5aa07bb2b071aed9dbf7a5185d3953b11b47358c1311f11ea94a96"
+            "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-aarch64.AppImage",
+            "sha256": "f0837e7448a0c1e4e650a93bb3e85802546e60654ef287576f46c71c126a9158"
         }
     },
     "appimageRuntime": {
