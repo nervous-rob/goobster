@@ -137,6 +137,12 @@ function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onRevi
             <div className="assistant-row-main">
                 <strong>{item.title}</strong>
                 {item.summary && <div className="hint">{item.summary}</div>}
+                {item.audience?.kind === 'project' && (
+                    <div className="hint" data-testid="assistant-brief-producer">
+                        Shared with this project
+                        {item.producer && (item.producer.you ? ' by you' : ` by ${item.producer.name ? `${item.producer.name}'s` : 'a member\'s'} assistant`)}
+                    </div>
+                )}
                 <div className="row-meta">
                     {item.componentIds.map((id) => COMPONENT_META[id as AssistantComponent['id']]?.label).filter(Boolean).join(' · ')}
                     {' · '}<span title={item.happenedAt}>{formatRelativeTime(`${item.happenedAt.replace(' ', 'T')}Z`)}</span>

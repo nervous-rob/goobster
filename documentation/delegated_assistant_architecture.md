@@ -1018,6 +1018,21 @@ is shown; private sources are not quoted into a project finding unless the
 grant's `scopes.audience` is `project` and the source is the project's own;
 a member's receipt is deleted when they leave.
 
+*Implemented (DA-11c):* `services/assistant/projectAudience.js` decides, at
+publish time, whether a run's finding is shared: the grant asks
+(`scopes.audience: 'project'`), the pilot gate allows `reach`, the owner still
+reads the project, the initiative's source is the project's own
+(`project_plan`, `project_plan_step`, or a `conversation_request` whose origin
+is that project's conversation) and the run read no `source: 'private'` tool
+(which a sharing run is never offered). Otherwise the finding is private and
+the owner's notice says why. Visibility is the existing membership rule;
+`assistant_updates.producer_user_id` is shown through `present()` as
+`producer: { name, you }`, and `responsibilityId`/`initiativeId` are visible
+to the producer only. A receipt is deleted by `forgetMemberReceipts` when a
+member leaves or is removed, by `forgetProject` when the project is deleted,
+and by `sweepProjectReceipts` in the retention pass for anything missed.
+Behaviour: [delegated_project_findings.md](delegated_project_findings.md).
+
 **Outside connectors.** A connector is a typed adapter:
 
 ```text

@@ -430,6 +430,9 @@ export type AssistantNeedsYouItem = {
 };
 export type AssistantBriefItem = {
     id: number; revision: number; kind: string; title: string; summary: string | null; componentIds: string[];
+    /** `project` when the finding was shared with a project's members; `producer` says whose assistant found it. */
+    audience?: { kind: 'private' } | { kind: 'project'; projectId: number };
+    producer?: { name: string | null; you: boolean } | null;
     responsibilityId: number | null; initiativeId: number | null; actions: AssistantAction[];
     inboxItemId: number | null; happenedAt: string;
 };
