@@ -9,10 +9,11 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
 canonical updates and process observations), the read-only DA-2 Home, the
-DA-3 runner, DA-4a (the assistant plan step, carried out under a
-responsibility and verified) and DA-7a (deciding a request on Home and in
-the Inbox) are implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-4a recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
+DA-3 runner, DA-4 (the assistant plan step, carried out under a
+responsibility and verified; requests made in conversation, changes of
+direction and project boards on the canonical gates) and DA-7a (deciding a
+request on Home and in the Inbox) are implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-4a and DA-4b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -73,9 +74,9 @@ increment done because its proposal exists.
 | --- | --- | --- | --- |
 | DA-0: baseline and decisions | Done: [ADR 0016](adr/0016-delegated-responsibilities.md) (pilot numbers still to be recorded by the owner) | None | Revalidated source inventory; exact schema/API/feature choices and recorded pilot policy |
 | DA-1: responsibility and change contracts | Done: grants (DA-1a), opportunities and source cursors (DA-1b), canonical updates and receipts (DA-1c), process catalog and observations (DA-1d); see [delegated_responsibilities.md](delegated_responsibilities.md), [ADR 0017](adr/0017-initiatives-updates-processes.md). Retention: observations 90 days, finished initiatives 180, settled updates 180 | DA-0 | Explicit delegated authority, canonical update identity, typed observations, lifecycle/privacy coverage |
-| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Still open: briefing feedback, Conversations signals, project boards reading the canonical gates, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
+| DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Project boards read the canonical gates since DA-4b. Still open: briefing feedback, Conversations signals, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
 | DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
-| DA-4: project continuity | In progress. Done (DA-4a): the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). Planned (DA-4b): opportunities derived from conversations, supersession when a person steers, project boards reading the canonical gates | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
+| DA-4: project continuity | Done. DA-4a: the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). DA-4b: requests a person addresses to Goobster in a project conversation or a discussion become proposed work by fixed rules (no model reads conversations), with a link back and a private result; a change of direction supersedes that person's unfinished work from the conversation and names what rested on it; plan-step work is withdrawn as soon as its plan moves on; project boards read the canonical gates and decide through the gate registry ([delegated_conversation_requests.md](delegated_conversation_requests.md), [assistant_home.md](assistant_home.md#project-boards), [ADR 0021](adr/0021-conversation-requests-and-steering.md)). Left for later increments: model classification, conversation context and one-to-one chat (DA-8); project-audience findings and replies posted into a conversation (DA-11c) | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
@@ -253,10 +254,10 @@ locks/revision checks must protect human work across multiple conversations.
 Exit scenarios:
 
 - A discussion proposes a library comparison; Goobster researches it under a grant
-   without inventing a commitment to migrate. (Planned, DA-4b.)
+   without inventing a commitment to migrate. (Done, DA-4b, for a request addressed to Goobster.)
 - An eligible step advances once, produces the required artifacts, and links evidence. (Done, DA-4a.)
 - Editing approved scope invalidates stale dispatch authority before execution. (Done, DA-4a.)
-- User steering supersedes queued work and identifies downstream assumptions. (Planned, DA-4b.)
+- User steering supersedes queued work and identifies downstream assumptions. (Done, DA-4b.)
 - A collaborator's request runs as that collaborator, with an explicit payer. (Done, DA-4a, for each
    person's own responsibility; shared responsibilities are deferred.)
 - Private chat evidence is not copied into a shared project by a helpful summary. (Done, DA-4a.)
@@ -267,9 +268,27 @@ Exit scenarios:
 [ADR 0019](adr/0019-delegated-plan-steps.md)): the second paragraph above
 (the `agent` step, delegated execution as a supported path, no forged
 receipt) and the parts of the third that concern artifacts, evidence and
-private material. The first paragraph (opportunity extraction from
-conversations) and linking back to the initiating conversation are still
-planned for DA-4b.
+private material.
+
+**Shipped in DA-4b**
+([delegated_conversation_requests.md](delegated_conversation_requests.md),
+[ADR 0021](adr/0021-conversation-requests-and-steering.md)): the first
+paragraph, for explicit requests. A message a person addresses to Goobster
+in a project conversation or a discussion a responsibility covers becomes a
+proposed initiative (source kind `conversation_request`) that stores a
+reference to the message, links back to the conversation and reports
+privately to the asker. Recognition is fixed text matching; the run is
+given that one message. A change of direction in the same conversation
+supersedes the person's unfinished work from it (`STEERED`) and one update
+names what rested on it. Plan-step work is superseded on every look once its
+plan revision, plan status or step no longer match. Project Needs-you
+boards are a read over the canonical gates and decide through
+`assistantGateService.decide` with surface `project`.
+
+Not in DA-4b, by owner decision 4 and the conservative reading: a model
+reading conversations for implied requests, conversation context in a run,
+and one-to-one chat (DA-8); findings for a project audience and anything
+posted back into the conversation (DA-11c).
 
 ### DA-5: keep processes healthy and useful
 

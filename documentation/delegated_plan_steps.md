@@ -81,6 +81,12 @@ delegate the same project, one of them gets the step; the other's work ends
 | The responsibility was paused, revoked, completed or expired, or the work was cancelled | A running step stops at its next call and goes back to *ready*. Nothing is published. |
 | The person lost access to the project | See [Losing access](#losing-access). |
 
+Proposed, queued and waiting work is checked against the plan on every look
+(about two seconds after a plan event, and every 5 minutes), not only when
+it starts, so it is withdrawn as soon as the plan moves on. A step that was
+removed or is no longer an assistant step ends the work *superseded*
+(`NO_STEP`).
+
 A superseded attempt is not proposed again by itself for the same plan
 revision. *Try again* on it opens a new attempt, which is checked the same
 way.
@@ -234,7 +240,8 @@ detail: `NO_ARTIFACT`, `ARTIFACT_NOT_WRITTEN`, `ARTIFACT_MISSING`,
 
 ## Not built yet
 
-Work proposed from what was said in a conversation, stopping queued work
-when you change direction in chat, and project boards that read the same
-requests as Home (DA-4b); an update shared with everyone on the project;
-responsibilities shared between people.
+An update shared with everyone on the project; responsibilities shared
+between people. Requests made in conversation, changes of direction and
+project boards that read the same requests as Home shipped with DA-4b:
+[delegated_conversation_requests.md](delegated_conversation_requests.md),
+[assistant_home.md](assistant_home.md#project-boards).

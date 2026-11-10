@@ -143,7 +143,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                             <label>
                                 <input type="checkbox" checked={projectRequests} data-testid="responsibility-project-requests"
                                     onChange={(e) => setProjectRequests(e.target.checked)} />{' '}
-                                Take requests you address to Goobster in this project&apos;s conversations
+                                Take requests you address to {me.assistant.name} in this project&apos;s conversations
                             </label>
                         </>
                     )}
@@ -154,14 +154,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 <label>
                     <input type="checkbox" checked={parlorRequests} data-testid="responsibility-parlor-requests"
                         onChange={(e) => setParlorRequests(e.target.checked)} />{' '}
-                    Take requests you address to Goobster in your discussions
+                    Take requests you address to {me.assistant.name} in your discussions
                 </label>
                 {(parlorRequests || (projectId && projectRequests)) && (
                     <div className="hint">
-                        Only a message you write yourself that calls Goobster by name and asks for something, such as
-                        &quot;Goobster, compare library X and library Y&quot;. Each becomes proposed work here, within what this
-                        responsibility allows; the result comes to you, not into the conversation. &quot;Goobster, stop&quot; or
-                        &quot;Goobster, actually ...&quot; withdraws what you asked for there before. Nobody else&apos;s messages are read.
+                        Only a message you write yourself that calls {me.assistant.name} by name and asks for something, such as
+                        &quot;{me.assistant.name}, compare library X and library Y&quot;. Each becomes proposed work here, within what this
+                        responsibility allows; the result comes to you, not into the conversation. &quot;{me.assistant.name}, stop&quot; or
+                        &quot;{me.assistant.name}, actually ...&quot; withdraws what you asked for there before. Nobody else&apos;s messages are read.
                     </div>
                 )}
             </fieldset>

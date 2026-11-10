@@ -193,6 +193,21 @@ describe('what counts as a request', () => {
     });
 });
 
+describe('the name a message must use', () => {
+    const identityConfig = require('@goobster/core/config/identityConfig');
+    const original = identityConfig.assistantName;
+    afterEach(() => { identityConfig.assistantName = original; });
+
+    test('it is the name this installation gives its assistant', () => {
+        identityConfig.assistantName = 'Juniper';
+        expect(rules.parse('Juniper, compare Fastify and Hono')).toMatchObject({ addressed: true, request: true });
+        expect(rules.parse('@juniper please look into the flaky test')).toMatchObject({ request: true });
+        expect(rules.parse('Goobster, compare Fastify and Hono')).toMatchObject({ addressed: false, request: false });
+        identityConfig.assistantName = '';
+        expect(rules.parse('Goobster, compare Fastify and Hono')).toMatchObject({ request: true });
+    });
+});
+
 describe('the grant', () => {
     test('a project conversation source needs the project it belongs to', async () => {
         await policies.enroll({ userId: A, initiative: 'assist' });
@@ -673,5 +688,34 @@ describe('a plan that moved on', () => {
         await initiatives.settle({ id: first.id, leaseToken: claimed.leaseToken, status: 'WAITING', waitReason: 'budget', stopCode: 'TOKEN_BUDGET' });
         await look(grant);
         expect(await row(first.id)).toMatchObject({ status: 'WAITING', stopCode: 'TOKEN_BUDGET' });
+    });
+});
+
+describe('erasure', () => {
+    test('forget-me removes the work a person asked for, and the reference to them on anyone else\'s', async () => {
+        const privacyService = require('@goobster/core/services/privacyService');
+        const { pid, conversationId } = await project({ members: [B] });
+        const grant = await delegate({ pid });
+        await look(grant);
+        const asked = await say(A, conversationId, 'Goobster, compare Fastify and Hono');
+        await lookLater(grant);
+        expect(await rows(`ownerUserId = '${A}'`)).toHaveLength(1);
+
+        // Work on someone else's grant that names the erased person as its speaker.
+        const theirs = await delegate({ userId: B, pid });
+        await look(theirs);
+        await say(B, conversationId, 'Goobster, compare Koa and Hono');
+        await lookLater(theirs);
+        await db.run('UPDATE assistant_responsibilities SET actingUserId = @A WHERE id = @id', { A, id: theirs.id });
+        await db.run(
+            'UPDATE assistant_initiatives SET actingUserId = @A, originJson = @origin WHERE responsibilityId = @id',
+            { A, id: theirs.id, origin: JSON.stringify({ kind: 'parlor_message', surface: 'project', conversationId, messageId: asked, speakerUserId: A }) }
+        );
+
+        await privacyService.forgetUser({ userId: A });
+        expect(await rows(`ownerUserId = '${A}'`)).toEqual([]);
+        const [kept] = await rows(`responsibilityId = ${theirs.id}`);
+        expect(kept).toMatchObject({ ownerUserId: B, actingUserId: null, originJson: null, status: 'CANCELLED', stopCode: 'PRINCIPAL_ERASED' });
+        expect(JSON.stringify(await rows())).not.toContain(A);
     });
 });

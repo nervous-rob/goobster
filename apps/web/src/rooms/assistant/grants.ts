@@ -1,4 +1,4 @@
-import type { ResponsibilityOperation } from '../../lib/types';
+import type { Responsibility, ResponsibilityOperation } from '../../lib/types';
 
 /** Plain words for what a responsibility grants. */
 
@@ -49,4 +49,14 @@ export function describeGrants(operations: ResponsibilityOperation[], projects: 
         byResource.set(where, [...(byResource.get(where) || []), OPERATION_TEXT[entry.operation] || entry.operation]);
     }
     return [...byResource.entries()].map(([where, verbs]) => `${verbs.join(', ')}: ${where}`);
+}
+
+/** Where it takes requests addressed to the assistant, in plain words (delegated_conversation_requests.md). */
+export function describeListening(item: Pick<Responsibility, 'scopes'>, name: string): string | null {
+    const sources = item.scopes?.sources || [];
+    const places = [
+        sources.includes('project_chat') ? 'its project\'s conversations' : null,
+        sources.includes('parlor') ? 'your discussions' : null
+    ].filter(Boolean);
+    return places.length ? `Takes requests you address to ${name} in ${places.join(' and ')}` : null;
 }

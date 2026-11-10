@@ -7,7 +7,9 @@
  * rule a person can read is one they can predict.
  *
  * A message is a request when both hold:
- *  1. it addresses Goobster: his name opens or closes the message
+ *  1. it addresses the assistant by the name this installation gives him
+ *     (`identity.assistantName`, "Goobster" unless changed): the name
+ *     opens or closes the message
  *     ("Goobster, ...", "Hey Goobster ...", "... , Goobster?"), or it
  *     @-mentions him anywhere ("@Goobster");
  *  2. what is left asks for a piece of work: an optional polite form
@@ -25,6 +27,15 @@
  */
 
 const ASSISTANT_NAME = 'Goobster';
+
+/** The name this installation gives its assistant (`identity.assistantName`). */
+function assistantName() {
+    try {
+        return String(require('../../config/identityConfig').assistantName || '').trim() || ASSISTANT_NAME;
+    } catch {
+        return ASSISTANT_NAME;
+    }
+}
 
 /** Words that may come before the name without changing who is addressed. */
 const GREETINGS = ['hey', 'hi', 'hello', 'ok', 'okay', 'so', 'and', 'also', 'thanks', 'thank you', 'please'];
@@ -76,7 +87,7 @@ function normalize(text) {
  * Strip the address from a message.
  * @returns {string|null} what is left, or null when Goobster is not addressed
  */
-function addressed(text, name = ASSISTANT_NAME) {
+function addressed(text, name = assistantName()) {
     const value = normalize(text);
     const who = escape(name);
     const lead = new RegExp(`^(?:(?:${alternation(GREETINGS)})${SEPARATORS}+)*@?${who}(?![\\p{L}\\p{N}])${SEPARATORS}*`, 'iu');
@@ -104,7 +115,7 @@ function asksForWork(clause) {
  * @returns {{ addressed: boolean, steer: boolean, request: boolean, text: string }}
  *   `text` is the normalized remainder used to tell two requests apart.
  */
-function parse(text, name = ASSISTANT_NAME) {
+function parse(text, name = assistantName()) {
     const rest = addressed(text, name);
     if (rest === null || !rest) return { addressed: rest !== null, steer: false, request: false, text: '' };
     const negation = NEGATION_RE.exec(rest);
@@ -131,4 +142,4 @@ function parse(text, name = ASSISTANT_NAME) {
     };
 }
 
-module.exports = { ASSISTANT_NAME, POLITE, WORK_VERBS, STEERING, NEGATIONS, normalize, addressed, asksForWork, parse };
+module.exports = { ASSISTANT_NAME, assistantName, POLITE, WORK_VERBS, STEERING, NEGATIONS, normalize, addressed, asksForWork, parse };
