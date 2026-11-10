@@ -79,6 +79,9 @@ function conversationPath(actions: AssistantAction[] | undefined): string | null
 
 function statusLine(assistant: AssistantHome): string {
     const counts = assistant.responsibilities.counts;
+    if (assistant.hostPaused && assistant.availability !== 'unavailable') {
+        return 'The host has stopped all delegated work for now. Nothing is lost; it continues when they resume it.';
+    }
     switch (assistant.availability) {
         case 'unavailable': return 'Delegated work is turned off on this installation.';
         case 'attention_off': return 'Attention is off, so nothing is delegated and no new work starts.';

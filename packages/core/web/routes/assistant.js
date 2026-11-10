@@ -18,6 +18,8 @@ const initiatives = require('../../services/assistantInitiativeService');
 const updates = require('../../services/assistantUpdateService');
 const processes = require('../../services/assistantProcessService');
 const gates = require('../../services/assistantGateService');
+const control = require('../../services/assistantControlService');
+const access = require('../../services/assistantAccessService');
 
 function mountAssistant(app, ctx, h) {
     const { requireAuth, assistantRoute: route } = h;
@@ -73,6 +75,15 @@ function mountAssistant(app, ctx, h) {
     // the cutoff, the history it will not act on, and today's proposal counts.
     app.get(`${base}/:id/sources`, requireAuth, route(async (req) => initiatives.sourcesOverview({
         userId: req.webUser.userId, id: req.params.id
+    })));
+
+    // What the host's policy means for this person: whether delegated work
+    // is stopped, the budget a responsibility gets when it sets none (also
+    // the most it can set), and which pilot capabilities they have.
+    app.get('/api/app/assistant/access', requireAuth, route(async (req) => ({
+        hostPaused: await control.isPaused(),
+        budgetDefaults: await control.budgetDefaults(),
+        ...(await access.describe(req.webUser.userId))
     })));
 
     // --- Initiatives (attempts derived from linked sources) ----------------

@@ -13,6 +13,7 @@ import { MenuButton } from '../shell/MenuButton';
 import { FailureList, ResourceTotals, failureKindLabel } from '../components/WorkLedger';
 import { FeaturesPage } from './host/FeaturesPage';
 import { SchedulesPage } from './host/SchedulesPage';
+import { AssistantPage } from './host/AssistantPage';
 import { ConnectionsPage, DefaultsPage } from './host/ConfigPages';
 import { LifecyclePanel } from './host/LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './host/ManagerCard';
@@ -505,6 +506,10 @@ const AUDIT_ACTION_LABEL: Record<string, string> = {
     'limits.change': 'changed a limit',
     'capability-gap.status': 'triaged a capability gap',
     'capability-gap.delete': 'deleted a capability gap',
+    'assistant.pause_all': 'stopped all delegated work',
+    'assistant.resume_all': 'resumed delegated work',
+    'assistant.set_caps': 'changed the delegated work caps',
+    'assistant.pilot_decision': 'recorded the pilot decision',
     'host.features.apply': 'applied a feature change',
     'host.config.apply': 'applied a connection or setting change',
     'host.defaults.apply': 'applied an instance default change',
@@ -551,7 +556,7 @@ function AuditPanel() {
     return (
         <section className="settings-section" aria-labelledby="host-audit-title" data-testid="host-audit">
             <h2 id="host-audit-title">Operator audit</h2>
-            <p className="hint">Every change made from this room - accounts, invitations, sign-up, limits and the instance itself - kept for one year. Never a token or a password.</p>
+            <p className="hint">Every change made from this room - accounts, invitations, sign-up, limits, delegated work and the instance itself - kept for one year. Never a token or a password.</p>
             {audit.isPending && <div className="hint">Loading…</div>}
             {audit.isError && <div className="hint">{(audit.error as Error).message}</div>}
             {audit.data && entries.length === 0 && <div className="hint">Nothing recorded yet.</div>}
@@ -749,6 +754,7 @@ function ReportPanel() {
 const HOST_PAGES = [
     { id: 'overview', name: 'Overview' },
     { id: 'schedules', name: 'Schedules' },
+    { id: 'assistant', name: 'Delegated work' },
     { id: 'features', name: 'Features' },
     { id: 'connections', name: 'Connections' },
     { id: 'defaults', name: 'Instance Defaults' },
@@ -807,6 +813,7 @@ export function HostRoom() {
                 {!operator && <div className="empty">Only the host of this installation can open this room.</div>}
                 {operator && page === 'overview' && <OverviewPage />}
                 {operator && page === 'schedules' && <SchedulesPage />}
+                {operator && page === 'assistant' && <AssistantPage />}
                 {operator && page === 'features' && <FeaturesPage />}
                 {operator && page === 'connections' && <ConnectionsPage />}
                 {operator && page === 'defaults' && <DefaultsPage />}

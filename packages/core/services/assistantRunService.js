@@ -37,11 +37,21 @@ const db = require('../db');
 const logger = require('../utils/logger');
 const workContext = require('../utils/workContext');
 const workFailureService = require('./workFailureService');
+const assistantConfig = require('../config/assistantConfig');
+const control = require('./assistantControlService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
 
-/** Used when the responsibility sets no budget of its own (per UTC day). */
-const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20, computeSeconds: 120 };
+/**
+ * Used when the responsibility sets no budget of its own (per UTC day), and
+ * the most its own budget can allow. These are the configured values; what
+ * the host set in the Host room wins (assistantControlService.budgetDefaults).
+ */
+const DEFAULT_BUDGETS = Object.freeze({
+    modelTokens: assistantConfig.defaultModelTokens,
+    searches: assistantConfig.defaultSearches,
+    computeSeconds: assistantConfig.defaultComputeSeconds
+});
 const MAX_ROUNDS = 8;
 const RUN_DEADLINE_MS = 10 * 60 * 1000;
 const REPLY_TOKENS = 1200;
@@ -51,7 +61,7 @@ const CHILD_RECHECK_MS = 5 * 60 * 1000;
 /** authorize() codes after which the run cannot continue at all. */
 const STOP_CODES = new Set([
     'RESPONSIBILITY_NOT_FOUND', 'RESPONSIBILITY_REVOKED', 'RESPONSIBILITY_EXPIRED', 'RESPONSIBILITY_INACTIVE',
-    'REVISION_CONFLICT', 'ACTOR_MISMATCH', 'ATTENTION_NOT_ENROLLED', 'FEATURE_UNAVAILABLE'
+    'REVISION_CONFLICT', 'ACTOR_MISMATCH', 'ATTENTION_NOT_ENROLLED', 'FEATURE_UNAVAILABLE', 'ASSISTANT_PAUSED'
 ]);
 
 function utcText(date = new Date()) {
@@ -147,11 +157,17 @@ class AssistantRunService {
         return map;
     }
 
-    /** The grant's daily caps: its own numbers, or the defaults when unset. */
-    budgets(responsibility) {
+    /**
+     * The grant's daily caps: the host's default when it sets none, and
+     * never more than that default when it does (a responsibility's own
+     * budget can be lower than the host's number, not higher).
+     * @param {{ budgetsJson?: string }} responsibility
+     * @param {{ modelTokens: number, searches: number, computeSeconds: number }} [hostDefaults]
+     */
+    budgets(responsibility, hostDefaults = DEFAULT_BUDGETS) {
         let stored = {};
         try { stored = JSON.parse(responsibility.budgetsJson || '{}') || {}; } catch { stored = {}; }
-        const pick = (key) => (Number.isSafeInteger(stored[key]) ? stored[key] : DEFAULT_BUDGETS[key]);
+        const pick = (key) => (Number.isSafeInteger(stored[key]) ? Math.min(stored[key], hostDefaults[key]) : hostDefaults[key]);
         return { modelTokens: pick('modelTokens'), searches: pick('searches'), computeSeconds: pick('computeSeconds') };
     }
 
@@ -402,7 +418,7 @@ class AssistantRunService {
         const run = await this._open(initiative, responsibility);
         const actor = responsibility.actingUserId || responsibility.ownerUserId;
         const project = await this._project(responsibility);
-        const budgets = this.budgets(responsibility);
+        const budgets = this.budgets(responsibility, await control.budgetDefaults());
         const used = await this._usedToday(responsibility.id, run.id, now);
         const { features } = require('../features/featureState');
         const planStep = initiative.planStep || null;
@@ -447,14 +463,23 @@ class AssistantRunService {
             halt(code) { if (!this.stop) this.stop = code; },
             heartbeat: async () => {
                 if (shouldStop()) { ctx.halt('RUNNER_STOPPING'); return false; }
+                if (await ctx.hostStopped()) return false;
                 const alive = await initiatives.renewLease({ id: initiative.id, leaseToken });
                 if (!alive) ctx.halt('LEASE_LOST');
                 else await db.run('UPDATE assistant_runs SET heartbeatAt = @now WHERE id = @id', { id: run.id, now: utcText() });
                 return alive;
             },
+            // The host's stop-all, read from the database so every process agrees.
+            hostStopped: async () => {
+                const paused = await control.isPaused();
+                if (paused) ctx.halt(control.PAUSED_CODE);
+                return paused;
+            },
             account: async () => {
                 ctx.tokens = Math.max(ctx.tokens, await this.tokensFor(run.id));
                 if (ctx.used.tokens + ctx.tokens >= ctx.budgets.modelTokens) ctx.halt('TOKEN_BUDGET');
+                // Checked after each step too, so no further model round starts.
+                await ctx.hostStopped();
             }
         };
 
@@ -554,6 +579,11 @@ class AssistantRunService {
             failure = error;
         }
         try { ctx.tokens = Math.max(ctx.tokens, await this.tokensFor(run.id)); } catch { /* keep the last known figure */ }
+        // A stop that landed during the last model call: work that has not
+        // reported yet waits like the rest, and reports after the resume.
+        if (!failure && !ctx.stop && !ctx.result) {
+            try { await ctx.hostStopped(); } catch { /* the flag could not be read; the settle below decides */ }
+        }
 
         if (failure) {
             const code = failure.code === 'BUDGET_EXCEEDED' ? 'ACCOUNT_BUDGET'
@@ -592,6 +622,8 @@ class AssistantRunService {
         }
         if (ctx.stop === 'CHILD_PENDING') return park('dependency', 'CHILD_PENDING', new Date(now.getTime() + CHILD_RECHECK_MS));
         if (ctx.stop === 'TOKEN_BUDGET' && !ctx.result) return park('budget', 'TOKEN_BUDGET', nextDay(now));
+        // Stopped by the host: it waits, and a resume puts it back in the queue.
+        if (ctx.stop === control.PAUSED_CODE && !ctx.result) return park('dependency', control.PAUSED_CODE, null);
         if (ctx.stop && !ctx.result) {
             // The grant stopped covering the work (paused, revoked, expired,
             // edited), or the person lost the project of a plan step.
