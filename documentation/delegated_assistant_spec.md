@@ -653,7 +653,8 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; none of this is available.** Increments DA-7 through
+**Status: planned; one item is available** (answering a request on Home and
+in the Inbox, marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -671,7 +672,10 @@ DA-12. The technical contracts are in
   assistant can never start, resume or widen one by itself.
 - A request can be answered where you see it: on Home, in the Inbox, in the
   notification or in chat. The choice shown is the concrete decision, with
-  what it will change.
+  what it will change. **Available on Home and in the Inbox** for a friend
+  request, a request to join and a mission plan to approve or start
+  ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown));
+  the notification and chat are planned.
 - A spoken briefing tells you what needs you and what changed. Hearing it
   does not mark anything reviewed.
 
