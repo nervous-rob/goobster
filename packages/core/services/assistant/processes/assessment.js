@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Process health and relevance, as pure functions (DA-5a, ADR 0019).
+ * Process health and relevance, as pure functions (DA-5a, ADR 0020).
  *
  * A process is judged on two separate axes from typed evidence only:
  *  - execution: healthy, degraded, blocked, stalled, unreachable, unknown

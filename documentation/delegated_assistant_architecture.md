@@ -9,7 +9,7 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes), 8
 (assessment and incidents only) and 9 are implemented as recorded in ADR
-0016, 0017, 0018 and 0019; the rest, and all of section 13 except "Deciding a
+0016, 0017, 0018 and 0020; the rest, and all of section 13 except "Deciding a
 request in place" (13.1), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
@@ -402,7 +402,7 @@ settled outcome of project-trigger jobs, the two-axis assessment, incident
 grouping with hysteresis and cooldown, the `process_health` and
 `process_relevance` generators and the Home Processes card reading the
 assessment. See [process_stewardship.md](process_stewardship.md) and
-[ADR 0019](adr/0019-process-assessment-and-incidents.md). It observes and
+[ADR 0020](adr/0020-process-assessment-and-incidents.md). It observes and
 reports only. Repair and retirement (pause, archive, restore, cleanup) are
 still planned.
 

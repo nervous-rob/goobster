@@ -1,4 +1,4 @@
-# ADR 0019: Process health and relevance are computed on read from typed observations; only incidents are stored
+# ADR 0020: Process health and relevance are computed on read from typed observations; only incidents are stored
 
 ## Status
 

@@ -28,7 +28,7 @@ changed only where you made it.
 It builds on the process catalog, contracts and typed observations described
 in [delegated_responsibilities.md](delegated_responsibilities.md#processes).
 The design decisions are in
-[ADR 0019](adr/0019-process-assessment-and-incidents.md).
+[ADR 0020](adr/0020-process-assessment-and-incidents.md).
 
 ## Where you see it
 

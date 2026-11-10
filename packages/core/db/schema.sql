@@ -3760,7 +3760,7 @@ CREATE TABLE IF NOT EXISTS assistant_run_operations (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_run_operations_owner ON assistant_run_operations(ownerUserId, createdAt);
 
--- Process incidents (DA-5a, ADR 0019): one row per cause and occurrence.
+-- Process incidents (DA-5a, ADR 0020): one row per cause and occurrence.
 -- incidentKey is 'cause:<CODE>' for an upstream cause several processes
 -- share, else 'process:<kind>:<id>'. OPEN while anything in it is failing,
 -- RECOVERING through the cooldown, then RESOLVED; a later failure streak is
