@@ -76,7 +76,7 @@ function actionPath(action: AssistantAction | undefined): { to: string; hash?: s
 /** The conversation an update came from, when it names one and that is not already where "Open" leads. */
 function conversationPath(actions: AssistantAction[] | undefined): string | null {
     const index = (actions || []).findIndex((action) => action.kind === 'open_conversation');
-    return index > 0 ? actionPath(actions?.[index]) : null;
+    return index > 0 ? actionPath(actions?.[index])?.to ?? null : null;
 }
 
 function statusLine(assistant: AssistantHome): string {
@@ -145,7 +145,7 @@ function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onRevi
             </div>
             <div className="assistant-row-actions">
                 {target && <Link to={target.to as never} hash={target.hash} className="btn subtle">Open →</Link>}
-                {conversation && <Link to={conversation.to as never} className="btn subtle" data-testid="assistant-brief-conversation">Conversation</Link>}
+                {conversation && <Link to={conversation as never} className="btn subtle" data-testid="assistant-brief-conversation">Conversation</Link>}
                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onReviewed([item])}>Mark reviewed</button>
             </div>
         </li>
