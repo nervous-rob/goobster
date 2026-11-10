@@ -144,6 +144,7 @@ created through the API.
     "schemaVersion": 1,
     "asOf": "2026-11-09T22:30:00.000Z",
     "availability": "ready",
+    "hostPaused": false,
     "freshness": { "state": "current", "lastPassAt": "2026-11-09T22:28:00.000Z" },
     "responsibilities": { "counts": { "active": 1, "paused": 0, "needsReview": 0, "draft": 0 }, "items": [] },
     "counts": { "unseen": 1, "needsAction": 1, "running": 0 },
@@ -155,7 +156,10 @@ created through the API.
   ```
 
   `availability` is `ready`, `paused`, `none_delegated`, `attention_off`,
-  `unavailable` (feature off) or `unknown`. Component `state` is
+  `unavailable` (feature off) or `unknown`. `hostPaused` is `true` while the
+  host has [stopped all delegated work](delegated_operations.md#stop-all)
+  (Home then says so in place of the status line), `false` otherwise, and
+  `null` when it could not be read or the feature is off. Component `state` is
   `needs_you`, `blocked`, `working`, `updates`, `quiet`, `unknown` or
   `unavailable`. `assistant` is `null` only if the projection itself failed;
   the rest of the Home payload is unaffected.

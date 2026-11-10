@@ -110,7 +110,8 @@ const STOP_TEXT: Record<string, string> = {
     NO_RESULT: 'It finished without a result. You can try again.',
     OPERATION_UNCERTAIN: 'A step may or may not have happened. Check before trying again.',
     REPLAN_REQUIRED: 'The responsibility changed since this was proposed.',
-    LEASE_EXPIRED: 'It was interrupted and will pick up where it left off.'
+    LEASE_EXPIRED: 'It was interrupted and will pick up where it left off.',
+    ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.'
 };
 
 /** What a queued run may use, stated before the person starts it. */

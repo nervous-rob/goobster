@@ -790,6 +790,21 @@ async function main() {
             aiService.chat = original;
         }
     });
+    // Host controls for delegated work (hostAssistant.spec.js): back to a
+    // fresh installation's state - running, default caps, no pilot decision -
+    // so a failed journey cannot leave every later spec's runs stopped.
+    app.post('/e2e/fixtures/assistant-controls/reset', express.json(), async (_req, res) => {
+        try {
+            const control = require('@goobster/core/services/assistantControlService');
+            const access = require('@goobster/core/services/assistantAccessService');
+            const state = require('@goobster/core/services/instanceStateService');
+            await control.resumeAll();
+            for (const key of [control.KEY_CAPS, control.KEY_PAUSED, access.KEY_PILOT]) await state.remove(key);
+            res.json({ ok: true });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {

@@ -3,6 +3,7 @@ import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThr
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
 import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative } from './types';
+import type { AdminAssistantView, AssistantCapField } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 
 export class ApiError extends Error {
@@ -179,6 +180,13 @@ export const api = {
     adminInstallation: () => request<InstallationView>('/api/app/admin/installation'),
     adminLimits: () => request<AdminLimits>('/api/app/admin/limits'),
     adminSetLimits: (body: TokenLimits) => request<TokenLimits>('/api/app/admin/limits', { method: 'PATCH', body }),
+    adminAssistant: (days = 14) => request<AdminAssistantView>(`/api/app/admin/assistant?days=${days}`),
+    adminAssistantPause: () => request<AdminAssistantView>('/api/app/admin/assistant/pause', { method: 'POST' }),
+    adminAssistantResume: () => request<AdminAssistantView>('/api/app/admin/assistant/resume', { method: 'POST' }),
+    adminAssistantCaps: (body: Partial<Record<AssistantCapField, number | null>>) =>
+        request<AdminAssistantView>('/api/app/admin/assistant/caps', { method: 'PATCH', body }),
+    adminAssistantPilot: (scope: 'owner' | 'everyone') =>
+        request<AdminAssistantView>('/api/app/admin/assistant/pilot', { method: 'POST', body: { scope } }),
     adminInstance: () => request<InstanceStateView>('/api/app/admin/instance'),
     adminInstanceResume: () =>
         request<{ paused: null; skipped: SkippedSchedules; state: InstanceStateView }>('/api/app/admin/instance/resume', { method: 'POST' }),

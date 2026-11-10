@@ -9,7 +9,7 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
 are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13, is planned.** Updated 2026-11-09.
+section 13 except the host's controls in 13.6, is planned.** Updated 2026-11-09.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -736,7 +736,8 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned; nothing in this section is implemented.** These are the
+**Status: planned, except the host's controls in 13.6 (DA-12a), which are
+implemented; nothing else in this section is.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -967,27 +968,46 @@ responsibility.
 
 ### 13.6 Operator controls and evaluation (DA-12)
 
-- **Host view.** `GET /api/app/admin/assistant` returns counts by state,
-  runs and tokens per day, failures by code and the oldest waiting age.
-  It returns no title, prompt, result or journal text, and names accounts by
-  id only (the host already sees account ids).
-- **Controls**, each writing one `operator_audit` row:
-  `assistant.pause_all` / `assistant.resume_all` (a flag in `instance_state`
-  the runner and `authorize()` both read, so running work halts at its next
-  call), `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
-  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`).
-- **Caps as configuration.** The numbers hard-coded today
-  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) move to a stored
-  policy with those values as defaults. A responsibility's own budget may be
-  lower than the default, never higher than a host-set ceiling.
-- **Evaluation set.** `tests/live/assistant.live.test.js` (skipped without
-  keys, never in required CI): fixed fictional responsibilities and seeded
-  sources, run against a real provider. It records, per model and prompt
-  version: refused calls, writes attempted outside the grant, injected
+**Status: the host view, the controls, caps as configuration, the pilot
+gate and the pilot record are implemented (DA-12a); the behaviour is in
+[delegated_operations.md](delegated_operations.md). The evaluation set is
+planned (DA-12b).**
+
+- **Host view (implemented).** `GET /api/app/admin/assistant` returns counts
+  by state, runs, tokens, searches and sandbox seconds per day, failures and
+  refusals by code and the oldest queued and waiting age. It returns no
+  title, prompt, result or journal text, and names accounts by id only (the
+  host already sees account ids).
+- **Controls (implemented)**, each writing one `operator_audit` row:
+  `assistant.pause_all` / `assistant.resume_all` (the flag
+  `instance_state.assistantPaused`, read by the runner, the claim, every
+  run's heartbeat and `authorize()`, so running work halts at its next
+  call and waits as `ASSISTANT_PAUSED` until the resume requeues it),
+  `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
+  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`) and
+  `assistant.pilot_decision`.
+- **Caps as configuration (implemented).** The numbers that were hard-coded
+  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) are a stored policy
+  (`instance_state.assistantCaps` over `config/assistantConfig.js`) with
+  those values as defaults. A responsibility's own budget may be lower than
+  the host's number, never higher: the host's default is also the ceiling.
+  Both run caps are enforced inside the claim transaction under one lock
+  (`assistantControlService.admit`), so they hold when claims race across
+  processes.
+- **Pilot gate (implemented).** `assistantAccessService.allows(userId,
+  capability)` is the per-account check every increment from DA-7 through
+  DA-11 makes (`conversation`, `sources`, `delivery`, `feedback`, `reach`).
+  Until `instance_state.assistantPilot` records `everyone`, only an active
+  operator account passes. The DA-11 grant operations already in the
+  vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
+- **Evaluation set (planned).** `tests/live/assistant.live.test.js` (skipped
+  without keys, never in required CI): fixed fictional responsibilities and
+  seeded sources, run against a real provider. It records, per model and
+  prompt version: refused calls, writes attempted outside the grant, injected
   instructions followed (must be zero by authorization, measured anyway),
   tokens per useful result, and runs ending with no result.
-- **Pilot record.** The DA-6 template gains the model and prompt version and
-  the caps in force, so a result can be compared across changes.
+- **Pilot record (implemented).** The DA-6 template has the model and prompt
+  version and the caps in force, so a result can be compared across changes.
 
 See the [implementation plan](delegated_assistant_implementation.md) for the
 increment-specific acceptance matrix and rollout gates. CI establishes these

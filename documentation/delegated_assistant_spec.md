@@ -640,7 +640,8 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; none of this is available.** Increments DA-7 through
+**Status: planned; none of this is available, except "For the host" at the
+end of this section.** Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -699,8 +700,14 @@ DA-12. The technical contracts are in
 
 ### For the host
 
+**Available** (Host → Delegated work;
+[delegated_operations.md](delegated_operations.md)):
+
 - A view of delegated work across the installation without any private
   text, with caps and a stop-all control.
+- Everything else in this section starts with the host's own account only.
+  The host opens it to everyone by recording the pilot decision on the same
+  page, and can close it again.
 
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same

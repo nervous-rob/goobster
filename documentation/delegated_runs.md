@@ -98,6 +98,11 @@ The expedition's tokens count once, against the same daily budget.
   continue. Revoking cancels it.
 - Turning Attention off, or the host turning the feature off, stops it the
   same way.
+- The host can **stop all delegated work** on the installation. Running work
+  halts at its next step and shows *waiting* ("The host has stopped all
+  delegated work for now"); queued work stays queued; nothing is cancelled.
+  When the host resumes, halted work goes back to the queue and continues
+  from its journal ([delegated_operations.md](delegated_operations.md#stop-all)).
 
 ## Budgets and limits
 
@@ -110,6 +115,13 @@ The expedition's tokens count once, against the same daily budget.
 | Research expeditions | 1 per piece of work |
 | Steps in one run | 8 tool rounds, 10 minutes |
 | Running at once | 1 per person, 2 on the installation |
+
+The three daily defaults and the two "running at once" numbers are the
+host's [caps](delegated_operations.md#caps): the values above apply until
+the host sets others in Host → Delegated work. A responsibility's own budget
+can be lower than the host's number, never higher: a higher one is treated
+as the host's. `GET /api/app/assistant/access` returns the numbers in force
+(`budgetDefaults`).
 
 An unset budget means the default, never unlimited. When a budget is used
 up the work shows *waiting* with the reason and continues after the day
@@ -124,6 +136,7 @@ for model capacity.
 | waiting, no provider | No AI provider answered. It retries in an hour. |
 | failed (`PROVIDER_ERROR`, `NO_RESULT`) | *Try again* starts a new attempt. |
 | waiting (`CHILD_PENDING`) | Its research expedition is still working. |
+| waiting (`ASSISTANT_PAUSED`) | The host stopped all delegated work. It continues when they resume it. |
 | needs review (`OPERATION_UNCERTAIN`) | After an interruption, a file write or sandbox run may or may not have happened and the run could not tell. Check the project, then *Try again* or dismiss. |
 
 **A crash or restart does not repeat work.** Every step is written to a
@@ -167,3 +180,6 @@ Design and reasons: [ADR 0018](adr/0018-delegated-runs.md).
 Editing notes you saved, connecting or archiving notes, repository work
 (commit, push, pull requests), acting on processes, findings shared with a
 project's members, and work that carries a project plan forward (DA-4).
+When repository work, saved-note edits and outside connectors arrive they
+start with the installation's owner only
+([the pilot gate](delegated_operations.md#the-pilot-gate)).

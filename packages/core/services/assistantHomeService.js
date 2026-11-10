@@ -38,6 +38,7 @@ const loaded = (module_) => {
 };
 const updatesService = () => loaded(requireOptional('./assistantUpdateService', { feature: 'assistant' }));
 const responsibilityService = () => loaded(requireOptional('./assistantResponsibilityService', { feature: 'assistant' }));
+const controlService = () => loaded(requireOptional('./assistantControlService', { feature: 'assistant' }));
 
 const SCHEMA_VERSION = 1;
 const NEEDS_YOU_PREVIEW = 5;
@@ -98,6 +99,7 @@ class AssistantHomeService {
                 asOf: now.toISOString(),
                 availability: 'unavailable',
                 unavailable: { feature: 'assistant' },
+                hostPaused: null,
                 freshness: { state: 'unknown', lastPassAt: null },
                 responsibilities: { counts: null, items: [] },
                 counts: { unseen: null, needsAction: needsYou ? needsYou.count : null, running: null },
@@ -117,6 +119,8 @@ class AssistantHomeService {
         const running = await section('running', () => this._running(owner), null);
         const blocked = await section('processes', () => this._blockedProcesses(owner, now), null);
         const freshness = await section('freshness', () => this._freshness(now), { state: 'unknown', lastPassAt: null });
+        // The host's stop-all (documentation/delegated_operations.md); null when it could not be read.
+        const hostPaused = await section('hostPaused', () => controlService().isPaused(), null);
         const shown = new Set((needsYou?.items || []).map(item => item.update?.id).filter(Boolean));
         const brief = await section('brief', () => this._brief(owner, shown, now), []);
 
@@ -131,6 +135,7 @@ class AssistantHomeService {
             schemaVersion: SCHEMA_VERSION,
             asOf: now.toISOString(),
             availability,
+            hostPaused,
             freshness,
             responsibilities: responsibilities || { counts: null, items: [] },
             // Distinct ids, separately labelled; the client never adds them up.
