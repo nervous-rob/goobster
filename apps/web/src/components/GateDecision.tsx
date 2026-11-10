@@ -24,7 +24,8 @@ const ALSO_REFRESH: Record<string, QueryKey[]> = {
     project_approve: [['project-mission'], ['project-needs-you'], ['project-now']],
     process_retirement: [keys.assistantProcesses],
     note_proposal: [keys.assistantKnowledge, ['knowledge']],
-    source_retraction: [keys.assistantKnowledge, ['knowledge']]
+    source_retraction: [keys.assistantKnowledge, ['knowledge']],
+    connector_request: [keys.assistantConnectors]
 };
 
 export function GateDecision({ card, surface }: { card: GateDecisionCard; surface: GateSurface }) {

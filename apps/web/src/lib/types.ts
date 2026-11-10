@@ -520,6 +520,8 @@ export type AssistantConnector = {
     resource: string;
     reads: Array<{ operation: string; describe: string }>;
     writes: Array<{ operation: string; describe: string; reconcilable: boolean }>;
+    /** What work may only ask for: each one waits for this person's own approval (ADR 0030). */
+    asks: Array<{ operation: string; describe: string; action: string; consequence: string }>;
     connected: boolean; account: string | null; featureOn: boolean;
 };
 export type AssistantConnectors = { allowed: boolean; connectors: AssistantConnector[] };

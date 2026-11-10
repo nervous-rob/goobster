@@ -4014,6 +4014,34 @@ CREATE TABLE IF NOT EXISTS assistant_message_labels (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_message_labels_owner ON assistant_message_labels(ownerUserId, createdAt);
 
+-- What a delegated run asked its person to approve on an outside connector
+-- (DA-11e, ADR 0030): an action the run may never take itself, such as
+-- moving a Notion page to the trash. One row per asking call (operationId
+-- is '<run>:<journal row>'). The person approves or refuses each one on
+-- Home or in the Inbox; approving makes the change with their own
+-- credential at that moment. WITHDRAWN: the grant or the connector went
+-- away before it was answered. label is the person's own outside content
+-- (a page title) and is private user data; resultCode is a machine code.
+CREATE TABLE IF NOT EXISTS assistant_connector_requests (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    responsibilityId INTEGER NOT NULL REFERENCES assistant_responsibilities(id) ON DELETE CASCADE,
+    runId INTEGER,
+    operationId TEXT NOT NULL UNIQUE,
+    connector TEXT NOT NULL,
+    resource TEXT NOT NULL,
+    operation TEXT NOT NULL,
+    target TEXT NOT NULL,
+    label TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'PENDING' CHECK (status IN ('PENDING', 'APPROVED', 'DECLINED', 'WITHDRAWN')),
+    resultCode TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    decidedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_connector_requests_owner ON assistant_connector_requests(ownerUserId, status);
+CREATE INDEX IF NOT EXISTS idx_assistant_connector_requests_responsibility ON assistant_connector_requests(responsibilityId, status);
+
 -- ---------------------------------------------------------------------------
 -- Delivery of delegated work (DA-9). Spec: documentation/delegated_delivery.md
 -- ---------------------------------------------------------------------------

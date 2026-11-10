@@ -3,8 +3,9 @@
  *
  * Goobster ships no connector, so the framework is exercised against this
  * fake notebook: it reads and writes entries in memory, can lose the
- * answer to a write (the entry lands, the caller sees an error), and can
- * say whether a write with a given operation id landed. It uses the one
+ * answer to a write (the entry lands, the caller sees an error), can say
+ * whether a write with a given operation id landed, and has one action a
+ * run may only ask the person for (removing an entry). It uses the one
  * credential slot the integration catalog has besides GitHub (`notion`),
  * only because a manifest must name a catalog provider; it never calls
  * that service. Used by the Jest suites and the browser journey's fixture;
@@ -83,7 +84,32 @@ function createDouble({ id = 'notebook', provider = 'notion' } = {}) {
                     return 'notebook cleared';
                 }
             }
-        ]
+        ],
+        // What a run may only ask for (ADR 0030): the person approves each one themselves.
+        asks: [{
+            operation: 'remove',
+            describe: 'Remove one entry. Input: { n } - the entry number.',
+            action: 'Remove it',
+            consequence: 'The entry is removed from the notebook, as you.',
+            voids: ['NO_SUCH_ENTRY'],
+            validate: (input) => (Number.isSafeInteger(input.n) && input.n > 0 ? null : 'BAD_ENTRY'),
+            prepare: async ({ resource, input, token }) => {
+                log('prepare', 'remove', resource, input, token);
+                const entry = list(resource).find(candidate => candidate.n === input.n);
+                if (!entry) throw registry.declined('NO_SUCH_ENTRY', 'there is no such entry');
+                return { target: String(entry.n), label: `entry ${entry.n} ("${entry.text}")` };
+            },
+            run: async ({ resource, target, token }) => {
+                log('approved', 'remove', resource, { n: Number(target) }, token);
+                if (state.mode === 'declined') throw registry.declined('READ_ONLY', 'that notebook is read only');
+                if (state.unreachable) throw Object.assign(new Error('connection reset'), { code: 'NETWORK' });
+                const entries = list(resource);
+                const at = entries.findIndex(candidate => String(candidate.n) === String(target));
+                if (at < 0) throw registry.declined('NO_SUCH_ENTRY', 'there is no such entry');
+                entries.splice(at, 1);
+                return `removed entry ${target}`;
+            }
+        }]
     };
 
     return {

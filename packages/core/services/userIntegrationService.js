@@ -48,7 +48,7 @@ const PROVIDERS = {
     },
     notion: {
         name: 'Notion',
-        description: 'Search your Notion workspace and read pages, so answers can be grounded in your own notes and docs.',
+        description: 'Search your Notion workspace and read pages, so answers can be grounded in your own notes and docs. A responsibility you grant one page or database can also read and write it as you.',
         tokenHint: 'Internal integration secret (notion.so/profile/integrations). Share the pages you want Goobster to see with that integration.',
         docsUrl: 'https://www.notion.so/profile/integrations',
         async verify(token) {

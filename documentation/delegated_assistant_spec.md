@@ -762,9 +762,13 @@ records the pilot decision
   pilot ([delegated_project_findings.md](delegated_project_findings.md)).
 - Outside services one named resource at a time, each with a plain list of
   what it reads and writes. There is no "watch everything" option.
-  **The framework is available (DA-11d)** to the installation's owner while
-  it is in the pilot, but no service is installed: the owner has not named
-  one ([delegated_connectors.md](delegated_connectors.md)).
+  **Available (DA-11d, DA-11e)** to the installation's owner while it is in
+  the pilot. Notion is the first service: one page or one database you name,
+  which the work can read, add to and edit as you, and nothing else in your
+  workspace. It can never move anything to the trash: it asks, and each
+  request waits for your approval
+  ([delegated_connectors.md](delegated_connectors.md),
+  [delegated_notion.md](delegated_notion.md)).
 
 ### For the host
 

@@ -36,6 +36,7 @@ if (!fs.existsSync(distIndex)) {
 
 const C = require('./constants');
 let e2eConnectorDouble = null;
+let e2eFakeNotion = null;
 const db = require('@goobster/core/db');
 const { createWebAppContext, createWebAppApp, attachWebAppWebSocket } = require('@goobster/core/web/appApi');
 const { ObservatoryService } = require('@goobster/core/services/observatoryService');
@@ -1320,6 +1321,115 @@ async function main() {
             await knowledgeGraphService.archiveNote({ guildId, userId, nodeId: stale.id, by: 'run' });
             await updates.deliverPending({ userId });
             res.json({ ok: true, proposalId: proposed.id, directId: direct.id, frostId: frost.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The Notion connector (assistantNotion.spec.js, DA-11e): an in-memory
+    // Notion (tests/helpers/fakeNotion.js) stands in for notionService's
+    // requests, holding one page per person. The person gets a token for it
+    // and Attention set to Delegate. Safe to call twice: that person's rows
+    // and page are removed and made again. Nothing talks to Notion.
+    const notionIds = (userId) => {
+        const tail = String(userId).slice(-8).padStart(8, '0');
+        const id = (n) => `e2e0e2e0e2e04e2e8e2e${tail}000${n}`;
+        return { page: id(1), child: id(2), other: id(3), token: `e2e-notion-token-${userId}` };
+    };
+    app.post('/e2e/fixtures/assistant-notion', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Planner' });
+            if (req.body?.owner) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_connector_requests', 'ownerUserId'], ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'],
+                ['assistant_runs', 'ownerUserId'], ['assistant_initiatives', 'ownerUserId'], ['assistant_responsibilities', 'ownerUserId'],
+                ['inbox_items', 'userId'], ['attention_items', 'userId'], ['attention_policies', 'userId'], ['user_integrations', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'delegate' });
+            await policies.setBoundary({ userId, category: 'general', externalWrite: true });
+            const { createFakeNotion } = require(path.join(ROOT, 'tests/helpers/fakeNotion'));
+            e2eFakeNotion = e2eFakeNotion || createFakeNotion().install();
+            const ids = notionIds(userId);
+            for (const id of [ids.page, ids.other]) e2eFakeNotion.drop(id);
+            e2eFakeNotion.allow(ids.token);
+            e2eFakeNotion.addPage({ id: ids.page, title: 'Decade plan', blocks: ['Run a marathon', { type: 'to_do', text: 'Book the trip' }] });
+            e2eFakeNotion.addPage({ id: ids.child, parent: ids.page, title: 'Old drafts', blocks: ['A draft nobody needs'] });
+            // The same token can see this page; the grant never names it.
+            e2eFakeNotion.addPage({ id: ids.other, title: 'Private diary', blocks: ['Not part of the plan'] });
+            await db.run(
+                "INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@userId, 'notion', @token, 'Planner workspace')",
+                { userId, token: ids.token }
+            );
+            res.json({ ok: true, page: ids.page, child: ids.child, link: `https://www.notion.so/planner/Decade-plan-${ids.page}?pvs=4` });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One piece of work under the person's active responsibility, run with a
+    // scripted model: it reads the granted page, edits a block it found there,
+    // adds a line, tries to write to a page the grant does not name, and asks
+    // to have a sub-page moved to the trash. No provider; only this person's
+    // work is run.
+    app.post('/e2e/fixtures/assistant-notion/run', express.json(), async (req, res) => {
+        const aiService = require('@goobster/core/services/aiService');
+        const original = aiService.chat;
+        try {
+            const userId = String(req.body?.userId || '');
+            const ids = notionIds(userId);
+            const initiatives = require('@goobster/core/services/assistantInitiativeService');
+            const held = await db.get(
+                "SELECT id, revision FROM assistant_responsibilities WHERE ownerUserId = @userId AND status = 'ACTIVE' ORDER BY id DESC LIMIT 1", { userId }
+            );
+            if (!held) return res.status(404).json({ error: 'no active responsibility' });
+            const id = await db.insert(
+                `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,
+                    sourceKind, sourceId, sourceRevision, dedupeKey, title, reason)
+                 VALUES (@rid, @rev, @u, @u, 'attention_item', '1', @stamp, @stamp, 'Your decade plan goal changed', 'The goal names a second race.')`,
+                { rid: held.id, rev: held.revision, u: userId, stamp: `e2e-notion-${Date.now()}` }
+            );
+            const proposed = await initiatives.get({ userId, id });
+            await initiatives.act({ userId, id, action: 'queue', expectedRevision: proposed.revision });
+            const claimed = await initiatives.claim({ id });
+
+            const marathon = (await e2eFakeNotion.request(ids.token, `/v1/blocks/${ids.page}/children`, {}))
+                .results.find((block) => block.type === 'paragraph').id;
+            const use = (name, operation, input) => ({
+                id: `n-${name}-${operation}-${Object.keys(input).join('-')}`, name,
+                arguments: JSON.stringify({ connector: 'notion', resource: ids.page, operation, input })
+            });
+            const rounds = [
+                [use('readConnector', 'blocks', {})],
+                [use('writeConnector', 'updateBlock', { block: marathon, text: 'Run two marathons' })],
+                [use('writeConnector', 'append', { text: 'Reviewed this week.' })],
+                [use('writeConnector', 'append', { text: 'Copied into the diary', parent: ids.other })],
+                [use('askConnector', 'archive', { target: ids.child })],
+                [{ id: 'n-finish', name: 'finish', arguments: JSON.stringify({
+                    outcome: 'finding', title: 'Your decade plan is up to date',
+                    summary: 'I updated the marathon goal and added a review note. I asked you about the old drafts page.'
+                }) }]
+            ];
+            aiService.chat = async () => ({ content: '', toolCalls: rounds.shift() || [] });
+            const outcome = await require('@goobster/core/services/assistantRunService').execute({ initiative: claimed.initiative, leaseToken: claimed.leaseToken });
+            res.json({ status: outcome.status, stopCode: outcome.stopCode || null });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        } finally {
+            aiService.chat = original;
+        }
+    });
+    // What the fake Notion holds now for that person: what was written, and what is in the trash.
+    app.get('/e2e/fixtures/assistant-notion/state', async (req, res) => {
+        try {
+            const ids = notionIds(String(req.query.userId || ''));
+            if (!e2eFakeNotion?.get(ids.page)) return res.status(404).json({ error: 'not seeded' });
+            res.json({
+                page: e2eFakeNotion.texts(ids.page),
+                other: e2eFakeNotion.texts(ids.other),
+                childArchived: Boolean(e2eFakeNotion.get(ids.child)?.archived)
+            });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }

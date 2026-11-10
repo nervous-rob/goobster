@@ -775,6 +775,8 @@ class PrivacyService {
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.knowledgeChangeSets = forgottenResponsibilities.knowledgeChanges;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
+            // What a run asked the person to approve on an outside connector.
+            counts.assistantConnectorRequests = forgottenResponsibilities.connectorRequests;
             counts.assistantDigests = forgottenResponsibilities.digests;
             // Feedback on delegated work and what was learned from it.
             counts.assistantFeedback = forgottenResponsibilities.feedback;
@@ -1329,6 +1331,7 @@ class PrivacyService {
             assistant_proposal_counters: responsibilities.proposalCounters,
             assistant_message_labels: responsibilities.messageLabels,
             kg_change_sets: responsibilities.knowledgeChanges,
+            assistant_connector_requests: responsibilities.connectorRequests,
             assistant_feedback: responsibilities.feedback,
             assistant_source_weights: responsibilities.sourceWeights,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,

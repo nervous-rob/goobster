@@ -59,7 +59,8 @@ const REQUEST_LABEL: Record<string, string> = {
     project_answer: 'A question for you',
     process_repair: 'Repair to review',
     process_retirement: 'Still needed?',
-    responsibility_review: 'Responsibility to review'
+    responsibility_review: 'Responsibility to review',
+    connector_request: 'An outside action to approve'
 };
 
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
