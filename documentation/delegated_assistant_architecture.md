@@ -1107,6 +1107,29 @@ activation. Broad surveillance remains a product non-goal: there is no
 "watch everything" connector and no background ingestion outside a named
 responsibility.
 
+**Framework shipped in DA-11d** ([delegated_connectors.md](delegated_connectors.md),
+ADR 0028), with no connector: the owner has not named one. What the
+implementation settled, in `services/assistant/connectors/registry.js`,
+`runTools/connectors.js` and `assistantConnectorService.js`:
+
+- A manifest also carries each operation's `run` and optional `validate`,
+  and a write's optional `reconcile`; a write without one stops for review
+  after any uncertainty. `register()` refuses a manifest without the
+  owner's recorded decision (`NO_OWNER_DECISION`); `shipped.js` is empty.
+- A grant is `{ kind: 'external', ids: ['<connector>:<resource>'] }` on
+  `read` or `external.write`, checked when saved: the connector is
+  installed and the resource has the manifest's shape, with no wildcard.
+- Three tools, `listConnectors`, `readConnector` and `writeConnector`,
+  reuse `guard`, `publishes: 'external'` and the `externalOperations`
+  budget of 13.5's repository work. A read is `source: 'private'`.
+  Everything on an `external` resource, reads included, is the pilot
+  capability `reach`.
+- Credentials stay in `user_integrations`; the manifest names a provider of
+  `userIntegrationService`'s catalog. Revocation deletes that token.
+  `GET /api/app/assistant/connectors` and `POST
+  /api/app/assistant/connectors/:id/revoke` are the portal's routes.
+- No schema change.
+
 ### 13.6 Operator controls and evaluation (DA-12)
 
 **Status: implemented. The host view, the controls, caps as configuration,

@@ -193,7 +193,7 @@ The expedition's tokens count once, against the same daily budget.
 | Tokens per responsibility per day (UTC) | `budgets.modelTokens`, default 200,000 |
 | Web searches per responsibility per day | `budgets.searches`, default 20 |
 | Sandbox seconds per responsibility per day | `budgets.computeSeconds`, default 120 |
-| Pushes and pull requests per responsibility per day | `budgets.externalOperations`, default 2, at most 20 whatever the grant says |
+| Pushes, pull requests and connector writes per responsibility per day | `budgets.externalOperations`, default 2, at most 20 whatever the grant says |
 | Research expeditions | 1 per piece of work |
 | Steps in one run | 8 tool rounds, 10 minutes |
 | Running at once | 1 per person, 2 on the installation |
@@ -323,14 +323,22 @@ fixed, fictional responsibilities against a real provider and records what
 the model did, with that version and the model used. It is not part of
 `npm test` or CI.
 
+## Outside connectors
+
+A run can read from and write to a named resource of an installed outside
+connector with `listConnectors`, `readConnector` and `writeConnector`, as you,
+under the same guard, private-read rule, daily cap and crash reconciliation as
+a push. The framework is built and no connector is installed; see
+[delegated_connectors.md](delegated_connectors.md).
+
 ## Not built yet
 
-Editing notes you saved, connecting or archiving notes (DA-11b), outside
-connectors (DA-11d), acting on processes, and work recognized by a model from what was said in a
+Editing notes you saved, connecting or archiving notes (DA-11b), an actual outside
+connector (the framework is DA-11d), acting on processes, and work recognized by a model from what was said in a
 conversation. Requests you address to Goobster in a conversation are built:
 see [delegated_conversation_requests.md](delegated_conversation_requests.md).
 Repository work is built and starts with the installation's owner only;
-saved-note edits and outside connectors will start the same way
+saved-note edits will start the same way (outside connectors already do)
 ([the pilot gate](delegated_operations.md#the-pilot-gate)). For
 repositories, not built: pulling, merging or rebasing a work branch,
 watching a pull request's checks, a cap on pushes and pull requests set by

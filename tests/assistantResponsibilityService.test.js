@@ -22,13 +22,18 @@ const policies = require('@goobster/core/services/attentionPolicyService');
 const privacyService = require('@goobster/core/services/privacyService');
 const identityService = require('@goobster/core/services/identityService');
 const { useState } = require('./helpers/featureFixtures');
+const { createDouble } = require('./helpers/connectorDouble');
 
 const A = '710000000000000001';
 const B = '710000000000000002';
 
 const KG_ADD = { operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } };
 
+const notebook = createDouble();
+beforeAll(() => notebook.register());
+
 afterAll(async () => {
+    notebook.unregister();
     useState();
     await db.closeConnection();
     for (const suffix of ['', '-shm', '-wal']) {
@@ -40,7 +45,7 @@ beforeEach(async () => {
     useState();
     for (const table of [
         'assistant_responsibility_revisions', 'assistant_responsibilities', 'attention_policies',
-        'project_repos', 'project_members', 'project_missions', 'observatory_projects', 'automations'
+        'user_integrations', 'project_repos', 'project_members', 'project_missions', 'observatory_projects', 'automations'
     ]) {
         await db.run(`DELETE FROM ${table}`, {});
     }
@@ -333,9 +338,10 @@ describe('authorize', () => {
 
     test('a confirm boundary on an external write requires a human', async () => {
         await asOwner();
-        const grant = await active({ operations: [{ operation: 'external.write', resource: { kind: 'external', ids: ['calendar'] } }] });
+        await db.run("INSERT INTO user_integrations (userId, provider, token, accountLabel) VALUES (@a, 'notion', 'tok', 'Test') ON CONFLICT(userId, provider) DO NOTHING", { a: A });
+        const grant = await active({ operations: [{ operation: 'external.write', resource: { kind: 'external', ids: ['notebook:calendar'] } }] });
         await policies.setInitiative(A, 'delegate');
-        const write = () => check(grant, { operation: 'external.write', resource: { kind: 'external', id: 'calendar' } });
+        const write = () => check(grant, { operation: 'external.write', resource: { kind: 'external', id: 'notebook:calendar' } });
         expect(await write()).toEqual({ ok: false, code: 'CONFIRMATION_REQUIRED' });
         await policies.setBoundary({ userId: A, category: 'general', externalWrite: true });
         expect((await write()).ok).toBe(true);
