@@ -453,6 +453,11 @@ export type AssistantHome = {
     partial: string[];
 };
 
+/** `GET /api/app/assistant/access`: which capabilities still in the pilot this person has. */
+export type AssistantAccess = {
+    hostPaused: boolean; budgetDefaults: Record<string, number>;
+    pilot: string; capabilities: Record<string, boolean>; gatedOperations: string[];
+};
 export type ResponsibilityOperation = { operation: string; resource: { kind: string; ids?: string[]; paths?: string[]; projectId?: string; branches?: string[] } };
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
@@ -492,14 +497,6 @@ export type AssistantInitiativeOrigin =
     | { kind: 'followed_source_entry'; available: boolean; sourceLabel?: string; entryTitle?: string; link?: string | null }
     | { kind: 'ci_verdict'; available: boolean; repo?: string; branch?: string; state?: string; sha?: string; moved?: boolean; link?: string }
     | { kind: 'job_failure'; available: boolean; jobId?: number; language?: string; status?: string; link?: string };
-
-/** Which pilot capabilities this person has (GET /api/app/assistant/access). */
-export type AssistantAccess = {
-    hostPaused: boolean;
-    pilot: 'owner' | 'everyone';
-    capabilities: Record<'conversation' | 'sources' | 'delivery' | 'feedback' | 'reach', boolean>;
-    gatedOperations: string[];
-};
 
 /** What delegating would do with the wider sources a responsibility names (GET .../responsibilities/:id/sources). */
 export type ResponsibilitySources = {

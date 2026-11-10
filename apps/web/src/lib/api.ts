@@ -438,6 +438,7 @@ export const api = {
         request<{ responsibility: Responsibility }>('/api/app/assistant/responsibilities', { method: 'POST', body }),
     responsibilityAction: (id: number, action: string, expectedRevision: number) =>
         request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
+    /** What the host's policy means for this person: pilot capabilities and budget defaults. */
     assistantAccess: () => request<AssistantAccess>('/api/app/assistant/access'),
     responsibilitySources: (id: number) => request<ResponsibilitySources>(`/api/app/assistant/responsibilities/${id}/sources`),
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),

@@ -1,7 +1,7 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
 import { useMe } from '../../hooks/useSession';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, describeListening, describeNoticing, describeSharing, type Project } from './grants';
+import { describeGrants, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, type Project } from './grants';
 import { SourcesPreview } from './SourcesPreview';
 import { WorkList } from './WorkList';
 
@@ -68,6 +68,11 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                     {item.expiresAt ? `Ends ${whenLabel(item.expiresAt)}` : 'No end date'}
                     {' · '}revision {item.revision}
                 </div>
+                {reachesGitHub(item.operations) && (
+                    <div className="row-meta" data-testid="responsibility-reach">
+                        Pushes and pull requests go to GitHub as you and cannot be undone from here · at most {externalOperationsPerDay(item.budgets)} a day
+                    </div>
+                )}
                 <WorkList items={work} busy={busy} onAct={onActOnWork} />
             </div>
             <div className="inbox-actions">

@@ -1,11 +1,15 @@
 import { useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { keys } from '../../lib/query';
 import { featureActive } from '../../lib/rooms';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import type { ResponsibilityOperation } from '../../lib/types';
-import type { Project } from './grants';
+import { DEFAULT_EXTERNAL_OPERATIONS, MAX_EXTERNAL_OPERATIONS, type Project } from './grants';
 import { NO_WIDER_SOURCES, SourceChoices, widerOperations, widerScopes, type WiderSources } from './SourceChoices';
+
+type Clone = { name: string; repo: string; clonedBranch: string };
 
 /** Drafts a responsibility from plain choices. A draft grants nothing. */
 export function DraftForm({ projects, onCreated }: { projects: Project[]; onCreated: () => Promise<unknown> }) {
@@ -33,7 +37,29 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const canSandbox = featureActive(me, 'sandbox');
     const canResearch = featureActive(me, 'expeditions');
     const canKnowledge = featureActive(me, 'knowledge');
-    const chosenProject = projects.find((project) => String(project.id) === projectId);
+    const [repoName, setRepoName] = useState('');
+    const [branches, setBranches] = useState('goobster/*');
+    const [commitRepo, setCommitRepo] = useState(false);
+    const [pushRepo, setPushRepo] = useState(false);
+    const [openPulls, setOpenPulls] = useState(false);
+    const [perDay, setPerDay] = useState(String(DEFAULT_EXTERNAL_OPERATIONS));
+    // Repository work is still in the pilot: offered only to whoever the host's policy allows.
+    const accessQ = useQuery({
+        queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(),
+        enabled: canProjects && featureActive(me, 'github'), retry: false, staleTime: 60_000
+    });
+    const canRepos = accessQ.data?.capabilities?.reach === true;
+    const project = projects.find((entry) => String(entry.id) === projectId) || null;
+    const ownerId = project && project.ownerId !== me.user.id ? project.ownerId : null;
+    const reposQ = useQuery({
+        queryKey: keys.projectRepos(project?.slug || '', ownerId),
+        queryFn: () => api.projectRepos(project!.slug, ownerId) as Promise<{ enabled: boolean; repos: Clone[] }>,
+        enabled: Boolean(project) && canRepos, retry: false
+    });
+    const clones = canRepos && reposQ.data?.enabled ? reposQ.data.repos : [];
+    const clone = clones.find((entry) => entry.name === repoName) || null;
+    const branchPatterns = branches.split(',').map((part) => part.trim()).filter(Boolean);
+    const reaches = Boolean(clone) && (pushRepo || openPulls);
 
     function operations(): ResponsibilityOperation[] {
         const list: ResponsibilityOperation[] = [];
@@ -54,8 +80,14 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             if (editFiles) list.push({ operation: 'file.edit', resource: { kind: 'project', ids: [projectId], ...(prefixes.length ? { paths: prefixes } : {}) } });
             if (runCode && canSandbox) list.push({ operation: 'sandbox.run', resource: { kind: 'project', ids: [projectId] } });
             if (planSteps) list.push({ operation: 'plan.step.execute', resource: { kind: 'project', ids: [projectId] } });
+            if (clone) {
+                const resource = { kind: 'repository', projectId, ids: [clone.repo.toLowerCase()], branches: branchPatterns };
+                if (commitRepo) list.push({ operation: 'repo.commit', resource });
+                if (pushRepo) list.push({ operation: 'repo.push', resource });
+                if (openPulls) list.push({ operation: 'pr.create', resource });
+            }
         }
-        list.push(...widerOperations(wider, chosenProject));
+        list.push(...widerOperations(wider, (project || undefined)));
         return list;
     }
 
@@ -64,7 +96,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         const list: string[] = [];
         if (projectId && projectRequests) list.push('project_chat');
         if (parlorRequests) list.push('parlor');
-        list.push(...widerScopes(wider, chosenProject));
+        list.push(...widerScopes(wider, (project || undefined)));
         return list;
     }
 
@@ -76,6 +108,11 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         const granted = operations();
         if (!title.trim()) return toast('Give it a title.', true);
         if (!granted.length) return toast('Choose at least one thing it may do.', true);
+        if (clone && (commitRepo || reaches) && !branchPatterns.length) return toast('Name the branches it may work on, for example goobster/*.', true);
+        const daily = Number(perDay);
+        if (reaches && (!Number.isInteger(daily) || daily < 0 || daily > MAX_EXTERNAL_OPERATIONS)) {
+            return toast(`Pushes and pull requests a day is a whole number from 0 to ${MAX_EXTERNAL_OPERATIONS}.`, true);
+        }
         setSaving(true);
         try {
             await api.createResponsibility({
@@ -84,6 +121,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 operations: granted,
                 ...(projectId ? { projectId: Number(projectId) } : {}),
                 ...(sources().length ? { scopes: { sources: sources(), ...(sharing ? { audience: 'project' } : {}) } } : {}),
+                ...(reaches ? { budgets: { externalOperations: daily } } : {}),
                 ...(days ? { expiresAt: new Date(Date.now() + Number(days) * 86400_000).toISOString() } : {}),
                 ...(autoStart ? { rules: { autoStart: true } } : {})
             });
@@ -124,7 +162,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                     <legend>In a project (optional)</legend>
                     <label>
                         <span className="sr-only">Project</span>
-                        <select value={projectId} onChange={(e) => setProjectId(e.target.value)} data-testid="responsibility-project">
+                        <select value={projectId} onChange={(e) => { setProjectId(e.target.value); setRepoName(''); }} data-testid="responsibility-project">
                             <option value="">No project</option>
                             {projects.map((project) => <option key={project.id} value={String(project.id)}>{project.name}</option>)}
                         </select>
@@ -171,6 +209,44 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                     )}
                                 </>
                             )}
+                            {clones.length > 0 && (
+                                <div className="field" data-testid="responsibility-repository">
+                                    <label className="field">
+                                        <span>Work in a repository cloned into this project (optional)</span>
+                                        <select value={repoName} onChange={(e) => setRepoName(e.target.value)} data-testid="responsibility-repo">
+                                            <option value="">No repository</option>
+                                            {clones.map((entry) => <option key={entry.name} value={entry.name}>{entry.repo} (repos/{entry.name})</option>)}
+                                        </select>
+                                    </label>
+                                    {clone && (
+                                        <>
+                                            <label className="field">
+                                                <span>Only on these branches (comma-separated; a trailing * matches a prefix)</span>
+                                                <input type="text" value={branches} onChange={(e) => setBranches(e.target.value)} placeholder="goobster/*" data-testid="responsibility-branches" />
+                                            </label>
+                                            <div className="hint">
+                                                Never on {clone.clonedBranch}, the repository&apos;s default branch or a protected branch, whatever is written here.
+                                            </div>
+                                            <label><input type="checkbox" checked={commitRepo} onChange={(e) => setCommitRepo(e.target.checked)} data-testid="responsibility-repo-commit" /> Commit its changes there (stays in this project until pushed)</label>
+                                            <label><input type="checkbox" checked={pushRepo} onChange={(e) => setPushRepo(e.target.checked)} data-testid="responsibility-repo-push" /> Push those branches to GitHub as you (never forced)</label>
+                                            <label><input type="checkbox" checked={openPulls} onChange={(e) => setOpenPulls(e.target.checked)} data-testid="responsibility-repo-pr" /> Open pull requests for them as you (drafts unless it decides otherwise)</label>
+                                            {reaches && (
+                                                <>
+                                                    <label className="field">
+                                                        <span>At most this many pushes and pull requests a day</span>
+                                                        <input type="number" min={0} max={MAX_EXTERNAL_OPERATIONS} step={1} value={perDay}
+                                                            onChange={(e) => setPerDay(e.target.value)} data-testid="responsibility-external-budget" />
+                                                    </label>
+                                                    <div className="hint" role="note" data-testid="responsibility-reach-note">
+                                                        A push or a pull request goes to GitHub and cannot be undone from here. They also need Attention set to
+                                                        Delegate with GitHub writes allowed (Settings), and they are refused once a piece of work has read your private knowledge.
+                                                    </div>
+                                                </>
+                                            )}
+                                        </>
+                                    )}
+                                </div>
+                            )}
                         </>
                     )}
                 </fieldset>
@@ -191,7 +267,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                     </div>
                 )}
             </fieldset>
-            <SourceChoices project={chosenProject} value={wider} onChange={setWider} />
+            <SourceChoices project={(project || undefined)} value={wider} onChange={setWider} />
             <label className="field">
                 <span>Ends</span>
                 <select value={days} onChange={(e) => setDays(e.target.value)}>
