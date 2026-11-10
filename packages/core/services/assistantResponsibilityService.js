@@ -27,6 +27,8 @@ const { features } = require('../features/featureState');
 const { unavailableResult } = require('../features/gate');
 const attentionPolicyService = require('./attentionPolicyService');
 const workFailureService = require('./workFailureService');
+const control = require('./assistantControlService');
+const pilotAccess = require('./assistantAccessService');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
 
 const FEATURE_ID = 'assistant';
@@ -524,6 +526,19 @@ class AssistantResponsibilityService {
         }
     }
 
+    /**
+     * Findings for a project's members (DA-11c) are part of the `reach`
+     * pilot capability: until the host records the pilot decision only the
+     * owner may ask for them. The run checks again when it publishes.
+     */
+    async _checkProjectAudience(scopesJson, userId) {
+        if (parseJson(scopesJson, {}).audience !== 'project') return;
+        if (await pilotAccess.allows(userId, 'reach')) return;
+        throw new AssistantResponsibilityError('PILOT_ONLY',
+            'Sharing findings with a project is limited to the installation\'s owner until the pilot decision is recorded.', 409,
+            { capability: 'reach' });
+    }
+
     async _projectAccess(userId, projectId) {
         const row = await db.get(
             `SELECT 1 AS ok FROM observatory_projects p
@@ -586,6 +601,7 @@ class AssistantResponsibilityService {
             throw new AssistantResponsibilityError('ACTOR_MISMATCH', 'This responsibility has no acting principal that can use it.', 409);
         }
         await this._validateLinks(row, row.ownerUserId);
+        await this._checkProjectAudience(row.scopesJson, row.ownerUserId);
         const operations = parseJson(row.operationsJson, []);
         if (!operations.length) throw bad('Grant at least one operation before activating.', 'INVALID_OPERATION');
         for (const entry of operations) {
@@ -593,6 +609,12 @@ class AssistantResponsibilityService {
                 if (features.enforcedOff(featureId)) {
                     throw new AssistantResponsibilityError('FEATURE_UNAVAILABLE', `"${entry.operation}" needs a feature that is not available.`, 409, { feature: featureId });
                 }
+            }
+            const gate = await pilotAccess.allowsOperation(row.ownerUserId, entry.operation);
+            if (!gate.ok) {
+                throw new AssistantResponsibilityError(gate.code,
+                    `"${entry.operation}" is limited to the installation's owner until the pilot decision is recorded.`, 409,
+                    { operation: entry.operation, capability: gate.capability });
             }
             const access = await this._resourceAccess(acting, entry.resource);
             if (access !== true) {
@@ -733,6 +755,7 @@ class AssistantResponsibilityService {
         const earlier = await replay();
         if (earlier) return earlier;
         await this._validateLinks(fields, owner);
+        if (fields.scopesJson) await this._checkProjectAudience(fields.scopesJson, owner);
 
         try {
             return await this._insert({ owner, fields, key, activate });
@@ -806,6 +829,7 @@ class AssistantResponsibilityService {
                 throw new AssistantResponsibilityError('INVALID_TRANSITION', `A ${row.status.toLowerCase()} responsibility cannot be changed.`, 409);
             }
             await this._validateLinks({ ...row, ...fields }, row.ownerUserId);
+            if (fields.scopesJson) await this._checkProjectAudience(fields.scopesJson, row.ownerUserId);
             const updated = await this._write(row, expectedRevision, fields, {
                 changeKind: 'edit', changedBy: userId, authority: authorityChange
             });
@@ -918,6 +942,8 @@ class AssistantResponsibilityService {
 
     async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now }) {
         if (features.enforcedOff(FEATURE_ID)) return unavailableResult(FEATURE_ID);
+        // The host's stop-all: nothing delegated is dispatched while it is on.
+        if (await control.isPaused()) return { ok: false, code: control.PAUSED_CODE };
         const row = await this._row(responsibilityId);
         if (!row) return { ok: false, code: 'RESPONSIBILITY_NOT_FOUND' };
 
@@ -948,9 +974,13 @@ class AssistantResponsibilityService {
         const matching = grants.find(entry => this._grantMatches(entry, operation, resource, target));
         if (!matching) return { ok: false, code: 'OPERATION_OUT_OF_SCOPE' };
 
-        const access = await this._resourceAccess(row.actingUserId, matching.resource, target);
-        if (typeof access === 'string') return unavailableResult(access);
-        if (access !== true) return { ok: false, code: 'RESOURCE_UNAVAILABLE' };
+        // Capabilities still in the pilot are the owner's alone, whatever the grant says.
+        const gate = await pilotAccess.allowsOperation(row.ownerUserId, operation);
+        if (!gate.ok) return { ok: false, code: gate.code, capability: gate.capability };
+
+        const reachable = await this._resourceAccess(row.actingUserId, matching.resource, target);
+        if (typeof reachable === 'string') return unavailableResult(reachable);
+        if (reachable !== true) return { ok: false, code: 'RESOURCE_UNAVAILABLE' };
 
         const policy = await attentionPolicyService.get(row.ownerUserId);
         if (!policy || !policy.enabled) return { ok: false, code: 'ATTENTION_NOT_ENROLLED' };

@@ -292,6 +292,7 @@ See [process_stewardship.md](process_stewardship.md).
     "schemaVersion": 1,
     "asOf": "2026-11-09T22:30:00.000Z",
     "availability": "ready",
+    "hostPaused": false,
     "freshness": { "state": "current", "lastPassAt": "2026-11-09T22:28:00.000Z" },
     "responsibilities": { "counts": { "active": 1, "paused": 0, "needsReview": 0, "draft": 0 }, "items": [] },
     "counts": { "unseen": 1, "needsAction": 1, "running": 0 },
@@ -303,7 +304,10 @@ See [process_stewardship.md](process_stewardship.md).
   ```
 
   `availability` is `ready`, `paused`, `none_delegated`, `attention_off`,
-  `unavailable` (feature off) or `unknown`. Component `state` is
+  `unavailable` (feature off) or `unknown`. `hostPaused` is `true` while the
+  host has [stopped all delegated work](delegated_operations.md#stop-all)
+  (Home then says so in place of the status line), `false` otherwise, and
+  `null` when it could not be read or the feature is off. Component `state` is
   `needs_you`, `blocked`, `degraded`, `working`, `updates`, `quiet`,
   `unknown` or `unavailable`, in that order of precedence. `blocked` and
   `degraded` are counts of processes (not working, and running with a
@@ -378,6 +382,13 @@ None of the GET routes writes anything.
   have no card yet.
 - No option is marked `danger` yet: these buttons replace Inbox buttons
   that did not confirm either.
+
+A brief item that was shared with a project says so: its `audience` is
+`{ kind: 'project', projectId }` and `producer` names whose assistant found it
+(`you: true` on the producer's own view), shown on Home as *Shared with this
+project by Ada's assistant*. The other member sees no link into the
+producer's responsibility
+([delegated_project_findings.md](delegated_project_findings.md)).
 
 ## Not built yet
 

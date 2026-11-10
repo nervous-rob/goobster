@@ -81,6 +81,9 @@ function conversationPath(actions: AssistantAction[] | undefined): string | null
 
 function statusLine(assistant: AssistantHome): string {
     const counts = assistant.responsibilities.counts;
+    if (assistant.hostPaused && assistant.availability !== 'unavailable') {
+        return 'The host has stopped all delegated work for now. Nothing is lost; it continues when they resume it.';
+    }
     switch (assistant.availability) {
         case 'unavailable': return 'Delegated work is turned off on this installation.';
         case 'attention_off': return 'Attention is off, so nothing is delegated and no new work starts.';
@@ -138,6 +141,12 @@ function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onRevi
             <div className="assistant-row-main">
                 <strong>{item.title}</strong>
                 {item.summary && <div className="hint">{item.summary}</div>}
+                {item.audience?.kind === 'project' && (
+                    <div className="hint" data-testid="assistant-brief-producer">
+                        Shared with this project
+                        {item.producer && (item.producer.you ? ' by you' : ` by ${item.producer.name ? `${item.producer.name}'s` : 'a member\'s'} assistant`)}
+                    </div>
+                )}
                 <div className="row-meta">
                     {item.componentIds.map((id) => COMPONENT_META[id as AssistantComponent['id']]?.label).filter(Boolean).join(' · ')}
                     {' · '}<span title={item.happenedAt}>{formatRelativeTime(`${item.happenedAt.replace(' ', 'T')}Z`)}</span>

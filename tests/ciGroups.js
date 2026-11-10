@@ -389,10 +389,12 @@ const GROUPS = [
         files: files([
             'approvalExecutor',
             'assistantConversationRequests',
+            'assistantControlService',
             'assistantGateDecisions',
             'assistantHomeService',
             'assistantIncidentService',
             'assistantInitiativeService',
+            'assistantProjectAudience',
             'assistantPlanStep',
             'assistantProcessAssessment',
             'assistantProcessService',
