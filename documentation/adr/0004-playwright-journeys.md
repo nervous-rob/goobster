@@ -34,7 +34,8 @@ dev-session form and walk Spitball, Parlor, Observatory, and Noticed.
 
 Jest is restricted to `tests/*.test.js` so `e2e/*.spec.js` never join
 `npm test`. Chromium is installed in the `test (playwright)` CI job
-(`npx playwright install --with-deps chromium`); it is not a merge
+(`npx playwright install --with-deps chromium`, or the same packages from
+a cache: `scripts/ci-playwright-chromium.sh`, ADR 0007); it is not a merge
 blocker on `both engines` (that aggregator remains the dual-DB gate —
 see ADR 0006).
 
