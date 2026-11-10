@@ -361,6 +361,15 @@ removes material from normal retrieval but preserves review/restore access.
 Retrieval normally favors current claims and can include disputed/historical
 claims with explicit labels; it never presents retracted content as current.
 
+**Shipped in DA-11b** ([delegated_knowledge.md](delegated_knowledge.md),
+ADR 0027): `kg_change_sets` with `PROPOSED -> APPLIED | REJECTED | STALE` and
+`APPLIED -> REVERTED` (an undo is refused once the note has moved), claim
+status on nodes, evidence and retraction on edges, reversible merge and
+archive, and the source-retraction impact review. The semantic operations
+built are `amend`, `dispute`, `link`, `unlink`, `archive` and `merge` (as
+archive-as-alias); `supersede`, `retract` of a note and `delete` are not
+available to a run.
+
 Capacity enforcement must protect deliberate saves and active dependencies.
 Archive eligible generated material, refuse an addition, or ask for a storage
 choice instead of silently deleting saved knowledge. Mirror-aware retirement

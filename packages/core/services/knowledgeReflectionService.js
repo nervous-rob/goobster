@@ -161,10 +161,10 @@ async function runWeavePass(ctx) {
     const nodes = await db.all(
         `SELECT n.id, n.type, n.label, n.content, n.salience,
                 (SELECT COUNT(*) FROM kg_edges e
-                 WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey
+                 WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey AND e.retractedAt IS NULL
                    AND (e.sourceId = n.id OR e.targetId = n.id)) AS degree
          FROM kg_nodes n
-         WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey
+         WHERE n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.archivedAt IS NULL
          ORDER BY degree ASC, (n.salience * n.confidence) DESC, n.updatedAt DESC
          LIMIT @max`,
         { guildId, scopeKey, max: LIMITS.maxNodesReviewed }
@@ -535,13 +535,13 @@ class KnowledgeReflectionService {
         return await db.all(
             `SELECT n.guildId, n.scopeKey, COUNT(*) AS nodes,
                     (SELECT COUNT(*) FROM kg_edges e
-                     WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey) AS edges
+                     WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey AND e.retractedAt IS NULL) AS edges
              FROM kg_nodes n
-             WHERE n.scopeKey NOT LIKE 'PARLOR:%'
+             WHERE n.scopeKey NOT LIKE 'PARLOR:%' AND n.archivedAt IS NULL
              GROUP BY n.guildId, n.scopeKey
              HAVING COUNT(*) >= @minNodes
                 AND (SELECT COUNT(*) FROM kg_edges e
-                     WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey)
+                     WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey AND e.retractedAt IS NULL)
                     < COUNT(*) * CAST(@deficitRatio AS REAL)
                 AND NOT EXISTS (
                     SELECT 1 FROM kg_reflection_runs r
@@ -549,7 +549,7 @@ class KnowledgeReflectionService {
                       AND r.startedAt >= @cooldownCutoff
                 )
              ORDER BY (SELECT COUNT(*) FROM kg_edges e
-                       WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey) * 1.0 / COUNT(*) ASC`,
+                       WHERE e.guildId = n.guildId AND e.scopeKey = n.scopeKey AND e.retractedAt IS NULL) * 1.0 / COUNT(*) ASC`,
             {
                 minNodes: REFLECTION.minNodesForScheduledWeave,
                 deficitRatio: REFLECTION.weaveEdgeDeficitRatio,

@@ -4,6 +4,7 @@
     "activityTools.spec.js": 8,
     "appearance.spec.js": 37,
     "assistantHome.spec.js": 12,
+    "assistantKnowledge.spec.js": 10,
     "attachmentDrop.spec.js": 26,
     "composer.spec.js": 4,
     "databaseWizard.spec.js": 13,

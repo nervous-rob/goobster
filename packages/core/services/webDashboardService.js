@@ -394,14 +394,14 @@ class WebDashboardService {
 
         const nodes = await db.all(
             `SELECT id, type, label, content, salience, confidence, source, updatedAt FROM kg_nodes
-             WHERE guildId = @guildId AND scopeKey = ''
+             WHERE guildId = @guildId AND scopeKey = '' AND archivedAt IS NULL
              ORDER BY salience DESC, updatedAt DESC LIMIT @limit`,
             { guildId, limit: kgConfig.MAX_NODES_GUILD_WIDE }
         );
         const nodeIds = new Set(nodes.map(n => n.id));
         const edges = (await db.all(
             `SELECT sourceId, targetId, relation, relationKind, weight FROM kg_edges
-             WHERE guildId = @guildId AND scopeKey = ''`,
+             WHERE guildId = @guildId AND scopeKey = '' AND retractedAt IS NULL`,
             { guildId }
         )).filter(e => nodeIds.has(e.sourceId) && nodeIds.has(e.targetId));
         const tagMap = await knowledgeGraphService.getTagsForNodes(nodes.map(n => n.id));
