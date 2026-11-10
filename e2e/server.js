@@ -654,6 +654,9 @@ async function main() {
         const userId = String(req.body.userId);
         if (req.body.advance) { sourceNow += 3600_000; sourceVersion++; res.json({ ok: true }); return; }
         await db.run('DELETE FROM followed_sources WHERE userId = @userId', { userId });
+        // The journey prepares one research draft and asserts it is the only
+        // one. A retried journey seeds again, so the first attempt's draft goes.
+        await db.run('DELETE FROM spitball_expeditions WHERE userId = @userId', { userId });
         await policies.enroll({ userId, initiative: 'observe' });
         const project = await ensureProject({ userId, name: 'Source following fixture' });
         await knowledgeGraphService.applyMutations({ guildId: dmScopeId(userId), scopeKey: `USER:${userId}`, subjectType: 'USER', subjectId: userId, source: 'user', mutations: { upsert: [{ type: 'concept', label: 'Followed topic fixture', content: 'An explicitly kept research topic.' }] } });
