@@ -245,6 +245,82 @@ test.describe('assistant-first Home', () => {
         await expect(page.getByTestId('assistant-component-research')).toContainText('1 new update');
     });
 
+    test('a failing process is one incident, stays on its card after it is reviewed, and is judged twice', async ({ page }) => {
+        await seed(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
+        expect(made.ok(), await made.text()).toBe(true);
+        expect((await made.json()).pass).toMatchObject({ opened: 1, relevance: 1 });
+        await login(page, { userId: USER, name: NAME });
+
+        // Home: one incident and one relevance note, each said once; the card counts processes, not messages.
+        const overview = page.getByTestId('assistant-overview');
+        const card = overview.getByTestId('assistant-component-processes');
+        await expect(card).toContainText('1 not working');
+        await expect(card).toContainText('1 with a problem');
+        await expect(card).toContainText('2 new updates');
+        const brief = overview.getByTestId('assistant-brief-item');
+        await expect(brief).toHaveCount(2);
+        await expect(brief.filter({ hasText: '"Nightly import" keeps failing' })).toHaveCount(1);
+        await expect(brief.filter({ hasText: '"Release watch" may no longer be needed' })).toHaveCount(1);
+        // Neither asks for anything.
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
+
+        // Reviewing the updates does not make the process healthy.
+        for (const title of ['keeps failing', 'may no longer be needed']) {
+            await brief.filter({ hasText: title }).getByRole('button', { name: 'Mark reviewed' }).click();
+            await expect(brief.filter({ hasText: title })).toHaveCount(0);
+        }
+        await expect(overview.getByTestId('assistant-brief-empty')).toBeVisible();
+        await expect(card).toContainText('1 not working');
+        await expect(card).not.toContainText('new update');
+
+        // The card opens the report, where each process has both judgments in words.
+        await card.click();
+        const report = page.getByTestId('assistant-processes');
+        await expect(report.getByRole('heading', { name: 'Processes' })).toBeVisible();
+        await expect(report.getByTestId('processes-summary')).toHaveText(
+            '5 processes · 1 not working · 1 running with a problem · 1 may no longer be needed · 1 not enough to judge'
+        );
+        const incident = report.getByTestId('process-incident');
+        await expect(incident).toHaveCount(1);
+        await expect(incident).toContainText('"Nightly import" keeps failing');
+        await expect(incident.getByTestId('process-incident-status')).toHaveText('Open');
+
+        const rows = report.getByTestId('process-row');
+        await expect(rows).toHaveCount(4);
+        // Not working first.
+        await expect(rows.first()).toContainText('Nightly import');
+        await expect(rows.first().getByTestId('process-execution')).toContainText('Blocked');
+        await expect(rows.first().getByTestId('process-execution')).toContainText('It has failed 3 times in a row (RUN_FAILED).');
+        // No purpose recorded: its usefulness is not judged, and the page says so.
+        await expect(rows.first().getByTestId('process-relevance')).toContainText('Usefulness not judged');
+        await expect(rows.first()).toContainText('part of an open incident');
+
+        const flaky = rows.filter({ hasText: 'Price check' });
+        await expect(flaky.getByTestId('process-execution')).toContainText('Running with a problem');
+        const digest = rows.filter({ hasText: 'Morning digest' });
+        await expect(digest.getByTestId('process-execution')).toContainText('Working');
+        // Working and no longer needed are separate answers about the same process.
+        const watch = rows.filter({ hasText: 'Release watch' });
+        await expect(watch.getByTestId('process-execution')).toContainText('Working');
+        await expect(watch.getByTestId('process-relevance')).toContainText('May no longer be needed');
+        await expect(watch.getByTestId('process-relevance')).toContainText('The goal it was set up for is resolved. It is still switched on.');
+
+        // A report only: nothing on it changes a process.
+        await expect(rows.getByRole('button')).toHaveCount(0);
+        await expect(incident.getByRole('button')).toHaveCount(0);
+
+        // A switched-off process with nothing to report is folded away, not dropped.
+        await report.getByTestId('processes-show-idle').click();
+        await expect(rows).toHaveCount(5);
+        const off = rows.filter({ hasText: 'Old weekly report' });
+        await expect(off.getByTestId('process-execution')).toContainText('Not enough to judge');
+        await expect(off.getByTestId('process-execution')).toContainText('It is switched off.');
+        const after = await (await page.request.get('/api/app/assistant/processes')).json();
+        expect(after.processes.filter((entry) => entry.enabled).map((entry) => entry.name).sort())
+            .toEqual(['Morning digest', 'Nightly import', 'Price check', 'Release watch']);
+    });
+
     test('with Attention off the page says why nothing runs', async ({ page }) => {
         await seed(page, { seed: false, attention: false });
         await login(page, { userId: USER, name: NAME });

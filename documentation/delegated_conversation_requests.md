@@ -31,7 +31,8 @@ in [assistant_home.md](assistant_home.md#project-boards).
   starts work automatically.
 - The run works inside what the responsibility allows, exactly as any other
   delegated work. Your message does not add permissions.
-- The result comes to **you** (Home, Inbox), with a link to the conversation.
+- The result comes to **you** (Home, Inbox), with a link to the conversation
+  (and, only if you granted it, to the project's members too).
   Nothing is posted into the conversation, no decision is recorded, and no
   plan is changed. Looking into a migration is not deciding to migrate.
 - "Goobster, never mind" or "Goobster, compare Koa instead" in the same
@@ -270,8 +271,10 @@ Each is the most conservative reading; a later stage can widen it.
   A responsibility never acts on another person's words.
 - **The run reads the one message**, not the conversation around it. Other
   people's words do not enter a private run.
-- **The result is private to the asker.** Sharing a finding with a project's
-  members needs the shared-audience work of DA-11c.
+- **The result is private to the asker by default.** A responsibility that
+  also grants `scopes.audience: "project"` shares the finding with the
+  project's members when the request was made in that project's conversation
+  ([delegated_project_findings.md](delegated_project_findings.md)).
 - **Steering is scoped to the conversation and the person.** Ambiguous
   openers ("actually", "instead") are read as steering: withdrawing
   unfinished work costs a press of *Try again*; continuing work a person
@@ -286,6 +289,7 @@ Each is the most conservative reading; a later stage can widen it.
 - Matching a request against work that already exists under other words,
   and against plan steps (DA-8).
 - A daily cap on proposals from conversations beyond the open limit (DA-8).
-- A reply or hand-off posted into the conversation, and findings shared with
-  a project's members (DA-11c).
+- A reply or hand-off posted into the conversation. (Findings shared with a
+  project's members are built; see
+  [delegated_project_findings.md](delegated_project_findings.md).)
 - Responsibilities shared between people (deferred by owner decision 5).

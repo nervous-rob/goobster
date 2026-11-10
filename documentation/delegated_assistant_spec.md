@@ -19,7 +19,9 @@ and, for section 7, [delegated_plan_steps.md](delegated_plan_steps.md) (plan
 steps) and
 [delegated_conversation_requests.md](delegated_conversation_requests.md)
 (requests made in conversation and changes of direction; journey B for
-explicit requests, and the project board of journey G).
+explicit requests, and the project board of journey G) and
+[delegated_project_findings.md](delegated_project_findings.md) (findings
+shared with a project's members).
 
 Updated: **2026-11-10**. Code baseline: `c3b773ee` (2026-10-27).
 Recheck implementation seams against current main before starting each increment.
@@ -729,6 +731,11 @@ DA-12. The technical contracts are in
   host's own account only when it arrives. The host opens it to everyone by
   recording the pilot decision on the same page, and can close it again.
   Answering a request on Home and in the Inbox is already open to everyone.
+- An optional evaluation the host can run against a real provider
+  ([delegated_evaluation.md](delegated_evaluation.md)): fixed, fictional
+  responsibilities, including a page and a file that tell the run to exceed
+  its grant, recorded with the model and prompt version used. It spends
+  real tokens and never runs by itself.
 
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same

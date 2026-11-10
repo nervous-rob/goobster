@@ -1,7 +1,7 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
 import { useMe } from '../../hooks/useSession';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, describeListening, describeNoticing, type Project } from './grants';
+import { describeGrants, describeListening, describeNoticing, describeSharing, type Project } from './grants';
 import { SourcesPreview } from './SourcesPreview';
 import { WorkList } from './WorkList';
 
@@ -49,6 +49,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
     const listening = describeListening(item, me.assistant.name);
     const noticing = describeNoticing(item);
     const hasSources = (item.scopes?.sources || []).length > 0 && ['DRAFT', 'ACTIVE', 'PAUSED', 'NEEDS_REVIEW'].includes(item.status);
+    const sharing = describeSharing(item);
     return (
         <div id={`responsibility-${item.id}`} className="list-row task-row" data-testid="responsibility-row">
             <div className="row-body">
@@ -59,6 +60,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                     {describeGrants(item.operations, projects).map((line) => <li key={line}>May {line}</li>)}
                     {listening && <li data-testid="responsibility-listens">{listening}</li>}
                     {noticing && <li data-testid="responsibility-notices">{noticing}</li>}
+                    {sharing && <li data-testid="responsibility-shares">{sharing}</li>}
                 </ul>
                 {hasSources && <SourcesPreview responsibilityId={item.id} revision={item.revision} />}
                 <div className="row-meta">

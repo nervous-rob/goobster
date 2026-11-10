@@ -411,11 +411,13 @@ export type GateDecisionResult = {
     current: GateDecisionCard | null;
 };
 
-export type AssistantComponentState = 'needs_you' | 'blocked' | 'working' | 'updates' | 'quiet' | 'unknown' | 'unavailable';
+export type AssistantComponentState = 'needs_you' | 'blocked' | 'degraded' | 'working' | 'updates' | 'quiet' | 'unknown' | 'unavailable';
 export type AssistantComponent = {
     id: 'knowledge' | 'research' | 'projects' | 'processes' | 'conversations';
     state: AssistantComponentState; unavailable: { feature: string } | null;
-    unseen: number | null; needsAction: number | null; running: number | null; blocked: number | null;
+    unseen: number | null; needsAction: number | null; running: number | null;
+    /** Processes not doing their job at all, and processes running with a problem. Judged from evidence, not from what was read. */
+    blocked: number | null; degraded?: number | null;
     freshness: 'current' | 'stale' | 'unknown'; latestUpdateId: number | null;
 };
 export type AssistantInitiativeCounts = { proposed: number; queued: number; running: number; waiting: number; review: number };
@@ -430,6 +432,9 @@ export type AssistantNeedsYouItem = {
 };
 export type AssistantBriefItem = {
     id: number; revision: number; kind: string; title: string; summary: string | null; componentIds: string[];
+    /** `project` when the finding was shared with a project's members; `producer` says whose assistant found it. */
+    audience?: { kind: 'private' } | { kind: 'project'; projectId: number };
+    producer?: { name: string | null; you: boolean } | null;
     responsibilityId: number | null; initiativeId: number | null; actions: AssistantAction[];
     inboxItemId: number | null; happenedAt: string;
 };
@@ -528,6 +533,44 @@ export type ProjectBoardCard = {
     initiativeId?: number | null;
 };
 export type ProjectBoard = { cards: ProjectBoardCard[]; text: string; canonical?: boolean };
+
+// --- Process stewardship (documentation/process_stewardship.md). Two separate judgments, never one score.
+export type ProcessExecution = 'healthy' | 'degraded' | 'blocked' | 'stalled' | 'unreachable' | 'unknown';
+export type ProcessRelevance = 'active' | 'awaiting_event' | 'satisfied' | 'superseded' | 'dormant' | 'retirement_candidate' | 'unknown';
+export type ProcessAssessment = {
+    execution: ProcessExecution; relevance: ProcessRelevance; purposeKnown: boolean;
+    reasons: { execution: string; relevance: string };
+    signals: { reviewDue: boolean; resultsIgnored: boolean };
+    health: {
+        causeCode: string | null; upstream: boolean; failRun: number; okRun: number; priorFailRun: number;
+        overdueSeconds: number | null; lastOkAt: string | null; lastFailureAt: string | null; lastFreshAt: string | null;
+        blockedBy: string | null; sharedCause: string | null;
+    };
+};
+export type ProcessIncidentRef = {
+    id: number; key: string; status: 'OPEN' | 'RECOVERING'; causeCode: string | null; role: 'failing' | 'dependent';
+    state: string; openedAt: string; recoveringSince: string | null; members: number;
+};
+export type AssistantProcess = {
+    kind: 'automation' | 'project_trigger' | 'attention_watch' | 'followed_source'; id: number; ref: string; name: string;
+    enabled: boolean; trigger: { kind: 'cron' | 'event' | 'poll'; schedule?: string; topic?: string; source?: string };
+    lastRunAt: string | null; nextRunAt: string | null; hasContract: boolean; criticality: 'low' | 'normal' | 'high';
+    assessment: ProcessAssessment; incident: ProcessIncidentRef | null;
+};
+export type ProcessIncident = {
+    id: number; key: string; occurrence: number; status: 'OPEN' | 'RECOVERING' | 'RESOLVED'; causeCode: string | null;
+    criticality: 'low' | 'normal' | 'high'; openedAt: string; recoveringSince: string | null;
+    members: Array<{ ref: string; name: string | null; role: 'failing' | 'dependent'; state: string }>;
+};
+export type AssistantProcessList = {
+    processes: AssistantProcess[];
+    counts: {
+        total: number; healthy: number; degraded: number; blocked: number; stalled: number; unreachable: number; unknown: number;
+        notWorking: number; retirementCandidates: number; reviewDue: number;
+    };
+    incidents: ProcessIncident[];
+};
+
 export type ResponsibilityVocabulary = {
     statuses: string[]; actions: string[];
     operations: Array<{ id: string; resourceKinds: string[]; action: string }>;

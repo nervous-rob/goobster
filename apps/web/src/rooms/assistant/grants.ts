@@ -72,3 +72,8 @@ export function describeNoticing(item: Pick<Responsibility, 'scopes'>): string |
     ].filter(Boolean);
     return things.length ? `Notices ${things.join(', ')}` : null;
 }
+
+/** Whether its findings go to the project's members as well (delegated_project_findings.md). */
+export function describeSharing(item: Pick<Responsibility, 'scopes' | 'projectId'>): string | null {
+    return item.projectId && item.scopes?.audience === 'project' ? 'Shares what it finds with the project\'s members' : null;
+}

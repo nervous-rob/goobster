@@ -131,8 +131,14 @@ records the pilot decision, only the owner has them.**
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.
-  Everything delegated runs can do today (reading, generated notes, project
-  files, sandbox runs, research) is not gated.
+  Sharing a responsibility's findings with its project's members
+  (`scopes.audience: "project"`, DA-11c,
+  [delegated_project_findings.md](delegated_project_findings.md)) is also a
+  `reach` capability: for anyone but the owner, creating, editing or
+  activating such a responsibility is refused with `PILOT_ONLY` (naming the
+  capability), and a finding published after the gate closed comes to its
+  person alone. Everything else delegated runs can do today (reading,
+  generated notes, project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated
@@ -224,10 +230,12 @@ Code: `services/assistantControlService.js` (stop, caps, the view),
 `web/routes/admin.js`. Tests: `tests/assistantControlService.test.js` on
 SQLite and Postgres, and the `e2e/hostAssistant.spec.js` journey.
 
+How a real model behaves under these limits is measured by the optional
+[evaluation set](delegated_evaluation.md), whose records carry the caps in
+force.
+
 ## Not built yet
 
-- The evaluation set that runs fixed, fictional responsibilities against a
-  real provider (DA-12b).
 - Caps for one account that differ from everyone else's, and a ceiling
   separate from the default.
 - Telling people in their Inbox that the host stopped or resumed their work

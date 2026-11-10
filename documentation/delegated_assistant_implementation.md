@@ -12,9 +12,9 @@ canonical updates and process observations), the read-only DA-2 Home, the
 DA-3 runner, DA-4 (the assistant plan step, carried out under a
 responsibility and verified; requests made in conversation, changes of
 direction and project boards on the canonical gates), DA-7a (deciding a
-request on Home and in the Inbox) and DA-12a (the host's controls) are
-implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b and DA-12a recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
+request on Home and in the Inbox) and DA-12 (the host's controls and the
+evaluation set) are implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b, DA-12a and DA-12b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -78,20 +78,20 @@ increment done because its proposal exists.
 | DA-2: assistant-first Home | Done for the read-only overview: the Home projection, Needs you as an Inbox filter (All / Needs you / Updates / Snoozed), adoption of project gates, per-revision acknowledgment and the Responsibilities page; see [assistant_home.md](assistant_home.md). Deciding a request from Home shipped with DA-7a. Project boards read the canonical gates since DA-4b. Still open: briefing feedback, Conversations signals, live push | DA-1 | Useful read-only Home over actual domain state with reliable component highlighting and acknowledgment |
 | DA-3: durable research and knowledge | Done: the runner, the operation journal and crash recovery, per-call authority, token / search / compute budgets, saved-note protection and generated notes, project file edits and sandbox runs, research expeditions as child work, opt-in automatic start, and in-flight runs failed (never resumed) by a restore ([delegated_runs.md](delegated_runs.md), [ADR 0018](adr/0018-delegated-runs.md)). Left for later increments: saved-note edits, edges and archiving, repository operations, project-audience findings | DA-1; DA-2 for pilot visibility | Recoverable bounded runs and authorized, reversible knowledge maintenance |
 | DA-4: project continuity | Done. DA-4a: the `agent` plan step, `plan.step.execute`, delegated execution only inside a plan revision a person approved and started, its own authorization record (no confirmation receipt is created or reused), dispatch-time invalidation of stale work, deterministic verification with a blocker on failure, runs as the collaborator with them as payer, the private-context rule, and lost membership stopping work ([delegated_plan_steps.md](delegated_plan_steps.md), [ADR 0019](adr/0019-delegated-plan-steps.md)). DA-4b: requests a person addresses to Goobster in a project conversation or a discussion become proposed work by fixed rules (no model reads conversations), with a link back and a private result; a change of direction supersedes that person's unfinished work from the conversation and names what rested on it; plan-step work is withdrawn as soon as its plan moves on; project boards read the canonical gates and decide through the gate registry ([delegated_conversation_requests.md](delegated_conversation_requests.md), [assistant_home.md](assistant_home.md#project-boards), [ADR 0021](adr/0021-conversation-requests-and-steering.md)). Left for later increments: model classification, conversation context and one-to-one chat (DA-8); project-audience findings and replies posted into a conversation (DA-11c) | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
-| DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
+| DA-5: process stewardship | In progress. Done (DA-5a): observations for every cataloged kind, the two-axis health and relevance assessment, incidents with shared-cause grouping, hysteresis and cooldown, the `process_health` and `process_relevance` Attention generators, the Home Processes card and the read-only Processes report on the Responsibilities page; see [process_stewardship.md](process_stewardship.md), [ADR 0020](adr/0020-process-assessment-and-incidents.md). Still open: pause, archive, restore and exact cleanup (DA-5b); repair through runs (DA-5c); a producer of target-ended codes for watches | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Planned: the chat tools, confirmation receipts and the chat decision card (DA-7b), the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Done. Four adapters (`chat_request` for `personal_chat`, `followed_source`, `job_failure`, `ci_verdict`), each opt-in in `scopes.sources` and behind the owner-only `sources` pilot capability; history before activation is never acted on; one narrow model label for implied requests in personal chat (charged to the responsibility's budget, at most 10 percent of it); a daily cap of 3 per source that coalesces the excess; one investigation per failure cause; skipped CI is not passing; a lookback preview ([delegated_opportunity_sources.md](delegated_opportunity_sources.md), [ADR 0026](adr/0026-wider-opportunity-sources.md)) | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
-| DA-11: extended reach | Planned | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
-| DA-12: operator controls and model evaluation | Done for the host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). Still planned (DA-12b): the real-model evaluation set. The caps hold the DA-3 defaults until the owner records the pilot's numbers | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
+| DA-11: extended reach | In progress. DA-11c done: findings shared with a project's members under current membership, with the producer shown, only from the project's own sources, never from a run that read private notes, behind the owner-only pilot gate, with receipts deleted when a member leaves ([delegated_project_findings.md](delegated_project_findings.md)). Planned: repository work, saved-note edits, note connections and archiving, and typed outside connectors | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
+| DA-12: operator controls and model evaluation | Done. The host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). The real-model evaluation set (DA-12b): six fixed, fictional cases, opt-in and never in required CI; see [delegated_evaluation.md](delegated_evaluation.md). The caps hold the DA-3 defaults until the owner records the pilot's numbers, and the "useful result" rubric is a default until the owner records another | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
 in mind; only the first part of DA-7 (DA-7a, deciding a request where it is
-shown) and the host's controls of DA-12 (DA-12a) are implemented. Their
-contracts are in
+shown) and DA-12 (the host's controls and the evaluation set) are
+implemented. Their contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
 DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4
@@ -298,8 +298,9 @@ boards are a read over the canonical gates and decide through
 Not in DA-4b, by owner decision 4 and the conservative reading: a model
 reading conversations for implied requests, conversation context in a run,
 and one-to-one chat (all three arrived in DA-8, for personal chat only, see
-below); findings for a project audience and anything posted back into the
-conversation (DA-11c).
+below); a reply posted back into the conversation (still not built; DA-11c
+shares findings with a project's members on Home instead, see
+[delegated_project_findings.md](delegated_project_findings.md)).
 
 ### DA-5: keep processes healthy and useful
 
@@ -366,7 +367,7 @@ Record each pilot cycle using this template:
 | Human effort | Questions, approvals, corrections and orchestration still required |
 | Delivery | Home/component updates, actual interruptions, duplicates and relevance |
 | Resources | Tokens/search/compute/storage; missing or estimated accounting noted |
-| Model and prompt version | The provider and model id the runs used, and the commit of the run prompt (`assistantRunService._messages`), so a result can be compared across changes |
+| Model and prompt version | The provider and model id the runs used, and the prompt version label (`v<version>-<fingerprint>` from `assistantRunService.promptVersion()`; an [evaluation](delegated_evaluation.md) run writes all three in its `manifest.json`), so a result can be compared across changes |
 | Caps in force | `installationRuns`, `runsPerAccount`, `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds` as shown in Host → Delegated work, and which of them the host set |
 | Reliability | Failures, revoked access, concurrent edits, retries, unwanted actions |
 | Decision | Keep policy, narrow/widen it explicitly, repair machinery, or stop |
@@ -503,6 +504,7 @@ entries in the run's tool table (ADR 0018), never by exposing a chat tool:
   applies unless the grant explicitly names direct editing.
 - **Findings for a project's members** (`audience: project`) under the
   project's membership at delivery time, with the producer shown.
+  *Done (DA-11c):* [delegated_project_findings.md](delegated_project_findings.md).
 - **Outside connectors** (`external.write`, and read connectors such as a
   calendar) as typed adapters with a manifest of exactly what each reads and
   writes. The product non-goal of broad surveillance stands: a connector is
@@ -515,7 +517,7 @@ Exit scenarios:
 - A run cannot push to a branch outside its patterns or to a protected one.
 - A saved-note proposal shows a diff; applying it is the person's action.
 - An archived note is restorable with its connections.
-- A member who leaves a project stops receiving its findings at once.
+- A member who leaves a project stops receiving its findings at once. *(Done, DA-11c.)*
 - An outside write that may have happened stops for review, never retries.
 - Revoking a connector stops its use at the next call and removes its tokens.
 
@@ -529,9 +531,9 @@ optional evaluation set that runs fixed, fictional responsibilities against
 a real provider and measures refusals, unwanted writes, cost per useful
 result and prompt-injection resistance; it is never part of required CI.
 
-Status: the view, the caps, stop-all and the pilot gate are built (DA-12a,
-[delegated_operations.md](delegated_operations.md)). The evaluation set is
-still planned (DA-12b).
+Status: built. The view, the caps, stop-all and the pilot gate are DA-12a
+([delegated_operations.md](delegated_operations.md)); the evaluation set is
+DA-12b ([delegated_evaluation.md](delegated_evaluation.md)).
 
 Exit scenarios:
 
@@ -542,10 +544,13 @@ Exit scenarios:
 - Per-account and installation caps hold under concurrent claims. (Built.)
 - An unset budget still means the conservative default. (Built.)
 - A page or file that tells the run to exceed its grant changes nothing: the
-  call is refused by authorization, not by the prompt. (Built for a scripted
-  model; measuring it against a real provider is DA-12b.)
+  call is refused by authorization, not by the prompt. (Built: for a scripted
+  model in required CI, and against a real provider by the evaluation set's
+  two injection cases, whose live test fails if anything outside the grant
+  takes effect.)
 - Evaluation results are recorded with the model and prompt version used.
-  (Planned, DA-12b. The pilot cycle template above already has the row.)
+  (Built: every evaluation record names the provider, the model and the
+  prompt version label, and the pilot cycle template above has the row.)
 
 ## Validation and review requirements
 

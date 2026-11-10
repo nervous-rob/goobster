@@ -755,7 +755,10 @@ async function main() {
             await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Delegator' });
             for (const [table, column] of [
                 ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
-                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId']
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
+                ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
+                ['attention_items', 'userId'], ['automations', 'userId']
             ]) {
                 await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
             }
@@ -774,6 +777,72 @@ async function main() {
                 })).update.id;
             }
             res.json({ ok: true, ...out });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Recurring work in five conditions (documentation/process_stewardship.md):
+    // one that has failed three times running, one that failed once, one that
+    // works, one that works but whose goal is resolved, and one switched off.
+    // Then one incident pass, as the steward would run it. No model, no network.
+    app.post('/e2e/fixtures/assistant-home/processes', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const processes = require('@goobster/core/services/assistantProcessService');
+            const incidents = require('@goobster/core/services/assistantIncidentService');
+            // Safe to call twice for one person (CI retries a journey): what an
+            // earlier call made, and what was said about it, goes first.
+            const said = await db.all(
+                "SELECT id FROM assistant_updates WHERE audienceUserId = @userId AND kind = 'process'", { userId }
+            );
+            for (const { id } of said) {
+                await db.run('DELETE FROM assistant_update_receipts WHERE updateId = @id', { id });
+                await db.run(
+                    "DELETE FROM inbox_items WHERE userId = @userId AND sourceType = 'assistant_update' AND sourceId LIKE @prefix",
+                    { userId, prefix: `${id}:%` }
+                );
+                await db.run('DELETE FROM assistant_updates WHERE id = @id', { id });
+            }
+            for (const [table, column] of [
+                ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
+                ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
+                ['attention_items', 'userId'], ['automations', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            const nextRun = new Date(Date.now() + 86_400_000).toISOString().slice(0, 19).replace('T', ' ');
+            const make = async (name, outcomes) => {
+                const id = Number(await db.insert(
+                    `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+                     VALUES (@userId, @scope, @channel, @name, 'fixture', '0 3 * * *', @nextRun)`,
+                    { userId, scope: `dm:${userId}`, channel: `inbox:${userId}`, name, nextRun }
+                ));
+                for (const [index, outcome] of outcomes.entries()) {
+                    await processes.record({
+                        processKind: 'automation', processId: id, ownerUserId: userId, occurrenceKey: `fire:${index}`,
+                        phase: 'outcome', outcome, reasonCode: outcome === 'failed' ? 'RUN_FAILED' : null,
+                        observedAt: new Date(Date.now() - (outcomes.length - index) * 3_600_000)
+                    });
+                }
+                return id;
+            };
+            await make('Nightly import', ['ok', 'failed', 'failed', 'failed']);
+            await make('Price check', ['ok', 'ok', 'failed']);
+            await make('Morning digest', ['ok', 'ok']);
+            const watchId = await make('Release watch', ['ok', 'ok']);
+            const offId = await make('Old weekly report', []);
+            await db.run('UPDATE automations SET isEnabled = 0 WHERE id = @id', { id: offId });
+            const itemId = Number(await db.insert(
+                `INSERT INTO attention_items (guildId, userId, kind, subject, state)
+                 VALUES (@scope, @userId, 'goal', 'Ship the release', 'resolved')`,
+                { scope: `dm:${userId}`, userId }
+            ));
+            await processes.putContract({
+                userId, kind: 'automation', id: watchId,
+                body: { purpose: 'Tell me when the release ships', attentionItemId: itemId }
+            });
+            res.json({ ok: true, pass: await incidents.reconcile({ userId }) });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }
@@ -955,6 +1024,48 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         } finally {
             aiService.chat = original;
+        }
+    });
+    // Findings shared with a project's members (assistantProjectAudience.spec.js,
+    // documentation/delegated_project_findings.md): the installation's owner
+    // (an operator, with Attention on) with a project and its conversation, a
+    // collaborator seated in both, and someone outside the project. The
+    // pilot decision is cleared so the owner-only gate applies. Safe to call
+    // again: it starts all three over.
+    app.post('/e2e/fixtures/assistant-project-audience', express.json(), async (req, res) => {
+        try {
+            const ids = ['ownerId', 'memberId', 'outsiderId'].map(key => String(req.body?.[key] || ''));
+            if (ids.some(id => !/^\d{5,20}$/.test(id))) return res.status(400).json({ error: 'ids' });
+            const [ownerId, memberId, outsiderId] = ids;
+            const names = { [ownerId]: 'Ada', [memberId]: 'Bo', [outsiderId]: 'Cy' };
+            for (const userId of ids) {
+                await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: names[userId] });
+                const mine = await db.all('SELECT id FROM observatory_projects WHERE userId = @userId', { userId });
+                for (const { id } of mine) await db.run('DELETE FROM project_members WHERE projectId = @id', { id });
+                for (const [table, column] of [
+                    ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                    ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                    ['parlor_conversations', 'ownerId'], ['observatory_projects', 'userId']
+                ]) {
+                    await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+                }
+            }
+            await db.run("DELETE FROM assistant_updates WHERE audienceKind = 'project' AND producerUserId = @ownerId", { ownerId });
+            await db.run("DELETE FROM instance_state WHERE key = 'assistantPilot'");
+            await identityService.grantAccount({ principalId: ownerId, entitlement: 'bootstrap', role: 'operator' });
+            await policies.enroll({ userId: ownerId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId: ownerId, name: String(req.body?.project || 'Shared lab') });
+            await db.run(
+                'INSERT INTO project_members (projectId, userId, userName, invitedBy) VALUES (@projectId, @userId, @userName, @ownerId)',
+                { projectId: project.id, userId: memberId, userName: names[memberId], ownerId }
+            );
+            const conversation = await parlorService.ensureProjectConversation({
+                project: { id: project.id, ownerId, name: project.name },
+                members: [{ userId: memberId, userName: names[memberId] }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
         }
     });
     // The pass that files a project's open requests in the person's Inbox.

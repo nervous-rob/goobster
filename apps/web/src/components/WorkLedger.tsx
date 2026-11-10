@@ -19,6 +19,7 @@ export const FAILURE_KIND_LABEL: Record<string, string> = {
     delivery: 'delivery',
     mission_step: 'mission step',
     watch: 'watch',
+    followed_source: 'followed source',
     followup: 'reminder',
     integration_action: 'integration action',
     reflection: 'knowledge reflection',

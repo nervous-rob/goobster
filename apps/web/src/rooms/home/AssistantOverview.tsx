@@ -22,21 +22,24 @@ import type {
  * its decision card, rendered by <GateDecision> exactly as the Inbox renders
  * it; any other request links to where it is decided. Unseen updates, open
  * requests, running work and blocked processes are separate,
- * separately-labelled numbers. A count the server could not read is shown as
+ * separately-labelled numbers. A process that is blocked or running with a
+ * problem stays on its card after the update about it was reviewed: its
+ * health is judged, not read. A count the server could not read is shown as
  * unknown, not as zero.
  */
 
-const COMPONENT_META: Record<AssistantComponent['id'], { label: string; mark: string; to: string; what: string }> = {
+const COMPONENT_META: Record<AssistantComponent['id'], { label: string; mark: string; to: string; hash?: string; what: string }> = {
     knowledge: { label: 'Knowledge', mark: '🧠', to: '/knowledge', what: 'What changed in what you keep' },
     research: { label: 'Research', mark: '🧭', to: '/knowledge', what: 'Questions looked into and what was found' },
     projects: { label: 'Projects', mark: '🔭', to: '/projects', what: 'Work carried forward' },
-    processes: { label: 'Processes', mark: '🗓️', to: '/activity/scheduled', what: 'Recurring work: is it healthy and useful' },
+    processes: { label: 'Processes', mark: '🗓️', to: '/assistant', hash: 'processes', what: 'Recurring work: is it working, and is it still needed' },
     conversations: { label: 'Conversations', mark: '💬', to: '/chat', what: 'Threads worth picking up' }
 };
 
 const STATE_TEXT: Record<AssistantComponent['state'], { text: string; mark: string }> = {
     needs_you: { text: 'Needs you', mark: '◆' },
     blocked: { text: 'Blocked', mark: '■' },
+    degraded: { text: 'Running with a problem', mark: '▲' },
     working: { text: 'Working', mark: '▶' },
     updates: { text: 'New updates', mark: '●' },
     quiet: { text: 'Up to date', mark: '○' },
@@ -58,23 +61,23 @@ const REQUEST_LABEL: Record<string, string> = {
 const plural = (n: number, one: string, many = `${one}s`) => `${n} ${n === 1 ? one : many}`;
 
 /** Where a typed, server-derived action leads. Navigation grants nothing. */
-function actionPath(action: AssistantAction | undefined): string | null {
+function actionPath(action: AssistantAction | undefined): { to: string; hash?: string } | null {
     if (!action) return null;
     if (action.kind === 'open_project' || action.kind === 'open_review') {
         const [owner, slug] = String(action.id).split('/');
-        return owner && slug ? `/projects/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}` : '/projects';
+        return { to: owner && slug ? `/projects/${encodeURIComponent(owner)}/${encodeURIComponent(slug)}` : '/projects' };
     }
-    if (action.kind === 'open_responsibility' || action.kind === 'open_initiative') return '/assistant';
-    if (action.kind === 'open_process') return '/activity/scheduled';
-    if (action.kind === 'open_conversation') return /^\d+$/.test(String(action.id)) ? `/discussions/${action.id}` : '/discussions';
-    if (action.kind === 'open_chat') return /^\d+$/.test(String(action.id)) ? `/chat/${action.id}` : '/chat';
+    if (action.kind === 'open_responsibility' || action.kind === 'open_initiative') return { to: '/assistant' };
+    if (action.kind === 'open_process') return { to: '/assistant', hash: 'processes' };
+    if (action.kind === 'open_conversation') return { to: /^\d+$/.test(String(action.id)) ? `/discussions/${action.id}` : '/discussions' };
+    if (action.kind === 'open_chat') return { to: /^\d+$/.test(String(action.id)) ? `/chat/${action.id}` : '/chat' };
     return null;
 }
 
 /** The conversation an update came from, when it names one and that is not already where "Open" leads. */
 function conversationPath(actions: AssistantAction[] | undefined): string | null {
     const index = (actions || []).findIndex((action) => action.kind === 'open_conversation' || action.kind === 'open_chat');
-    return index > 0 ? actionPath(actions?.[index]) : null;
+    return index > 0 ? actionPath(actions?.[index])?.to ?? null : null;
 }
 
 function statusLine(assistant: AssistantHome): string {
@@ -97,12 +100,13 @@ function ComponentCard({ component }: { component: AssistantComponent }) {
     const state = STATE_TEXT[component.state];
     const signals: string[] = [];
     if (component.needsAction) signals.push(`${component.needsAction} needs you`);
-    if (component.blocked) signals.push(`${component.blocked} blocked`);
+    if (component.blocked) signals.push(`${component.blocked} not working`);
+    if (component.degraded) signals.push(`${component.degraded} with a problem`);
     if (component.unseen) signals.push(plural(component.unseen, 'new update'));
     if (component.running) signals.push(`${component.running} working`);
     const detail = signals.length ? signals.join(' · ') : state.text;
     return (
-        <Link to={meta.to as never} className={`assistant-component is-${component.state}`} data-testid={`assistant-component-${component.id}`}
+        <Link to={meta.to as never} hash={meta.hash} className={`assistant-component is-${component.state}`} data-testid={`assistant-component-${component.id}`}
             aria-label={`${meta.label}: ${detail}. ${meta.what}.`}>
             <span className="assistant-component-name"><span aria-hidden="true">{meta.mark}</span> {meta.label}</span>
             <span className="assistant-component-state"><span aria-hidden="true">{state.mark}</span> {detail}</span>
@@ -123,7 +127,7 @@ function NeedsYouRow({ item }: { item: AssistantNeedsYouItem }) {
                 {item.decision && <GateDecision card={item.decision} surface="home" />}
             </div>
             <div className="assistant-row-actions">
-                {target && <Link to={target as never} className="btn subtle">Open →</Link>}
+                {target && <Link to={target.to as never} hash={target.hash} className="btn subtle">Open →</Link>}
                 <Link to="/activity/inbox" hash={`inbox-${item.inboxItemId}`} className="btn subtle">In Inbox</Link>
             </div>
         </li>
@@ -138,13 +142,19 @@ function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onRevi
             <div className="assistant-row-main">
                 <strong>{item.title}</strong>
                 {item.summary && <div className="hint">{item.summary}</div>}
+                {item.audience?.kind === 'project' && (
+                    <div className="hint" data-testid="assistant-brief-producer">
+                        Shared with this project
+                        {item.producer && (item.producer.you ? ' by you' : ` by ${item.producer.name ? `${item.producer.name}'s` : 'a member\'s'} assistant`)}
+                    </div>
+                )}
                 <div className="row-meta">
                     {item.componentIds.map((id) => COMPONENT_META[id as AssistantComponent['id']]?.label).filter(Boolean).join(' · ')}
                     {' · '}<span title={item.happenedAt}>{formatRelativeTime(`${item.happenedAt.replace(' ', 'T')}Z`)}</span>
                 </div>
             </div>
             <div className="assistant-row-actions">
-                {target && <Link to={target as never} className="btn subtle">Open →</Link>}
+                {target && <Link to={target.to as never} hash={target.hash} className="btn subtle">Open →</Link>}
                 {conversation && <Link to={conversation as never} className="btn subtle" data-testid="assistant-brief-conversation">Conversation</Link>}
                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onReviewed([item])}>Mark reviewed</button>
             </div>

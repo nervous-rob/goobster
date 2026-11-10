@@ -207,11 +207,30 @@ finished. Failure records in the work ledger hold a code only.
 Design and reasons: [ADR 0018](adr/0018-delegated-runs.md); for plan steps,
 [ADR 0019](adr/0019-delegated-plan-steps.md).
 
+## Findings for a project's members
+
+A run for a responsibility that shares with its project (`scopes.audience:
+"project"`) publishes its finding to the project's members when the project's
+own plan or conversation prompted it, and the run read none of your private
+notes (those tools are not offered to it). Otherwise the finding comes to you
+alone and says why. See
+[delegated_project_findings.md](delegated_project_findings.md). The ledger
+code `SHARE_FAILED` records, with no text, that filing the shared copy failed.
+
+## Measuring a model
+
+The instructions a run is given carry a version
+(`assistantRunService.promptVersion()`: a number raised on purpose, and a
+fingerprint that changes with any edit to the instructions or a tool's
+definition). The optional [evaluation set](delegated_evaluation.md) runs
+fixed, fictional responsibilities against a real provider and records what
+the model did, with that version and the model used. It is not part of
+`npm test` or CI.
+
 ## Not built yet
 
 Editing notes you saved, connecting or archiving notes, repository work
-(commit, push, pull requests), acting on processes, findings shared with a
-project's members, and work recognized by a model from what was said in a
+(commit, push, pull requests), acting on processes, and work recognized by a model from what was said in a
 conversation. Requests you address to Goobster in a conversation are built:
 see [delegated_conversation_requests.md](delegated_conversation_requests.md).
 When repository work, saved-note edits and outside connectors arrive they

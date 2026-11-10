@@ -43,6 +43,7 @@ const config = require('../config/attentionConfig');
 const score = require('../utils/attentionScore');
 const { dmScopeId } = require('../utils/dmScope');
 const logger = require('../utils/logger');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const { CANDIDATES, HEARTBEAT, MAX_TITLE_LENGTH, MAX_DETAIL_LENGTH } = config;
 
@@ -508,6 +509,15 @@ class AttentionService {
         this.registerGenerator('contradiction', {
             description: 'The knowledge graph gained a contradiction',
             run: generateContradictions
+        });
+        // Process stewardship ships with the assistant feature and may be absent.
+        this.registerGenerator('process_health', {
+            description: 'A recurring process has an open incident',
+            run: async ctx => await requireOptional('./assistantIncidentService', { feature: 'assistant' })?.healthCandidates(ctx) || []
+        });
+        this.registerGenerator('process_relevance', {
+            description: 'A recurring process outlived its purpose, or its review date passed',
+            run: async ctx => await requireOptional('./assistantIncidentService', { feature: 'assistant' })?.relevanceCandidates(ctx) || []
         });
         this.registerGenerator('unconfirmed_loop', {
             description: 'A mined open loop is still unconfirmed',
