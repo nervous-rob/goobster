@@ -587,6 +587,14 @@ records a starting point and raises nothing.
 If the process is switched off before a repair could be proved, the repair
 is closed and its change put back.
 
+Everything a repair files (the offer, what was done, how it went, the
+question at the attempt limit) is on Home and in the Inbox. What a repair
+under a responsibility files also follows that responsibility's
+[interruption rule](delegated_delivery.md#the-interruption-rule): it can go
+in the day's digest, and under `immediate` an open question can contact you
+once. An offer made with no grant belongs to no responsibility and never
+leaves the portal.
+
 ### Attempts
 
 Each incident has a small number of repair attempts, counting every repair
