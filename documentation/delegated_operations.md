@@ -161,8 +161,14 @@ records the pilot decision, only the owner has them.**
   `PILOT_ONLY` at activation and at dispatch, and a repair run that was
   already queued ends before any model call. Process incidents, and pausing
   and archiving a process, are not gated.
-  Everything else delegated runs can do today (reading,
-  generated notes, project files, sandbox runs, research) is not gated.
+  Delivery (DA-9, [delegated_delivery.md](delegated_delivery.md)) is gated
+  too: for anyone but the owner, activating or resuming a responsibility
+  whose updates go in a digest or contact them is refused with `PILOT_ONLY`,
+  nothing is sent out for one that is already active, the digest time is
+  not offered in Settings, and the portal is not told of changes while it
+  is open.
+  Everything else delegated runs can do today (reading, generated notes,
+  project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated

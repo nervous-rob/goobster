@@ -11,6 +11,7 @@ const eventBusService = require('../../services/eventBusService');
 const { workspaceRoot } = require('../../runtimePaths');
 const { SSE_HEARTBEAT_MS } = require('../appHelpers');
 const { createSseChannel } = require('../liveAuthorization');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 
 function mountEventsStatic(app, ctx, h) {
     const { requireAuth, sendError } = h;
@@ -54,9 +55,19 @@ function mountEventsStatic(app, ctx, h) {
             });
         });
 
+        // Delegated work changed for this person (documentation/delegated_delivery.md):
+        // kinds and refetch hints only, coalesced per stream. The channel
+        // rechecks the session before it writes, and the client reads the
+        // changed state through the ordinary routes.
+        const assistantLive = requireOptional('../../services/assistantLiveService', { feature: 'assistant' });
+        const unwatch = assistantLive
+            ? assistantLive.watch(req.webUser.userId, event => send('assistant', event))
+            : () => {};
+
         res.on('close', () => {
             clearInterval(heartbeat);
             unsubscribe();
+            unwatch();
         });
     });
 

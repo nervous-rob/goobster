@@ -66,6 +66,9 @@ class AssistantInitiativeError extends Error {
 
 const notFound = () => new AssistantInitiativeError('NOT_FOUND', 'No such initiative.', 404);
 
+/** Tells open portals that someone's opportunities changed (kinds only, never a title). */
+const live = () => require('./assistantLiveService');
+
 function utcText(date = new Date()) {
     return date.toISOString().slice(0, 19).replace('T', ' ');
 }
@@ -235,6 +238,7 @@ class AssistantInitiativeService {
                 reason: source.reason || null
             }
         );
+        live().changed(responsibility.ownerUserId, 'initiative');
         return { initiative: await this._row(id), created: true };
     }
 
@@ -314,6 +318,8 @@ class AssistantInitiativeService {
                 });
             }
         }
+        // Withdrawn work is written without `_write`, so it is announced here.
+        if (outcome.superseded || outcome.steered.length) live().changed(responsibility.ownerUserId, 'initiative');
         return outcome;
     }
 
@@ -519,6 +525,7 @@ class AssistantInitiativeService {
                 { rid: responsibility.id, code: `RESPONSIBILITY_${responsibility.status}`, now }
             );
         }
+        live().changed(responsibility.ownerUserId, 'initiative');
     }
 
     async _write(row, expectedRevision, sets, { allowFrom }) {
@@ -542,6 +549,7 @@ class AssistantInitiativeService {
             const current = await this._row(row.id);
             throw new AssistantInitiativeError('REVISION_CONFLICT', 'This initiative changed since you loaded it.', 409, { revision: current ? Number(current.revision) : null });
         }
+        live().changed(row.ownerUserId, 'initiative');
         return this._row(row.id);
     }
 
@@ -636,6 +644,7 @@ class AssistantInitiativeService {
                     depth: Math.min(MAX_DEPTH, Number(row.depth || 0))
                 }
             );
+            live().changed(row.ownerUserId, 'initiative');
             return { initiative: this.present(await this._row(newId)) };
         });
     }
@@ -743,26 +752,34 @@ class AssistantInitiativeService {
      * the person, on access or on the responsibility needs a human action.
      */
     async requeueDue({ now = new Date() } = {}) {
+        const due = `status = 'WAITING' AND waitReason IN ('budget', 'dependency')
+               AND recheckAfter IS NOT NULL AND recheckAfter <= @now`;
+        const owners = await db.all(`SELECT DISTINCT ownerUserId FROM assistant_initiatives WHERE ${due}`, { now: utcText(now) });
+        if (!owners.length) return 0;
         const result = await db.run(
             `UPDATE assistant_initiatives
              SET status = 'QUEUED', waitReason = NULL, stopCode = NULL, recheckAfter = NULL,
                  revision = revision + 1, updatedAt = @now
-             WHERE status = 'WAITING' AND waitReason IN ('budget', 'dependency')
-               AND recheckAfter IS NOT NULL AND recheckAfter <= @now`,
+             WHERE ${due}`,
             { now: utcText(now) }
         );
+        live().changed(owners.map(row => row.ownerUserId), 'initiative');
         return result.changes || 0;
     }
 
     /** Return RUNNING attempts whose lease lapsed to QUEUED, without their token. */
     async reapExpiredLeases({ now = new Date() } = {}) {
+        const lapsed = "status = 'RUNNING' AND leaseExpiresAt IS NOT NULL AND leaseExpiresAt <= @now";
+        const owners = await db.all(`SELECT DISTINCT ownerUserId FROM assistant_initiatives WHERE ${lapsed}`, { now: utcText(now) });
+        if (!owners.length) return 0;
         const result = await db.run(
             `UPDATE assistant_initiatives
              SET status = 'QUEUED', leaseToken = NULL, leaseExpiresAt = NULL, stopCode = 'LEASE_EXPIRED',
                  revision = revision + 1, updatedAt = @now
-             WHERE status = 'RUNNING' AND leaseExpiresAt IS NOT NULL AND leaseExpiresAt <= @now`,
+             WHERE ${lapsed}`,
             { now: utcText(now) }
         );
+        live().changed(owners.map(row => row.ownerUserId), 'initiative');
         return result.changes || 0;
     }
 

@@ -215,7 +215,14 @@ class AssistantProcessRepairService {
              WHERE id = @rowId AND revision = @expected`,
             { ...fields, updatedAt: utcText(now), rowId: row.id, expected: row.revision }
         );
-        return result.changes === 1 ? this._row(row.id) : null;
+        if (result.changes !== 1) return null;
+        this._announce(row.ownerUserId);
+        return this._row(row.id);
+    }
+
+    /** A repair was recorded or moved on: the owner's open Processes report reads again (kinds only, never throws). */
+    _announce(owner) {
+        require('./assistantLiveService').changed(owner, 'update');
     }
 
     /** A person's repairs of one process, newest first. */
@@ -539,6 +546,7 @@ class AssistantProcessRepairService {
                 }
             );
         });
+        this._announce(owner);
         const row = await this._row(id);
         const name = quoted(entry.described.name);
         const failed = `It has failed ${plural(entry.assessment.health.failRun, 'time')} in a row${coded(plan.cause)}.`;
@@ -650,6 +658,7 @@ class AssistantProcessRepairService {
                 const again = await db.get('SELECT * FROM assistant_process_repairs WHERE attemptKey = @key', { key: actor.attemptKey });
                 return { applied: true, row: again };
             }
+            this._announce(owner);
             row = await this._row(id);
         }
 

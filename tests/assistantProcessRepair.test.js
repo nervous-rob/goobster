@@ -279,7 +279,15 @@ describe('without a grant', () => {
         await failing(task);
         await pass();
 
+        // Open portals are told something changed for this person (kinds only), so the Processes report reads again.
+        const bus = require('@goobster/core/services/domainEventBus');
+        const announced = [];
+        const stop = bus.subscribe(bus.TOPICS.ASSISTANT_CHANGED, event => { announced.push(event.payload); });
         const decided = await decide(task, 'approve', 'processes');
+        await new Promise(resolve => setImmediate(resolve));
+        stop();
+        expect(announced).toContainEqual(expect.objectContaining({ userId: A, kinds: ['update'] }));
+        expect(JSON.stringify(announced)).not.toContain('nightly import');
         expect(decided.decided.message).toBe('"nightly import" is being run now. You will be told how it went.');
         // The question is replaced by what is being done: nothing is left to answer.
         expect(decided.current).toBeNull();
