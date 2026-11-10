@@ -126,7 +126,7 @@ async function dispatch(method, params, { serverInfo, instructions, listTools, c
                 throw invalidParams('Tool arguments must be a JSON object.');
             }
             // An MCP client is a model's hand too: nothing a person must
-            // confirm is reachable from a tool call (ADR 0019).
+            // confirm is reachable from a tool call (ADR 0023).
             return await modelCallScope.run(`mcp:${name}`, () => callTool(name, args));
         }
         default:

@@ -25,7 +25,7 @@
  * model call is not a confirmation): it refuses inside one
  * (utils/modelCallScope.js), and a decision pressed on a chat card must
  * also carry the human confirmation receipt minted when that card was
- * rendered to the person (assistantConfirmationService, ADR 0019).
+ * rendered to the person (assistantConfirmationService, ADR 0023).
  */
 
 const db = require('../db');

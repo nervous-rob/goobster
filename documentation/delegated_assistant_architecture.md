@@ -9,7 +9,7 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
 are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13 except 13.1 without its spoken briefing (ADR 0019), is planned.** Updated 2026-11-10.
+section 13 except 13.1 without its spoken briefing (ADR 0023), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -758,7 +758,7 @@ grant nothing), `assistantRunService.forInitiative`, the Home projection
 
 *Implemented (DA-7b).* Behaviour:
 [delegated_conversation.md](delegated_conversation.md); decision record:
-[ADR 0019](adr/0019-conversational-delegation-and-receipts.md). The chat
+[ADR 0023](adr/0023-conversational-delegation-and-receipts.md). The chat
 tools, all in `utils/tools/assistant.js`:
 
 | Tool | Does | Authority |

@@ -18,7 +18,7 @@ const COLUMN_MIGRATIONS = [
     ['kg_nodes', 'revision', 'revision INTEGER NOT NULL DEFAULT 1'],
     // 1 = written by a delegated run and not yet touched by a person (ADR 0018).
     ['kg_nodes', 'generated', 'generated INTEGER NOT NULL DEFAULT 0'],
-    // A responsibility a chat tool drafted (ADR 0019).
+    // A responsibility a chat tool drafted (ADR 0023).
     ['assistant_responsibilities', 'proposedBy', "proposedBy TEXT CHECK (proposedBy IS NULL OR proposedBy = 'model')"],
     ['assistant_responsibilities', 'proposedConversation', 'proposedConversation TEXT'],
     ['assistant_responsibilities', 'proposalKeptAt', 'proposalKeptAt TEXT'],

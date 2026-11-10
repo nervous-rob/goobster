@@ -1,5 +1,5 @@
 /**
- * Delegating and steering by conversation (DA-7b, ADR 0019;
+ * Delegating and steering by conversation (DA-7b, ADR 0023;
  * documentation/delegated_conversation.md).
  *
  * The property this suite exists for: no sequence of model tool calls can

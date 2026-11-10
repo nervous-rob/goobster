@@ -8,7 +8,7 @@
  * `active()` and refuse, whatever arguments the call carried.
  *
  * This is the structural half of "a model call is never a confirmation"
- * (ADR 0019). It does not replace the checks a human-only operation makes
+ * (ADR 0023). It does not replace the checks a human-only operation makes
  * for itself (a session, a revision, a confirmation receipt); it makes the
  * model's side provable: no tool, present or future, reaches a human-only
  * operation by calling it.

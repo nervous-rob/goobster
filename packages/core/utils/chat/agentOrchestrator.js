@@ -270,7 +270,7 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
                 parsedArgs.interactionContext = interactionContext;
                 // Whatever the executor is (the chat registry, a delegated
                 // run, a persona's tools), this is a model's call: operations
-                // only a person may take refuse inside it (ADR 0019).
+                // only a person may take refuse inside it (ADR 0023).
                 fnResult = await modelCallScope.run(`loop:${call.name}`, () => executeTool(call.name, parsedArgs));
 
                 if (isFeatureUnavailable(fnResult)) {

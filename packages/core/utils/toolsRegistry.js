@@ -264,7 +264,7 @@ module.exports = {
         if (!policy.allows(name)) return '❌ This tool is disabled by your personal settings.';
         // Every caller of the registry is a model's tool call (chat, an
         // automation turn, voice, a plan step): human-only operations
-        // refuse inside this scope (ADR 0019).
+        // refuse inside this scope (ADR 0023).
         return modelCallScope.run(`registry:${name}`, () => tools[name].execute(args || {}));
     },
 
