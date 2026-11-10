@@ -5,7 +5,9 @@
  * Invitations, the account roster (status, role, migration grants),
  * audited recovery links, the sign-up policy and mail status, the
  * legacy-data migration report, the guild-facing schedules (pause / resume /
- * run now / delete any server's automation or reminder), the per-account support view and the
+ * run now / delete any server's automation or reminder), the per-account support view,
+ * delegated work (the installation view, stop-all, caps and the pilot
+ * decision; documentation/delegated_operations.md) and the
  * operator audit (documentation/work_ledger.md). Every route runs behind
  * requireAuth + requireOperator; the role is read from the actor context,
  * never from the request. Every route that changes something writes one
@@ -14,6 +16,8 @@
 
 const operatorAudit = require('../../services/operatorAuditService');
 const accountSupport = require('../../services/accountSupportService');
+const { features } = require('../../features/featureState');
+const requireOptional = require('../../utils/optionalModule').forModule(module);
 
 function fail(status, code, message) {
     const error = new Error(message);
@@ -286,6 +290,61 @@ function mountAdmin(app, ctx, h) {
         const outcome = await schedules().remove(String(req.params.kind), req.params.id);
         await audit(req, 'schedule.delete', `${outcome.kind}:${outcome.id}`, { kind: outcome.kind, guildId: outcome.guildId });
         return outcome;
+    }));
+
+    // --- Delegated work (documentation/delegated_operations.md) ---------------
+    // Counts, states, spend and codes only: no title, prompt, result or
+    // journal text, and accounts by id. The services ship with the
+    // `assistant` feature, so both arguments below stay literal.
+    const assistantControl = () => (features.enforcedOff('assistant') ? null
+        : requireOptional('../../services/assistantControlService', { feature: 'assistant' }));
+    const assistantAccess = () => requireOptional('../../services/assistantAccessService', { feature: 'assistant' });
+    const controlOrRefuse = () => {
+        const control = assistantControl();
+        if (!control || !assistantAccess()) throw fail(409, 'FEATURE_UNAVAILABLE', 'The delegated assistant is not available on this installation.');
+        return control;
+    };
+    const assistantView = async (req) => ({
+        available: true,
+        ...await controlOrRefuse().overview({ days: req.query.days }),
+        pilot: await assistantAccess().overview()
+    });
+
+    app.get('/api/app/admin/assistant', ...guard, authRoute(async (req) => {
+        if (!assistantControl() || !assistantAccess()) return { available: false };
+        return assistantView(req);
+    }));
+
+    // Stop all delegated work: nothing is claimed, running work halts at its
+    // next step and waits. Nothing is cancelled.
+    app.post('/api/app/admin/assistant/pause', ...guard, authRoute(async (req) => {
+        const outcome = await controlOrRefuse().pauseAll();
+        if (outcome.changed) await audit(req, 'assistant.pause_all', null, null);
+        return { changed: outcome.changed, ...await assistantView(req) };
+    }));
+
+    app.post('/api/app/admin/assistant/resume', ...guard, authRoute(async (req) => {
+        const outcome = await controlOrRefuse().resumeAll();
+        if (outcome.changed) await audit(req, 'assistant.resume_all', null, { requeued: outcome.requeued });
+        return { changed: outcome.changed, requeued: outcome.requeued, ...await assistantView(req) };
+    }));
+
+    // { installationRuns?, runsPerAccount?, defaultModelTokens?, defaultSearches?,
+    //   defaultComputeSeconds? } - a number sets a cap, null restores the default.
+    app.patch('/api/app/admin/assistant/caps', ...guard, authRoute(async (req) => {
+        const outcome = await controlOrRefuse().setCaps(req.body);
+        const changed = Object.keys(outcome.changed).length > 0;
+        if (changed) await audit(req, 'assistant.set_caps', null, outcome.changed);
+        return { changed, ...await assistantView(req) };
+    }));
+
+    // { scope: 'owner' | 'everyone' } - the recorded pilot decision that opens
+    // (or closes again) the capabilities added after the first pilot.
+    app.post('/api/app/admin/assistant/pilot', ...guard, authRoute(async (req) => {
+        controlOrRefuse();
+        const outcome = await assistantAccess().recordDecision({ scope: req.body?.scope });
+        if (outcome.changed) await audit(req, 'assistant.pilot_decision', null, { scope: outcome.decision.scope });
+        return { changed: outcome.changed, ...await assistantView(req) };
     }));
 
     // Newest first, keyset-paged; optional filters by target and action.

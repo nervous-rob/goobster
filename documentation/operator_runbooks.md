@@ -268,6 +268,17 @@ Where `features.json` does not exist (an installation older than the catalog), n
 
 Settings that are `restart` apply when the workers restart; `hot` ones apply per request. The Host room's **Connections** and **Instance Defaults** pages preview, apply and offer the restart; headless it is `config.set` as in Getting started step 7 (`expectedRevision` from `GET /config`). A setting the environment controls is `ENV_CONTROLLED` and a masked value is `MASK_IS_NOT_A_VALUE` ([manager_configuration.md](manager_configuration.md#configset)).
 
+### Stop or limit delegated work
+
+Delegated work (responsibilities and the runs under them) has its own page, **Host → Delegated work** (`/app/host/assistant`); it needs no manager and no restart. The reference is [delegated_operations.md](delegated_operations.md).
+
+- **Something delegated is misbehaving, or you want the model capacity back.** Press **Stop all** and confirm. Expect the status to read *Stopped since ...*; nothing new starts, running work halts at its next step and waits, and nothing is cancelled. People see "The host has stopped all delegated work for now" on Home. Press **Resume** when you are done; the toast says how many halted pieces of work went back to the queue.
+- **Runs are crowding the machine, or one responsibility spends too much.** Lower a number under **Caps** and save: runs at once for the installation and per account, and the daily tokens, searches and sandbox seconds a responsibility gets (also the most its owner can set). An empty box means the default. A change applies to the next run that starts.
+- **The pilot is over and you have decided to open the later capabilities.** Under **Pilot**, press **Open to everyone** and confirm. Until then they are the host account's alone. **Limit to the host** closes them again.
+- **You want to know what delegated work is costing.** The same page lists runs, tokens, searches and sandbox seconds per day, failures and refused steps by code, and per-account counts. It shows no titles, prompts or results.
+
+Each of these writes one row in the operator audit (`assistant.pause_all`, `assistant.resume_all`, `assistant.set_caps`, `assistant.pilot_decision`). Headless, the same routes are `POST /api/app/admin/assistant/pause`, `/resume`, `/pilot` and `PATCH /api/app/admin/assistant/caps` with an operator's session.
+
 **What this cannot do.** It cannot add a feature the payload was built without (`FEATURE_NOT_INSTALLED`; the payload selection is [packaging.md](packaging.md)), it never changes a feature you did not name, and `GOOBSTER_FEATURE_<ID>=1` cannot turn on something the file or the legacy switch has off.
 
 ## Service ownership

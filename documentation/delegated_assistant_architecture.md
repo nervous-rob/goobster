@@ -8,8 +8,14 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 # Planned: delegated assistant architecture
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
-are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13 except 13.1 without its spoken briefing (ADR 0023), is planned.** Updated 2026-11-10.
+are implemented as recorded in ADR 0016, 0017 and 0018, the `agent` plan
+step of section 7 as recorded in ADR 0019, and the rest of section 7 for
+explicit requests (requests addressed to Goobster in a conversation,
+supersession when a person changes direction) together with the project
+board of section 9.2 as recorded in ADR 0021; the rest, and all of section
+13 except 13.1 without its spoken briefing (ADR 0023), the explicit-request
+part of the `conversation_request` adapter (13.2) and the host's controls
+(13.6), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -365,6 +371,17 @@ dependency graph over every stored sentence.
 
 ## 7. Project continuity and plan authorization
 
+**Shipped in DA-4a:** the `agent` step kind, its link to a durable run
+through the `READY -> STARTING -> RUNNING` protocol, the delegation's own
+authorization kind and grant revision on the step, dispatch-time
+invalidation when the approved plan revision moved, deterministic
+verification, and the rule that keeps private context out of a shared
+project. See [delegated_plan_steps.md](delegated_plan_steps.md) and
+[ADR 0019](adr/0019-delegated-plan-steps.md). Source references from
+conversations, matching existing work before drafting, and supersession when
+the user changes direction (the first and last paragraphs below) are still
+planned.
+
 Preserve source conversation/message references from Study, ordinary Parlor,
 and project discussions. Match existing work before drafting more. A private
 trigger conversation and a shared project discussion are distinct destinations;
@@ -389,6 +406,16 @@ When the user changes direction, supersede affected initiatives, invalidate
 queued work based on outdated plan versions, signal active runs to stop at safe
 boundaries, and reassess dependent assumptions. A new note alone does not
 cancel executable work. The reason and remaining external effects stay visible.
+
+*Implemented (DA-4b, ADR 0021):* a steering message a person addresses to
+Goobster in a conversation supersedes that person's unfinished initiatives
+from the same conversation (`SUPERSEDED`, `STEERED`, `supersededBy`), a
+running one by clearing its lease so the run stops at its next tool call;
+one update names what was stopped, the changes already applied and left in
+place, child research, and earlier results worth another look. Plan-step
+initiatives are superseded on every reconcile once their plan revision, plan
+status or step no longer match. See
+[delegated_conversation_requests.md](delegated_conversation_requests.md).
 
 ## 8. Process catalog, repair, and retirement
 
@@ -521,7 +548,9 @@ action-required filtered view of those same Inbox items**, not a second store,
 queue, route hierarchy, or unread lifecycle. Proposed Inbox filters are All,
 Needs you, and Updates on `/activity/inbox`; Home's Needs you uses the same
 query. Existing Project Needs-you shows the project-filtered view of the same
-source gates. The domain service owns whether an approval/question/review gate
+source gates (implemented in DA-4b as `assistantGateService.projectBoard`,
+a read that attaches the viewer's canonical gate and decision card to the
+project's own list; ADR 0021). The domain service owns whether an approval/question/review gate
 is open, resolved, cancelled, or superseded; projections do not copy that state
 into independently mutable booleans.
 
@@ -739,8 +768,9 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with 13.1 implemented except the spoken briefing (DA-7a,
-DA-7b). Nothing else in this section is implemented.** These are the
+**Status: planned, with two parts implemented: 13.1 except the spoken
+briefing (DA-7a, DA-7b) and the host's controls in 13.6 (DA-12a). Nothing
+else in this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -881,6 +911,16 @@ reason }] }`:
 | `followed_source` | `followed_sources` entries the person keeps | A kept entry newer than the cursor | The followed source named as a `process` resource |
 | `job_failure` | `observatory_jobs` of the linked project | A new failure cause (error code and file), not each retry | `read` on the project |
 | `ci_verdict` | `project_ci_watches.lastState` | A settled verdict change on a watched branch | `read` on the repository |
+
+*Implemented (DA-4b, ADR 0021):* `conversation_request` exists for explicit
+requests only. It reads the person's own messages in the linked project's
+conversations (`scopes.sources` includes `project_chat`) and in their own
+discussions (`parlor`), recognizes a request or a change of direction by
+fixed text rules with no model, keeps one stream cursor per responsibility,
+stores a reference to the message and never its text, and caps open
+conversation attempts at 10 per responsibility. DA-8 adds `personal_chat`,
+model classification, `maxProposalsPerDay` and the other adapters; the
+explicit rule stays the floor.
 
 Rules:
 
@@ -1030,27 +1070,48 @@ responsibility.
 
 ### 13.6 Operator controls and evaluation (DA-12)
 
-- **Host view.** `GET /api/app/admin/assistant` returns counts by state,
-  runs and tokens per day, failures by code and the oldest waiting age.
-  It returns no title, prompt, result or journal text, and names accounts by
-  id only (the host already sees account ids).
-- **Controls**, each writing one `operator_audit` row:
-  `assistant.pause_all` / `assistant.resume_all` (a flag in `instance_state`
-  the runner and `authorize()` both read, so running work halts at its next
-  call), `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
-  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`).
-- **Caps as configuration.** The numbers hard-coded today
-  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) move to a stored
-  policy with those values as defaults. A responsibility's own budget may be
-  lower than the default, never higher than a host-set ceiling.
-- **Evaluation set.** `tests/live/assistant.live.test.js` (skipped without
-  keys, never in required CI): fixed fictional responsibilities and seeded
-  sources, run against a real provider. It records, per model and prompt
-  version: refused calls, writes attempted outside the grant, injected
+**Status: the host view, the controls, caps as configuration, the pilot
+gate and the pilot record are implemented (DA-12a); the behaviour is in
+[delegated_operations.md](delegated_operations.md). The evaluation set is
+planned (DA-12b).**
+
+- **Host view (implemented).** `GET /api/app/admin/assistant` returns counts
+  by state, runs, tokens, searches and sandbox seconds per day, failures and
+  refusals by code and the oldest queued and waiting age. It returns no
+  title, prompt, result or journal text, and names accounts by id only (the
+  host already sees account ids).
+- **Controls (implemented)**, each writing one `operator_audit` row:
+  `assistant.pause_all` / `assistant.resume_all` (the flag
+  `instance_state.assistantPaused`, read by the runner, the claim, every
+  run's heartbeat and `authorize()`, so running work halts at its next
+  call and waits as `ASSISTANT_PAUSED` until the resume requeues it),
+  `assistant.set_caps` (`installationRuns`, `runsPerAccount`,
+  `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds`) and
+  `assistant.pilot_decision`.
+- **Caps as configuration (implemented).** The numbers that were hard-coded
+  (`INSTALLATION_CAP`, `PER_PERSON`, `DEFAULT_BUDGETS`) are a stored policy
+  (`instance_state.assistantCaps` over `config/assistantConfig.js`) with
+  those values as defaults. A responsibility's own budget may be lower than
+  the host's number, never higher: the host's default is also the ceiling.
+  Both run caps are enforced inside the claim transaction under one lock
+  (`assistantControlService.admit`), so they hold when claims race across
+  processes.
+- **Pilot gate (implemented).** `assistantAccessService.allows(userId,
+  capability)` is the per-account check every increment from DA-7 through
+  DA-11 makes (`conversation`, `sources`, `delivery`, `feedback`, `reach`).
+  Until `instance_state.assistantPilot` records `everyone`, only an active
+  operator account passes. The DA-11 grant operations already in the
+  vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
+  "Deciding a request in place" (13.1) shipped before the gate and does not
+  call it yet.
+- **Evaluation set (planned).** `tests/live/assistant.live.test.js` (skipped
+  without keys, never in required CI): fixed fictional responsibilities and
+  seeded sources, run against a real provider. It records, per model and
+  prompt version: refused calls, writes attempted outside the grant, injected
   instructions followed (must be zero by authorization, measured anyway),
   tokens per useful result, and runs ending with no result.
-- **Pilot record.** The DA-6 template gains the model and prompt version and
-  the caps in force, so a result can be compared across changes.
+- **Pilot record (implemented).** The DA-6 template has the model and prompt
+  version and the caps in force, so a result can be compared across changes.
 
 See the [implementation plan](delegated_assistant_implementation.md) for the
 increment-specific acceptance matrix and rollout gates. CI establishes these

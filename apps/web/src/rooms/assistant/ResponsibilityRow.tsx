@@ -1,6 +1,7 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
+import { useMe } from '../../hooks/useSession';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, type Project } from './grants';
+import { describeGrants, describeListening, type Project } from './grants';
 import { WorkList } from './WorkList';
 
 /** One responsibility: what it grants, its work, and its lifecycle buttons. */
@@ -49,6 +50,8 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
     onActOnWork: (work: AssistantInitiative, action: string) => void;
 }) {
     const whenLabel = useDateLabel();
+    const me = useMe();
+    const listening = describeListening(item, me.assistant.name);
     const proposed = item.proposedBy === 'model';
     const actions = proposed && item.status === 'DRAFT' ? PROPOSED_DRAFT : ACTIONS[item.status] || [];
     return (
@@ -60,6 +63,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 {item.outcome && <div className="hint">{item.outcome}</div>}
                 <ul className="assistant-grants">
                     {describeGrants(item.operations, projects).map((line) => <li key={line}>May {line}</li>)}
+                    {listening && <li data-testid="responsibility-listens">{listening}</li>}
                 </ul>
                 <div className="row-meta">
                     {item.rules?.autoStart ? 'Starts proposed work automatically · ' : 'Each piece of work waits for Start · '}

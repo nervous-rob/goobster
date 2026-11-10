@@ -66,11 +66,21 @@ function actionPath(action: AssistantAction | undefined): string | null {
     }
     if (action.kind === 'open_responsibility' || action.kind === 'open_initiative') return '/assistant';
     if (action.kind === 'open_process') return '/activity/scheduled';
+    if (action.kind === 'open_conversation') return /^\d+$/.test(String(action.id)) ? `/discussions/${action.id}` : '/discussions';
     return null;
+}
+
+/** The conversation an update came from, when it names one and that is not already where "Open" leads. */
+function conversationPath(actions: AssistantAction[] | undefined): string | null {
+    const index = (actions || []).findIndex((action) => action.kind === 'open_conversation');
+    return index > 0 ? actionPath(actions?.[index]) : null;
 }
 
 function statusLine(assistant: AssistantHome): string {
     const counts = assistant.responsibilities.counts;
+    if (assistant.hostPaused && assistant.availability !== 'unavailable') {
+        return 'The host has stopped all delegated work for now. Nothing is lost; it continues when they resume it.';
+    }
     switch (assistant.availability) {
         case 'unavailable': return 'Delegated work is turned off on this installation.';
         case 'attention_off': return 'Attention is off, so nothing is delegated and no new work starts.';
@@ -121,6 +131,7 @@ function NeedsYouRow({ item }: { item: AssistantNeedsYouItem }) {
 
 function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onReviewed: (items: AssistantBriefItem[]) => void; busy: boolean }) {
     const target = actionPath(item.actions?.[0]);
+    const conversation = conversationPath(item.actions);
     return (
         <li className="assistant-row" data-testid="assistant-brief-item">
             <div className="assistant-row-main">
@@ -133,6 +144,7 @@ function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onRevi
             </div>
             <div className="assistant-row-actions">
                 {target && <Link to={target as never} className="btn subtle">Open →</Link>}
+                {conversation && <Link to={conversation as never} className="btn subtle" data-testid="assistant-brief-conversation">Conversation</Link>}
                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onReviewed([item])}>Mark reviewed</button>
             </div>
         </li>

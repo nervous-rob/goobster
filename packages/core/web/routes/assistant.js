@@ -23,6 +23,8 @@ const updates = require('../../services/assistantUpdateService');
 const processes = require('../../services/assistantProcessService');
 const gates = require('../../services/assistantGateService');
 const confirmations = require('../../services/assistantConfirmationService');
+const control = require('../../services/assistantControlService');
+const access = require('../../services/assistantAccessService');
 const { AssistantResponsibilityError } = responsibilities;
 
 /** Actions that turn authority on: the route takes them only with a receipt. */
@@ -124,9 +126,25 @@ function mountAssistant(app, ctx, h) {
         surface: String(req.body?.surface || '')
     })));
 
+    // What the host's policy means for this person: whether delegated work
+    // is stopped, the budget a responsibility gets when it sets none (also
+    // the most it can set), and which pilot capabilities they have.
+    app.get('/api/app/assistant/access', requireAuth, route(async (req) => ({
+        hostPaused: await control.isPaused(),
+        budgetDefaults: await control.budgetDefaults(),
+        ...(await access.describe(req.webUser.userId))
+    })));
+
     // --- Initiatives (attempts derived from linked sources) ----------------
     const initiativeBase = '/api/app/assistant/initiatives';
-    // Each initiative carries `run` (or null): its execution summary.
+    // Each initiative carries `run` (or null): its execution summary. One
+    // that came from a request in a conversation carries `origin` as the
+    // viewer may see it now: the conversation, an excerpt of what they
+    // asked and the link back, or `available: false`.
+    const withOrigins = async (userId, list) => {
+        const origins = await require('../../services/assistant/conversationRequestRun').origins({ userId, initiatives: list });
+        return list.map(item => ({ ...item, origin: origins.get(item.id) || null }));
+    };
     app.get(initiativeBase, requireAuth, route(async (req) => {
         const listed = await initiatives.list({
             userId: req.webUser.userId,
@@ -137,13 +155,14 @@ function mountAssistant(app, ctx, h) {
         const runs = await require('../../services/assistantRunService').summaries({
             userId: req.webUser.userId, initiativeIds: listed.initiatives.map(item => item.id)
         });
-        return { initiatives: listed.initiatives.map(item => ({ ...item, run: runs.get(item.id) || null })) };
+        const described = await withOrigins(req.webUser.userId, listed.initiatives);
+        return { initiatives: described.map(item => ({ ...item, run: runs.get(item.id) || null })) };
     }));
 
     // `run` is the execution record, when the runner has picked it up: what
     // it spent, what it concluded and which tools it called (not their output).
     app.get(`${initiativeBase}/:id`, requireAuth, route(async (req) => ({
-        initiative: await initiatives.get({ userId: req.webUser.userId, id: req.params.id }),
+        initiative: (await withOrigins(req.webUser.userId, [await initiatives.get({ userId: req.webUser.userId, id: req.params.id })]))[0],
         run: await require('../../services/assistantRunService').forInitiative({ userId: req.webUser.userId, initiativeId: req.params.id })
     })));
 

@@ -13,6 +13,7 @@ module.exports = {
         effect: 'write',
         budget: 'computeSeconds',
         component: 'projects',
+        publishes: 'project',
         available: ({ project, features }) => Boolean(project) && !features.enforcedOff('sandbox'),
         definition: {
             name: 'runProjectFile',

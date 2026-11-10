@@ -1,7 +1,7 @@
 ---
 title: Delegated responsibilities
 kind: reference
-summary: What a responsibility is, how it is created, activated, paused and revoked, the operation vocabulary it grants, how authority is checked at dispatch, the initiatives derived from its linked sources, canonical updates and their read receipts, the process catalog with typed observations, retention, and the portal API. Nothing runs under a responsibility yet.
+summary: What a responsibility is, how it is created, activated, paused and revoked, the operation vocabulary it grants, how authority is checked at dispatch, the initiatives derived from its linked sources, canonical updates and their read receipts, the process catalog with typed observations, retention, and the portal API. How queued work is carried out is in delegated_runs.md and delegated_plan_steps.md.
 tags: [assistant, responsibilities, delegation, attention, authority, privacy, initiatives, updates, processes]
 feature: assistant
 ---
@@ -19,14 +19,15 @@ setting. It does nothing until its owner activates it.
 grant record, its lifecycle and the authority check (DA-1a), the
 [initiatives](#initiatives) derived from a grant's linked sources (DA-1b),
 [canonical updates](#updates) with per-person read receipts (DA-1c), and the
-[process catalog](#processes) with typed observations (DA-1d). **No background
-work runs under a responsibility yet.** Initiatives wait to be queued and
-claimed by the runner that DA-3 adds. Durable runs, knowledge change sets,
-process repair and the assistant-first Home are still planned (see the
+[process catalog](#processes) with typed observations (DA-1d). Queued
+initiatives are carried out by the runner DA-3 added
+([delegated_runs.md](delegated_runs.md)), which also enforces the token,
+search and compute budgets; DA-4a added the assistant steps of a project plan
+([delegated_plan_steps.md](delegated_plan_steps.md)). Process repair and work
+proposed from conversations are still planned (see the
 [product spec](delegated_assistant_spec.md) and the
-[architecture](delegated_assistant_architecture.md)). Budgets are recorded, and
-only `concurrentInitiatives` is enforced so far. The decisions behind the shape
-are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
+[architecture](delegated_assistant_architecture.md)). The decisions behind the
+shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 [ADR 0017](adr/0017-initiatives-updates-processes.md).
 
 ## What a responsibility holds
@@ -39,15 +40,20 @@ are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 - **Operations.** A list of `{ operation, resource }` entries, described in the
   next section. Anything not listed is unavailable.
 - **Scopes.** Which sources the work may read (`personal_chat`, `knowledge`,
-  `project`) and who sees its results (`private` or `project`). A project
-  source or audience needs `projectId`. A purpose never grants access to a
+  `project`, `project_chat`, `parlor`) and who sees its results (`private`
+  or `project`). A project source or audience needs `projectId`.
+  `project_chat` and `parlor` say where it takes requests you address to
+  Goobster ([delegated_conversation_requests.md](delegated_conversation_requests.md));
+  `personal_chat` is reserved and not read yet. A purpose never grants access to a
   source the person could not otherwise reach.
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and
   `externalOperations`. `concurrentInitiatives` caps how many initiatives can
   be running at once. `modelTokens`, `searches` and `computeSeconds` are
   daily caps on the responsibility's [runs](delegated_runs.md), with
-  conservative defaults when unset. `repairAttempts` and `externalOperations`
+  conservative defaults when unset; the host sets those defaults, and a
+  number above the host's is treated as the host's
+  ([delegated_operations.md](delegated_operations.md#caps)). `repairAttempts` and `externalOperations`
   are recorded for later increments. The account's usage cap always remains
   the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
@@ -74,6 +80,7 @@ permission and no wildcard resource.
 | `kg.archive` | Archive (not delete) notes | `knowledge` |
 | `file.edit` | Edit project files | `project` |
 | `sandbox.run` | Run code in the project sandbox | `project` |
+| `plan.step.execute` | Carry out the assistant steps of the project's plan, only in a plan revision a person approved and started. Never approves, starts or completes a plan. Takes no `paths` | `project` |
 | `process.repair` | Repair a recurring process | `process` |
 | `process.pause` | Pause a process | `process` |
 | `process.archive` | Archive a process | `process` |
@@ -172,9 +179,20 @@ these hold at that moment:
    boundary of `confirm` means a human confirms each action, so it is refused
    as `CONFIRMATION_REQUIRED`.
 
-Refusal codes: `FEATURE_UNAVAILABLE`, `RESPONSIBILITY_NOT_FOUND`,
+Two installation-wide checks sit around those. Before any of them, if the
+host has [stopped all delegated work](delegated_operations.md#stop-all) the
+answer is `ASSISTANT_PAUSED`. After step 5, an operation that is still in
+the pilot (`repo.commit`, `repo.push`, `pr.create`, `kg.saved.amend`,
+`kg.edge`, `kg.archive`, `external.write`) is refused as `PILOT_ONLY` unless
+the responsibility's owner is the installation's owner or the host has
+recorded the [pilot decision](delegated_operations.md#the-pilot-gate);
+activating or resuming a responsibility that grants one is refused the same
+way.
+
+Refusal codes: `FEATURE_UNAVAILABLE`, `ASSISTANT_PAUSED`,
+`RESPONSIBILITY_NOT_FOUND`,
 `RESPONSIBILITY_INACTIVE`, `RESPONSIBILITY_REVOKED`, `RESPONSIBILITY_EXPIRED`,
-`REVISION_CONFLICT`, `ACTOR_MISMATCH`, `OPERATION_OUT_OF_SCOPE`,
+`REVISION_CONFLICT`, `ACTOR_MISMATCH`, `OPERATION_OUT_OF_SCOPE`, `PILOT_ONLY`,
 `RESOURCE_UNAVAILABLE`, `ATTENTION_NOT_ENROLLED`, `ATTENTION_BOUNDARY` and
 `CONFIRMATION_REQUIRED`. An urgent finding changes how Goobster tells you, never
 what he may do. Inside a piece of work, a refusal is also noted in the
@@ -213,6 +231,22 @@ material revision he saw.
   owner's Attention policy is off.
 - An initiative's title names the kind of change ("Linked goal changed"). It
   never copies the goal's text.
+- One source is **standing** instead: the ready assistant steps of the linked
+  project's plan (`project_plan_step`, for a grant with `plan.step.execute`).
+  A step that is ready is waiting work, not history, so it is proposed on the
+  first look too, once per approved plan revision and retry. Its title is
+  "Plan step ready: " and the step's title, which the project's people wrote
+  for the plan. See [delegated_plan_steps.md](delegated_plan_steps.md).
+  Its proposed and queued work is withdrawn on any look that finds the plan
+  has moved on.
+- One source is a **stream**: requests you address to Goobster in the
+  conversations the grant covers (`conversation_request`, for a grant whose
+  scopes name `project_chat` or `parlor`). It has one cursor, the last
+  message examined. The first look proposes nothing; after that each request
+  of yours is one proposal, titled "Asked in" and the conversation's name,
+  and a change of direction supersedes your unfinished work from that
+  conversation (`SUPERSEDED`, `STEERED`). See
+  [delegated_conversation_requests.md](delegated_conversation_requests.md).
 
 **Statuses.** `CANDIDATE`, `QUEUED`, `RUNNING`, `WAITING`, `REVIEW`, then one
 of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
@@ -223,8 +257,9 @@ of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
 
 - `queue` approves a candidate or waiting attempt under the grant as it is now.
 - `cancel` stops an open attempt.
-- `retry` opens a new attempt of a failed or cancelled one, unless another
-  attempt at it is already open (`ALREADY_OPEN`).
+- `retry` opens a new attempt of a failed or cancelled one (or a superseded
+  plan-step or conversation-request attempt), unless another attempt at it is already open
+  (`ALREADY_OPEN`).
 - `accept` and `reject` close an attempt that is in `REVIEW`.
 
 Every action is a compare-and-swap on `revision`.

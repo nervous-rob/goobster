@@ -16,4 +16,9 @@ function clip(text, max) {
     return value.length > max ? `${value.slice(0, max - 1)}…` : value;
 }
 
-module.exports = { sha, clip, RESULT_CHARS, SUMMARY_CHARS };
+/** A workspace-relative path as the journal records it (no leading `./`). */
+function cleanPath(value) {
+    return String(value ?? '').trim().replace(/^\.\//, '');
+}
+
+module.exports = { sha, clip, cleanPath, RESULT_CHARS, SUMMARY_CHARS };
