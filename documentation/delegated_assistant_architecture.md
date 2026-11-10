@@ -15,7 +15,7 @@ supersession when a person changes direction) together with the project
 board of section 9.2 as recorded in ADR 0021, and the assessment,
 incidents and retirement of section 8 as recorded in ADR 0020 and 0022
 (repair is planned); the rest, and all of section
-13 except 13.1 without its spoken briefing (ADR 0023), the explicit-request
+13 except 13.1 (ADR 0023 and 0024), the explicit-request
 part of the `conversation_request` adapter (13.2), delivery and interruption
 (13.3), repository work (ADR 0025) and findings for a project's members
 (both 13.5) and 13.6 (the host's controls and the evaluation set), is
@@ -805,8 +805,8 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with five parts implemented: 13.1 except the spoken
-briefing (DA-7a, DA-7b), delivery and interruption in 13.3 (DA-9), feedback
+**Status: planned, with six parts implemented: 13.1 (DA-7a, DA-7b and the
+spoken briefing, DA-7c), delivery and interruption in 13.3 (DA-9), feedback
 and learned signals in 13.4 (DA-10), repository
 work (DA-11a) and findings for a project's members (DA-11c) in 13.5, and 13.6
 (DA-12: the host's controls and the evaluation set). Nothing else in this
@@ -826,7 +826,7 @@ grant nothing), `assistantRunService.forInitiative`, the Home projection
 (`assistantHomeService.project`) and the voice turn loop
 (`services/voice/realtimeVoiceEngine.js`, `voiceSessionService`).
 
-*Implemented (DA-7b).* Behaviour:
+*Implemented (DA-7b; the spoken briefing, DA-7c).* Behaviour:
 [delegated_conversation.md](delegated_conversation.md); decision record:
 [ADR 0023](adr/0023-conversational-delegation-and-receipts.md). The chat
 tools, all in `utils/tools/assistant.js`:
@@ -836,6 +836,7 @@ tools, all in `utils/tools/assistant.js`:
 | `proposeResponsibility` | Creates a **draft** from structured arguments (title, outcome, operations, linked project, expiry, rules) and returns a confirmation card | None is granted. The draft carries `proposedBy: 'model'` and the conversation reference |
 | `describeDelegatedWork` | Reads responsibilities, open initiatives, run summaries and journals (tool, status, refusal code) | Read of the speaker's own records only |
 | `controlDelegatedWork` | `cancel` an initiative, `pause` a responsibility | Narrowing only. It cannot queue, resume, activate or edit |
+| `spokenBriefing` | In a spoken turn of the speaker's own portal chat, returns the briefing composed from the Home projection | Read of the speaker's own projection. Records delivery only; it has no arguments |
 
 Rules:
 
@@ -849,7 +850,7 @@ Rules:
 - The draft a model proposes is normalized by the same validator as a human
   draft; unknown operations and wildcard resources are rejected, and the
   card shows the normalized grant, not the model's description of it.
-- All three tools are added to the incognito block list and are refused for
+- All of these tools are added to the incognito block list and are refused for
   `isAutomation` turns: an unattended turn cannot draft or steer delegation.
 - `describeDelegatedWork` answers "why" from records: the initiative's
   source and reason, the run's journal and its refusals. It returns no
@@ -929,10 +930,31 @@ As built, three things differ from the proposal above them:
 Mission approval still mints the mission's own human approval receipt
 (section 7) inside the descriptor, bound to the plan revision on the card.
 
-**Spoken briefing.** A voice intent reads `assistantHomeService.project`
-and speaks counts, the Needs-you titles and up to three findings. It calls
-no acknowledgment route. Speaking a private finding requires the voice
-session to be the person's own (never a shared guild voice channel).
+**Spoken briefing.** *Implemented (DA-7c).* A voice intent reads
+`assistantHomeService.project` and speaks counts, the Needs-you titles and
+up to three findings. It calls no acknowledgment route. Speaking a private
+finding requires the voice session to be the person's own (never a shared
+guild voice channel).
+
+As built ([ADR 0024](adr/0024-spoken-briefing.md)): the intent is the
+`spokenBriefing` chat tool, so it runs inside
+`runAgentLoop` like every other tool. `services/assistant/spokenBriefing.js`
+has a pure `compose(projection)` that writes the sentences (counts as Home
+computes them, at most five Needs-you titles and three findings, `null`
+spoken as unknown and never as zero) and `brief({ userId })`, which reads
+the projection, composes it and calls `assistantUpdateService.markDelivered`
+for the updates it named. The tool returns those sentences for the model to
+say; the numbers are not the model's. Nothing in the module or the tool
+reaches `acknowledge`, the Inbox read state or a gate decision, and a test
+fails if one is called. The tool is offered only when the turn is spoken
+(`spoken: true` from the portal's voice chat) and the conversation is the
+speaker's own. A Discord voice session (`isVoiceInteraction`, always in a
+guild voice channel, with a transcript posted to a text channel) is given
+the tool only so it can refuse: it answers `NOT_PRIVATE` before reading the
+projection, and the model is told to say nothing about the person's
+delegated work. `voiceTurnShared.getVoiceToolDefinitions` now filters the
+voice tool list through each tool's `offered` check, so a speaker outside
+the pilot is not shown it.
 
 ### 13.2 Opportunity sources (DA-8)
 
