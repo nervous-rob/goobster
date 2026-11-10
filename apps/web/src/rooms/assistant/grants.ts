@@ -14,6 +14,7 @@ const OPERATION_TEXT: Record<string, string> = {
     'kg.archive': 'archive notes',
     'file.edit': 'edit files',
     'sandbox.run': 'run code in the sandbox',
+    'plan.step.execute': 'carry out assistant steps of its approved plan',
     'process.repair': 'repair',
     'process.pause': 'pause',
     'process.archive': 'archive',

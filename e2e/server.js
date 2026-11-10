@@ -790,6 +790,62 @@ async function main() {
             aiService.chat = original;
         }
     });
+    // Delegated plan steps (assistantPlanStep.spec.js, ADR 0019): a dedicated
+    // person with Attention on, their own project, and a DRAFT plan holding
+    // one assistant step. The person approves and starts the plan and
+    // delegates in the browser; nothing here approves anything.
+    app.post('/e2e/fixtures/assistant-plan-step', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const missions = require('@goobster/core/services/projectMissionService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Planner' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'Charting choice') });
+            await missions.create({
+                userId, project: project.slug,
+                title: 'Choose a charting library',
+                objective: 'Decide between library X and library Y.',
+                successCriteria: ['A written comparison exists'],
+                steps: [{
+                    kind: 'agent', title: 'Write the comparison',
+                    actionParams: { instructions: 'Compare the two libraries from their documentation.', artifacts: ['docs/comparison.md'] }
+                }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One runner pass with a scripted model. `written: true` writes the file
+    // the step requires before reporting; otherwise it only claims to have.
+    app.post('/e2e/fixtures/assistant-plan-step/run', express.json(), async (req, res) => {
+        const aiService = require('@goobster/core/services/aiService');
+        const original = aiService.chat;
+        const report = [{ id: 'p2', name: 'reportStepResult', arguments: JSON.stringify({
+            outcome: 'done', title: 'Wrote the comparison of X and Y', summary: 'Compared both from their documentation.',
+            artifacts: ['docs/comparison.md'], criteria: ['c1']
+        }) }];
+        const rounds = req.body?.written
+            ? [[{ id: 'p1', name: 'writeProjectFile', arguments: JSON.stringify({ path: 'docs/comparison.md', content: '# Comparison\nLibrary X renders faster.\n' }) }], report]
+            : [report];
+        aiService.chat = async () => ({ content: '', toolCalls: rounds.shift() || [] });
+        try {
+            const runner = require('@goobster/core/services/assistantRunnerService');
+            res.json(await runner.tick({ wait: true }));
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        } finally {
+            aiService.chat = original;
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {
