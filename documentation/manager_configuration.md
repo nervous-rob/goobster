@@ -215,7 +215,11 @@ A **policy** is enforced whatever a person prefers: the host token cap
 (`limits.dailyTokens`, `limits.windowHours`, `limits.retentionDays`, kept in
 `instance_state` under `limits` and changed in the portal's Host room; a
 `config.json` value of the same name is only a fallback the database
-outranks), the registration
+outranks), the delegated work caps (`assistant.installationRuns`,
+`assistant.runsPerAccount`, `assistant.defaultModelTokens`,
+`assistant.defaultSearches`, `assistant.defaultComputeSeconds`, kept in
+`instance_state` under `assistantCaps` and changed in Host → Delegated work
+the same way; [delegated_operations.md](delegated_operations.md#caps)), the registration
 mode, the account gate. `defaults.set` cannot name a limit, and no default
 changes what `usageBudgetService` enforces. Registration is a policy:
 it is changed with `config.set` and the mail dependency rule above, not as a

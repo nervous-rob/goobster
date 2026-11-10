@@ -51,7 +51,9 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   `externalOperations`. `concurrentInitiatives` caps how many initiatives can
   be running at once. `modelTokens`, `searches` and `computeSeconds` are
   daily caps on the responsibility's [runs](delegated_runs.md), with
-  conservative defaults when unset. `repairAttempts` and `externalOperations`
+  conservative defaults when unset; the host sets those defaults, and a
+  number above the host's is treated as the host's
+  ([delegated_operations.md](delegated_operations.md#caps)). `repairAttempts` and `externalOperations`
   are recorded for later increments. The account's usage cap always remains
   the outer limit.
 - **Rules.** `interruption` (`immediate`, `digest` or `home`), a free-text
@@ -171,9 +173,20 @@ these hold at that moment:
    boundary of `confirm` means a human confirms each action, so it is refused
    as `CONFIRMATION_REQUIRED`.
 
-Refusal codes: `FEATURE_UNAVAILABLE`, `RESPONSIBILITY_NOT_FOUND`,
+Two installation-wide checks sit around those. Before any of them, if the
+host has [stopped all delegated work](delegated_operations.md#stop-all) the
+answer is `ASSISTANT_PAUSED`. After step 5, an operation that is still in
+the pilot (`repo.commit`, `repo.push`, `pr.create`, `kg.saved.amend`,
+`kg.edge`, `kg.archive`, `external.write`) is refused as `PILOT_ONLY` unless
+the responsibility's owner is the installation's owner or the host has
+recorded the [pilot decision](delegated_operations.md#the-pilot-gate);
+activating or resuming a responsibility that grants one is refused the same
+way.
+
+Refusal codes: `FEATURE_UNAVAILABLE`, `ASSISTANT_PAUSED`,
+`RESPONSIBILITY_NOT_FOUND`,
 `RESPONSIBILITY_INACTIVE`, `RESPONSIBILITY_REVOKED`, `RESPONSIBILITY_EXPIRED`,
-`REVISION_CONFLICT`, `ACTOR_MISMATCH`, `OPERATION_OUT_OF_SCOPE`,
+`REVISION_CONFLICT`, `ACTOR_MISMATCH`, `OPERATION_OUT_OF_SCOPE`, `PILOT_ONLY`,
 `RESOURCE_UNAVAILABLE`, `ATTENTION_NOT_ENROLLED`, `ATTENTION_BOUNDARY` and
 `CONFIRMATION_REQUIRED`. An urgent finding changes how Goobster tells you, never
 what he may do. Inside a piece of work, a refusal is also noted in the

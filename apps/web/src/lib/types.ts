@@ -254,6 +254,42 @@ export type OperatorSchedulesView = {
 };
 
 /** GET /api/app/admin/audit - one operator action. */
+/** The five numbers the host sets for delegated work (documentation/delegated_operations.md). */
+export type AssistantCaps = {
+    installationRuns: number; runsPerAccount: number;
+    defaultModelTokens: number; defaultSearches: number; defaultComputeSeconds: number;
+};
+export type AssistantCapField = keyof AssistantCaps;
+export type AssistantCodeCount = { code: string; count: number };
+/** `GET /api/app/admin/assistant`: counts, states, spend and codes; never anyone's text. */
+export type AdminAssistantView = { available: false } | {
+    available: true;
+    asOf: string; windowDays: number;
+    paused: { since: string } | null;
+    caps: AssistantCaps; defaults: AssistantCaps; hostSet: AssistantCapField[];
+    bounds: Record<AssistantCapField, { min: number; max: number }>;
+    responsibilities: { byStatus: Record<string, number> };
+    work: {
+        byStatus: Record<string, number>; running: number;
+        oldestQueuedSeconds: number | null; oldestWaitingSeconds: number | null; waitingByCode: AssistantCodeCount[];
+    };
+    runs: {
+        perDay: Array<{ day: string; runs: number; tokens: number; searches: number; computeSeconds: number }>;
+        failures: AssistantCodeCount[]; refusals: AssistantCodeCount[];
+    };
+    accounts: Array<{
+        id: string; activeResponsibilities: number; queued: number; running: number; waiting: number;
+        runsToday: number; tokensToday: number;
+    }>;
+    accountsOmitted: number;
+    pilot: {
+        decision: { scope: 'owner' | 'everyone'; decidedAt: string | null };
+        capabilities: Array<{ name: string; increment: string }>;
+        gatedOperations: string[];
+    };
+    changed?: boolean; requeued?: number;
+};
+
 export type OperatorAuditEntry = {
     id: number;
     action: string;
@@ -401,6 +437,8 @@ export type AssistantBriefItem = {
 export type AssistantHome = {
     schemaVersion: number; asOf: string;
     availability: 'ready' | 'paused' | 'none_delegated' | 'attention_off' | 'unavailable' | 'unknown';
+    /** The host has stopped all delegated work; null when it could not be read. */
+    hostPaused?: boolean | null;
     freshness: { state: 'current' | 'stale' | 'unknown'; lastPassAt: string | null };
     responsibilities: { counts: { active: number; paused: number; needsReview: number; draft: number } | null; items: AssistantHomeResponsibility[] };
     counts: { unseen: number | null; needsAction: number | null; running: number | null };

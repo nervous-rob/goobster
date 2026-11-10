@@ -36,7 +36,8 @@ const STOP_TEXT: Record<string, string> = {
     SOURCE_NOT_COVERED: 'The responsibility no longer takes requests from that conversation, so it was not started.',
     OPEN_LIMIT: 'This responsibility already had as many open requests from conversations as it takes at once. Try again when some are finished.',
     NO_STEP: 'The plan step no longer exists or is no longer for Goobster.',
-    INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.'
+    INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.',
+    ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.'
 };
 
 export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[]; busy: boolean; onAct: (item: AssistantInitiative, action: string) => void }) {

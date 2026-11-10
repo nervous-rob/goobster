@@ -294,6 +294,7 @@ test.describe('Host operator pages, keyboard only', () => {
     const PAGES = [
         ['overview', 'Overview'],
         ['schedules', 'Schedules'],
+        ['assistant', 'Delegated work'],
         ['features', 'Features'],
         ['connections', 'Connections'],
         ['defaults', 'Instance Defaults'],
