@@ -86,11 +86,24 @@ test.describe('repository work in a responsibility', () => {
         });
         expect(drafted.ok(), await drafted.text()).toBe(true);
         const { responsibility } = await drafted.json();
-        const activated = await page.request.post(`/api/app/assistant/responsibilities/${responsibility.id}/actions`, {
-            data: { action: 'activate', expectedRevision: responsibility.revision }
+        // Turning a responsibility on takes the person's confirmation receipt
+        // (ADR 0023): without one the route refuses outright, and with one the
+        // pilot gate still does.
+        const actions = `/api/app/assistant/responsibilities/${responsibility.id}/actions`;
+        const bare = await page.request.post(actions, { data: { action: 'activate', expectedRevision: responsibility.revision } });
+        expect(bare.status()).toBe(403);
+        expect(JSON.stringify(await bare.json())).toContain('HUMAN_CONFIRMATION_REQUIRED');
+        const confirmation = await page.request.post('/api/app/assistant/confirmations', {
+            data: { subject: 'responsibility', id: responsibility.id, action: 'activate', revision: responsibility.revision, surface: 'portal' }
+        });
+        expect(confirmation.ok(), await confirmation.text()).toBe(true);
+        const activated = await page.request.post(actions, {
+            data: { action: 'activate', expectedRevision: responsibility.revision, receipt: (await confirmation.json()).receipt }
         });
         expect(activated.status()).toBe(409);
         expect(JSON.stringify(await activated.json())).toContain('PILOT_ONLY');
+        const still = await (await page.request.get(`/api/app/assistant/responsibilities/${responsibility.id}`)).json();
+        expect(still.responsibility.status).toBe('DRAFT');
     });
 });
 

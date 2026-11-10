@@ -3520,7 +3520,16 @@ CREATE TABLE IF NOT EXISTS assistant_responsibilities (
     reviewedAt TEXT,
     endedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- 'model' when a chat tool drafted it (ADR 0023); NULL when a person did.
+    -- Set once at insert. Such a grant needs a human confirmation receipt
+    -- to be activated or resumed, for as long as it exists.
+    proposedBy TEXT CHECK (proposedBy IS NULL OR proposedBy = 'model'),
+    -- The conversation it was proposed in (its channel id), for the owner.
+    proposedConversation TEXT,
+    -- When the owner chose to keep a proposal as a draft (or edited it).
+    -- A proposal that was neither kept nor activated is pruned.
+    proposalKeptAt TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_responsibilities_owner ON assistant_responsibilities(ownerUserId, status);
@@ -3565,6 +3574,37 @@ CREATE TABLE IF NOT EXISTS assistant_source_cursors (
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (responsibilityId, sourceKind, sourceId)
 );
+
+-- A person's confirmation of one thing they were shown (ADR 0023): the
+-- activation or resume of a responsibility, or a decision pressed on a chat
+-- card. Minted only for a signed-in person when the confirmation is
+-- rendered, never inside a model tool call. It is bound to the subject, the
+-- action, the revision shown and a hash of what was shown, and it is spent
+-- once by a conditional UPDATE inside the transaction that acts on it. Only
+-- the hash of the secret is stored. Expired and spent rows are pruned after
+-- 30 days.
+CREATE TABLE IF NOT EXISTS assistant_confirmation_receipts (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    subjectKind TEXT NOT NULL CHECK (subjectKind IN ('responsibility', 'gate')),
+    -- The responsibility id, or the gate reference
+    subjectId TEXT NOT NULL,
+    -- activate | resume (responsibility), decide (gate)
+    action TEXT NOT NULL CHECK (action IN ('activate', 'resume', 'decide')),
+    -- The revision the person was shown
+    revision TEXT NOT NULL,
+    -- sha256 of the grant (or decision card) the person was shown
+    grantHash TEXT NOT NULL,
+    surface TEXT NOT NULL CHECK (surface IN ('portal', 'chat')),
+    -- sha256 of the single-use secret; the secret itself is never stored
+    nonceHash TEXT NOT NULL,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    expiresAt TEXT NOT NULL,
+    consumedAt TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_confirmation_receipts_user ON assistant_confirmation_receipts(userId, createdAt);
+CREATE INDEX IF NOT EXISTS idx_assistant_confirmation_receipts_expiry ON assistant_confirmation_receipts(expiresAt);
 
 -- One attempt at advancing a responsibility (DA-1b). An initiative is an
 -- attempt, not another goal list: it points at the source that prompted it

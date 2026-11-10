@@ -143,7 +143,10 @@ view of those same requests. They are not a second list.
   waiting to start carry the same *Approve plan* / *Start mission* button as
   on Home and in the Inbox. Pressing it on the board is the same decision
   (it is recorded with the surface `project`) and settles the request
-  everywhere. Other gates link to the Plan, where they are decided.
+  everywhere. Other gates link to the Plan, where they are decided. The
+  button is offered to whoever the [pilot gate](#who-is-offered-a-card-the-pilot-gate)
+  includes; for anyone else the card is the same request without it, and
+  links to the Plan and to the Inbox.
 - **A request is its owner's.** A project's gates are addressed to the
   project's owner. If you are a member, the card is shown as *Waiting on the
   owner*, without buttons, and is not counted as yours.
@@ -166,9 +169,10 @@ list, as before.
 ## Deciding a request where it is shown
 
 A request that has a concrete decision carries it. The same buttons appear on
-the request under Needs you on Home, on its row in the Inbox and, for a
-project's requests, on its card on the [project board](#project-boards). One
-press settles it in all of them.
+the request under Needs you on Home, on its row in the Inbox, for a
+project's requests on its card on the [project board](#project-boards) and,
+when you ask in chat what needs you, on a card under the reply. One press
+settles it in all of them.
 
 | Request | Who sees the buttons | Choices |
 | --- | --- | --- |
@@ -184,8 +188,9 @@ where it is decided.
 
 What holds:
 
-- **One operation, wherever you press.** Home, the Inbox and a project board
-  post the same decision; it is carried out by the service that owns the request
+- **One operation, wherever you press.** Home, the Inbox, a project board
+  and a chat card post the same decision; it is carried out by the service
+  that owns the request
   (`friendService.respond`, `accessRequestService.approve` / `decline`,
   `projectMissionService.approve` / `start`,
   `assistantProcessLifecycleService.act`) with that service's own checks.
@@ -200,7 +205,15 @@ What holds:
   nothing is decided and you are told its current state ("This request was
   already settled. They withdrew this request."); the page then shows it.
 - **Reading and opening still decide nothing.** Only a button press does,
-  and a model can never press one: the operation is not a chat tool.
+  and a model can never press one: the operation is not a chat tool, and it
+  refuses inside any model tool call (`HUMAN_ONLY`).
+- **A press in chat is proved.** A chat card's decision carries a single-use
+  confirmation receipt for that card
+  ([delegated_conversation.md](delegated_conversation.md#confirmation-receipts)).
+  Home and the Inbox need none.
+- **A repeated friend request has one notice.** When someone withdraws a
+  friend request and asks again, only the newest notice asks for an answer.
+  The earlier one stays in the Inbox as a record with no buttons.
 - **Some refusals are the owner's.** A join request on an installation with
   an AI key and no daily spending limit is refused with that reason and
   stays open.
@@ -209,6 +222,43 @@ With the Delegated assistant feature off there are no cards: the Inbox keeps
 its own *Accept* / *Decline* and *Approve* / *Decline* buttons for friend and
 join requests, which call the friends and access-request routes directly, and
 Home links to the Inbox.
+
+### Who is offered a card: the pilot gate
+
+Deciding a request from its card is part of the Delegated assistant's
+conversational increment, so it is behind the pilot gate
+([delegated_operations.md](delegated_operations.md), capability
+`conversation`). Until the host records the pilot decision, only the
+installation's owner (an account with the operator role) is offered a card
+or can decide through one, on Home, in the Inbox, on a project board and
+in chat alike. The surface is named by the caller, so the gate is the same
+for all four: none of them is a way around it.
+
+For everyone else nothing about the request itself changes: it is still
+listed under Needs you and counted, on Home and in the Inbox. What differs
+is where it is answered:
+
+- a friend request keeps the Inbox's own *Accept* / *Decline* buttons, and
+  Home's row links to it (*In Inbox*);
+- a mission plan to approve or start keeps its *Open* link to the project,
+  where it is approved or started as before, and its card on the project
+  board links to the Plan and to the Inbox;
+- a process that may no longer be needed is answered in the Processes list
+  on the Responsibilities page, with its own *Pause* and *Keep it running*
+  ([process_stewardship.md](process_stewardship.md#retiring-a-process));
+  answering there settles the request;
+- a suggested change to a saved note, or a review of a withdrawn source
+  ([delegated_knowledge.md](delegated_knowledge.md#the-pilot-gate)), is only
+  filed for someone inside the pilot. A person who has since left it still
+  sees it listed, cannot apply it, and it lapses after a month; their notes
+  are not changed;
+- a request to join is only ever shown to a host, who is an owner.
+
+The decide route answers 403 `PILOT_ONLY` for an account the gate does not
+include, whatever reference it names, and the card read answers 404. When
+the host opens the pilot to everyone, the same requests carry their cards
+with nothing else to change; closing it again removes them, and a card
+shown earlier then decides nothing.
 
 ### How a card is described
 
@@ -284,7 +334,13 @@ what a responsibility is and how each action is checked.
   (`GET /api/app/assistant/access`, `capabilities.reach`). See
   [delegated_runs.md](delegated_runs.md#repository-work).
 - **Activate** shows exactly what will be granted, as you, where it will
-  take requests from, and until when, and needs your confirmation. Activation requires Attention to be on.
+  take requests from, and until when, and needs your confirmation. The
+  question is built from what the server says this revision allows, and
+  your yes spends a single-use confirmation receipt for it. Activation
+  requires Attention to be on. **Resume** is confirmed the same way.
+- A draft Goobster proposed in a conversation is marked *proposed in a
+  conversation*. *Discard* deletes it
+  ([delegated_conversation.md](delegated_conversation.md)).
 - **Pause / Resume / Mark complete / Revoke / Archive** follow the lifecycle;
   each carries the revision you saw, so a stale page is refused rather than
   applied.
@@ -368,6 +424,7 @@ See [process_stewardship.md](process_stewardship.md#retiring-a-process).
   | Status | `error.code` | When |
   | --- | --- | --- |
   | 400 | `INVALID_DECISION` | A field is missing, or the option is not one the card offers |
+  | 403 | `PILOT_ONLY` | The pilot gate does not include this account (`error.details.capability` is `conversation`). Checked before the request is looked up |
   | 404 | `NOT_FOUND` | No such request for the signed-in person, or they may not decide it |
   | 409 | `NOT_DECIDABLE_HERE` | The request's kind has no decision card; it is decided where it lives |
   | 409 | `STALE_GATE` | The card changed after it was shown. `error.details.current` is the current card (`state: "resolved"` with `outcome` once settled), and nothing was decided |
@@ -408,13 +465,18 @@ None of the GET routes writes anything.
 - The board does not adopt a gate when it is read. A read that filed Inbox
   items would break "opening changes nothing".
 - The chat tool action `needs-you` still returns the project's own list.
-- The caller names its `surface`. `chat` is accepted now so the chat
-  confirmation card (planned) posts to the same route.
+- The caller names its `surface`. The chat card posts to the same route
+  with `surface: 'chat'` and a confirmation receipt.
 - A plan to approve and an approved plan to start share one kind
   (`project_approve`) with one choice each. Review, unblock and answer gates
   have no card yet.
 - No option is marked `danger` yet: these buttons replace Inbox buttons
   that did not confirm either.
+- The pilot gate covers deciding in place on every surface, not only the
+  chat card (owner decision 9, read conservatively): DA-7a shipped before
+  the gate existed and was open to every account until DA-7b added the
+  check. An account outside the pilot gets the same fallback as an
+  installation with the feature off.
 
 A brief item that was shared with a project says so: its `audience` is
 `{ kind: 'project', projectId }` and `producer` names whose assistant found it
@@ -426,7 +488,7 @@ producer's responsibility
 ## Not built yet
 
 - Feedback on a briefing item (useful, already knew, wrong time, ...).
-- Deciding a request from a chat card or a notification, and decisions for
+- Deciding a request from a notification, and decisions for
   the other request kinds (review, unblock, answer, repair, responsibility
   review): those still link to where the request is decided.
 - Signals for the Conversations card beyond updates filed against it.

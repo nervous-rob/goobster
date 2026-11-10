@@ -15,8 +15,8 @@ supersession when a person changes direction) together with the project
 board of section 9.2 as recorded in ADR 0021, and the assessment,
 incidents and retirement of section 8 as recorded in ADR 0020 and 0022
 (repair is planned); the rest, and all of section
-13 except "Deciding a request in place" (13.1), the explicit-request part
-of the `conversation_request` adapter (13.2), delivery and interruption
+13 except 13.1 without its spoken briefing (ADR 0023), the explicit-request
+part of the `conversation_request` adapter (13.2), delivery and interruption
 (13.3), repository work (ADR 0025) and findings for a project's members
 (both 13.5) and 13.6 (the host's controls and the evaluation set), is
 planned.** Updated 2026-11-10.
@@ -805,9 +805,9 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with five parts implemented: "Deciding a request in place"
-in 13.1 (DA-7a), delivery and interruption in 13.3 (DA-9), repository work
-(DA-11a) and findings for a project's members (DA-11c) in 13.5, and 13.6
+**Status: planned, with five parts implemented: 13.1 except the spoken
+briefing (DA-7a, DA-7b), delivery and interruption in 13.3 (DA-9), repository
+work (DA-11a) and findings for a project's members (DA-11c) in 13.5, and 13.6
 (DA-12: the host's controls and the evaluation set). Nothing else in this
 section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
@@ -825,7 +825,10 @@ grant nothing), `assistantRunService.forInitiative`, the Home projection
 (`assistantHomeService.project`) and the voice turn loop
 (`services/voice/realtimeVoiceEngine.js`, `voiceSessionService`).
 
-Proposed chat tools, all in a new `utils/tools/assistant.js`:
+*Implemented (DA-7b).* Behaviour:
+[delegated_conversation.md](delegated_conversation.md); decision record:
+[ADR 0023](adr/0023-conversational-delegation-and-receipts.md). The chat
+tools, all in `utils/tools/assistant.js`:
 
 | Tool | Does | Authority |
 | --- | --- | --- |
@@ -853,8 +856,26 @@ Rules:
 - Tools act only in the speaker's personal scope. In a guild channel they
   answer that delegation is managed privately and link to the portal.
 
-**Deciding a request in place.** *Implemented for Home and the Inbox
-(DA-7a); the chat card and the repair-proposal descriptor are planned.* The
+As built:
+
+- The rule is enforced in the services, not by the tool list. Every
+  dispatcher of a model tool call enters `utils/modelCallScope.js`; inside
+  it, activation, resume, any edit, keeping a proposal, queue, retry,
+  accept, `decide`, and minting or spending a receipt answer `HUMAN_ONLY`.
+- The receipt (`assistant_confirmation_receipts`,
+  `assistantConfirmationService`) is required by the portal action route
+  for `activate` and `resume`, by any caller for a draft with
+  `proposedBy: 'model'`, and by `decide` with `surface: 'chat'`. Queueing
+  and authority edits do **not** take a receipt: they are refused inside a
+  model call and reachable only from a session route.
+- Confirmation is in the portal only. A Discord DM gets the draft and is
+  told to confirm it there.
+- The tools also call the pilot gate
+  (`assistantAccessService.allows(userId, 'conversation')`, 13.6), and so
+  does deciding in place, below.
+
+**Deciding a request in place.** *Implemented for Home, the Inbox (DA-7a)
+and the chat card (DA-7b); the repair-proposal descriptor is planned.* The
 shipped behaviour and API are in
 [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown).
 Each gate kind registers a descriptor once
@@ -881,6 +902,15 @@ does today. A stale occurrence or revision, a settled request, or a domain
 `error.details.current`, and nothing is decided. Home and the Inbox render
 the same card.
 
+Deciding in place is behind the pilot gate on every surface:
+`assistantGateService` asks `assistantAccessService.allows(userId,
+'conversation')` in `card()`, `cardForInboxItem()`, `projectBoard()` and
+`decide()`. An account the gate does not include is offered no card (Home
+and the project board link to the request, and the Inbox keeps its own
+buttons and routes, as with the feature off) and `decide` answers 403
+`PILOT_ONLY` before it looks the request up. The surface is the caller's
+word, so no surface is exempt.
+
 As built, three things differ from the proposal above them:
 
 - `:ref` is an update id **or** `inbox-<item id>`. Friend and access
@@ -889,10 +919,11 @@ As built, three things differ from the proposal above them:
 - `revision` is derived from the owning record (`plan:<planRevision>`, the
   request's creation time), not the update's `materialRevision`. The
   update's `occurrence` is still checked.
-- `surface` (`home`, `inbox`, `chat`) is required. `chat` is accepted so the
-  DA-7b confirmation card posts to the same route; `decide` is deliberately
-  not a model tool, and a test fails if a chat tool (`utils/tools/`) or a
-  run tool (`services/assistant/runTools/`) calls it.
+- `surface` (`home`, `inbox`, `chat`) is required. The chat card posts to the
+  same route with `surface: 'chat'` and a confirmation receipt for the card;
+  `decide` is deliberately not a model tool, refuses inside a model tool
+  call, and a test fails if a chat tool (`utils/tools/`) or a run tool
+  (`services/assistant/runTools/`) calls it.
 
 Mission approval still mints the mission's own human approval receipt
 (section 7) inside the descriptor, bound to the plan revision on the card.
@@ -1219,8 +1250,8 @@ DA-12b; how to run and read it is in
   Until `instance_state.assistantPilot` records `everyone`, only an active
   operator account passes. The DA-11 grant operations already in the
   vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
-  "Deciding a request in place" (13.1) shipped before the gate and does not
-  call it yet.
+  "Deciding a request in place" (13.1) shipped before the gate; it has
+  called it since DA-7b (`conversation`), on every surface.
 - **Evaluation set (implemented).** `tests/live/assistant.live.test.js`
   (skipped unless `GOOBSTER_ASSISTANT_EVAL=1` and the chosen provider's key
   are set, never in required CI) runs the fixed fictional responsibilities

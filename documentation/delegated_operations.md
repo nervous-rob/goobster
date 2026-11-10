@@ -121,15 +121,41 @@ records the pilot decision, only the owner has them.**
 - **The owner** is any active account with the operator role. An
   installation with two operators has two owners; a disabled or demoted
   operator is not one.
-- **What is gated today.** Of DA-7 through DA-11, five things have shipped. Delegated knowledge work (DA-11b) is gated as `reach` like repository work.
-  Deciding a request where it is shown (DA-7a,
-  [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown))
-  shipped before this gate existed and does not check it: every person can
-  answer their own requests on Home and in the Inbox. Repository work
-  (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is gated
-  as `reach`: committing, pushing and opening pull requests in a project's
-  clone are offered to a run, and shown in the draft form, only for the
-  owner, and each call checks the gate again before it reaches GitHub. The
+- **What is gated today.** The conversational part of DA-7 has shipped,
+  and all of it checks `conversation`:
+  - *Deciding a request from its card* (DA-7a,
+    [assistant_home.md](assistant_home.md#who-is-offered-a-card-the-pilot-gate))
+    on Home, in the Inbox, on a project board and in chat. Anyone but the
+    owner is offered no card and the decide route answers `PILOT_ONLY`,
+    whichever surface the caller names. Their requests are
+    still listed and counted, and are answered where they live: a friend
+    request with the Inbox's own buttons, a mission plan in its project.
+    (DA-7a shipped before this gate existed and was open to every account
+    until DA-7b added the check.)
+  - *Delegating by conversation* (DA-7b,
+    [delegated_conversation.md](delegated_conversation.md)): the chat
+    tools that draft a responsibility, describe delegated work and stop
+    it; turning on or resuming a draft that was proposed in a conversation,
+    with the confirmation receipt for it; and any confirmation made from a
+    chat card. Keeping or discarding a proposed draft is not gated, so a
+    draft left over from a time the pilot was open can always be removed.
+    Drafting and activating your own responsibility on the Responsibilities
+    page is not part of DA-7 and stays open to everyone.
+
+  The wider sources of DA-8
+  ([delegated_opportunity_sources.md](delegated_opportunity_sources.md))
+  check `sources`: for anyone but the owner, activating a responsibility
+  that names `personal_chat`, `followed_source`, `job_failure` or
+  `ci_verdict` is refused with `PILOT_ONLY`.
+
+  Of `reach`, repository work, shared findings, knowledge work and outside
+  connectors have shipped. Delegated knowledge work (DA-11b) is gated as
+  `reach` like repository work. Repository
+  work (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is
+  gated as `reach`: committing, pushing and opening pull requests in a
+  project's clone are offered to a run, and shown in the draft form, only
+  for the owner, and each call checks the gate again before it reaches
+  GitHub. The
   grant vocabulary contains all the `reach` operations (`repo.commit`,
   `repo.push`, `pr.create`, the saved-note operations `kg.saved.propose`,
   `kg.saved.amend`, `kg.edge` and `kg.archive` of DA-11b
