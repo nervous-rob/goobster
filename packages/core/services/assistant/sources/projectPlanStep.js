@@ -29,10 +29,55 @@ function grantsPlanSteps(responsibility) {
     ));
 }
 
+/** Why a proposed or queued attempt at a step can no longer be dispatched, or null. */
+function staleCode(row) {
+    if (row.stepId == null || row.kind !== 'agent') return 'NO_STEP';
+    // Its own run holds the step (parked mid-work): still its to finish.
+    if (row.runId != null && row.executionAttemptId === `assistant_run:${Number(row.runId)}`
+        && ['STARTING', 'RUNNING'].includes(row.stepStatus)) return null;
+    if (!['ACTIVE', 'BLOCKED'].includes(row.missionStatus)) return 'PLAN_NOT_ACTIVE';
+    // Closed. A step another run holds may still come back, so dispatch decides that.
+    if (['DONE', 'SKIPPED', 'FAILED'].includes(row.stepStatus)) return 'STEP_NOT_ELIGIBLE';
+    const approved = row.approvedRevision != null ? Number(row.approvedRevision) : null;
+    if (!row.approvedAt || approved == null
+        || approved !== (Number(row.currentRevision) || 1)
+        || (row.planRevision != null && Number(row.planRevision) !== approved)
+        || (Number(row.stepRevision) || 0) > approved) return 'PLAN_REVISION_STALE';
+    return null;
+}
+
 module.exports = {
     feature: 'projects',
     standing: true,
     OPERATION,
+    /**
+     * Proposed or queued attempts whose step can no longer be dispatched:
+     * the same checks projectMissionService.beginDelegatedStep makes when
+     * a run asks for the step, made here so a plan that moved on withdraws
+     * the work it had proposed instead of leaving it listed (ADR 0021).
+     * @returns {Promise<{ id: number, code: string, supersededBy: string|null }[]>}
+     */
+    async stale(responsibility) {
+        const rows = await db.all(
+            `SELECT i.id, i.planRevision, r.id AS runId,
+                    s.id AS stepId, s.kind, s.status AS stepStatus, s.planRevision AS stepRevision, s.executionAttemptId,
+                    m.id AS missionId, m.status AS missionStatus, m.planRevision AS currentRevision,
+                    m.approvedRevision, m.approvedAt
+             FROM assistant_initiatives i
+             LEFT JOIN assistant_runs r ON r.initiativeId = i.id
+             LEFT JOIN project_mission_steps s ON s.id = i.planStepId
+             LEFT JOIN project_missions m ON m.id = s.missionId
+             WHERE i.responsibilityId = @rid AND i.planStepId IS NOT NULL
+               AND i.status IN ('CANDIDATE', 'QUEUED', 'WAITING')`,
+            { rid: responsibility.id }
+        );
+        const out = [];
+        for (const row of rows) {
+            const code = staleCode(row);
+            if (code) out.push({ id: Number(row.id), code, supersededBy: row.missionId != null ? `plan:${Number(row.missionId)}` : null });
+        }
+        return out;
+    },
     async read(responsibility) {
         if (!responsibility.projectId || !grantsPlanSteps(responsibility)) return [];
         const actor = responsibility.actingUserId || responsibility.ownerUserId;

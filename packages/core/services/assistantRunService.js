@@ -516,6 +516,30 @@ class AssistantRunService {
             if (stepWork) await steps.release({ runId: run.id, stepId: stepWork.step.id, code });
         };
 
+        // A request made in a conversation (ADR 0021): read it again now, as
+        // the person. Deleted, out of reach or no longer covered ends the
+        // attempt here, before any model call.
+        let request = null;
+        const requests = !planStep && initiative.origin?.kind === 'parlor_message'
+            ? require('./assistant/conversationRequestRun') : null;
+        if (requests) {
+            const loaded = await requests.load({ initiative, responsibility });
+            if (!loaded.ok) {
+                const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'SUPERSEDED', stopCode: loaded.code });
+                await finishRun({ status: 'CANCELLED', stopCode: settled.ok ? loaded.code : 'LEASE_LOST' });
+                return { status: settled.ok ? 'SUPERSEDED' : 'CANCELLED', stopCode: loaded.code, runId: run.id };
+            }
+            request = loaded.source;
+        }
+        // The lease is gone: cancelled, parked, revoked, or stopped by a
+        // change of direction, whose update is brought up to date now that
+        // the run has actually stopped.
+        const leaseLost = async () => {
+            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
+            await require('./assistant/steering').afterRunStopped({ initiativeId: initiative.id });
+            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+        };
+
         let loop = null;
         let failure = null;
         try {
@@ -525,7 +549,9 @@ class AssistantRunService {
                 () => runAgentLoop({
                     messages: stepWork
                         ? steps.messages({ responsibility, project, tools: [...offered], ...stepWork })
-                        : this._messages({ responsibility, initiative, project, tools: [...offered] }),
+                        : request
+                            ? requests.messages({ responsibility, project, tools: [...offered], source: request })
+                            : this._messages({ responsibility, initiative, project, tools: [...offered] }),
                     chatOptions: {
                         max_tokens: REPLY_TOKENS,
                         background: true,
@@ -566,10 +592,9 @@ class AssistantRunService {
         }
 
         if (ctx.stop === 'LEASE_LOST') {
-            // Cancelled, parked or revoked while working: no result is written.
+            // Cancelled, parked, revoked or superseded while working: no result is written.
             await releaseStep('LEASE_LOST');
-            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
-            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
+            return leaseLost();
         }
         if (ctx.stop === 'OPERATION_UNCERTAIN') {
             // A write that may or may not have happened is a blocker on the plan too.
@@ -627,10 +652,7 @@ class AssistantRunService {
             id: initiative.id, leaseToken, status: 'COMPLETED', outcome: result.outcome,
             recheckAfter: result.outcome === 'NO_CHANGE' ? new Date(now.getTime() + 24 * 60 * 60 * 1000) : null
         });
-        if (!settled.ok) {
-            await finishRun({ status: 'CANCELLED', stopCode: 'LEASE_LOST' });
-            return { status: 'CANCELLED', stopCode: 'LEASE_LOST', runId: run.id };
-        }
+        if (!settled.ok) return leaseLost();
         let updateId = null;
         if (result.outcome === 'DONE') {
             try {
@@ -640,9 +662,13 @@ class AssistantRunService {
                     kind: 'finding',
                     title: result.title || clip(initiative.title, 200),
                     summary: result.summary || null,
-                    components: [...new Set([...(project ? ['projects'] : []), 'research', ...applied.components])],
+                    components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
                     source: { kind: 'initiative', id: initiative.id },
-                    actions: [{ kind: 'open_initiative', id: String(initiative.id) }],
+                    // A result of something asked in a conversation links back to it.
+                    actions: [
+                        { kind: 'open_initiative', id: String(initiative.id) },
+                        ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                    ],
                     responsibilityId: responsibility.id,
                     initiativeId: initiative.id,
                     producerUserId: actor,

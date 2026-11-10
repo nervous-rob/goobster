@@ -449,8 +449,41 @@ jobs:
       - name: Build React client
         run: npm run build:web
 
+      # Chromium's system packages on this image are nine font packages
+      # (21 MB) from the runner's Ubuntu mirror, which now and then serves
+      # them at 100 kB/s and turns a 25-second step into four minutes. They
+      # are kept in a cache keyed on the runner image and the Playwright
+      # version. scripts/ci-playwright-chromium.sh installs them from there
+      # and lets Playwright confirm nothing is missing; with no cache, or if
+      # anything about it is off, it runs the same
+      # `npx playwright install --with-deps chromium` this step always ran.
+      # The cache steps may fail without failing the shard.
+      - name: Chromium system packages cache key
+        id: debs-key
+        run: |
+          playwright="$(node -p "require('@playwright/test/package.json').version")"
+          echo "key=playwright-debs-v1-${{ runner.os }}-${{ runner.arch }}-${ImageOS:-image}-${ImageVersion:-unknown}-pw${playwright}" >> "$GITHUB_OUTPUT"
+
+      - name: Restore Chromium system packages
+        id: debs
+        continue-on-error: true
+        uses: actions/cache/restore@v4
+        with:
+          path: ~/.cache/playwright-debs
+          key: ${{ steps.debs-key.outputs.key }}
+
       - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+        id: chromium
+        run: bash scripts/ci-playwright-chromium.sh "$HOME/.cache/playwright-debs"
+
+      # One shard saves, so five jobs do not race to write the same key.
+      - name: Save Chromium system packages
+        if: matrix.shard == 1 && steps.chromium.outputs.harvested == 'true' && steps.debs.outputs.cache-hit != 'true'
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: ~/.cache/playwright-debs
+          key: ${{ steps.debs-key.outputs.key }}
 
       - name: Portal journeys
         env:

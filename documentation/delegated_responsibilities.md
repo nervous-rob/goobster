@@ -40,8 +40,11 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 - **Operations.** A list of `{ operation, resource }` entries, described in the
   next section. Anything not listed is unavailable.
 - **Scopes.** Which sources the work may read (`personal_chat`, `knowledge`,
-  `project`) and who sees its results (`private` or `project`). A project
-  source or audience needs `projectId`. A purpose never grants access to a
+  `project`, `project_chat`, `parlor`) and who sees its results (`private`
+  or `project`). A project source or audience needs `projectId`.
+  `project_chat` and `parlor` say where it takes requests you address to
+  Goobster ([delegated_conversation_requests.md](delegated_conversation_requests.md));
+  `personal_chat` is reserved and not read yet. A purpose never grants access to a
   source the person could not otherwise reach.
 - **Budgets.** Non-negative integer caps: `modelTokens`, `searches`,
   `computeSeconds`, `concurrentInitiatives`, `repairAttempts` and
@@ -224,6 +227,16 @@ material revision he saw.
   first look too, once per approved plan revision and retry. Its title is
   "Plan step ready: " and the step's title, which the project's people wrote
   for the plan. See [delegated_plan_steps.md](delegated_plan_steps.md).
+  Its proposed and queued work is withdrawn on any look that finds the plan
+  has moved on.
+- One source is a **stream**: requests you address to Goobster in the
+  conversations the grant covers (`conversation_request`, for a grant whose
+  scopes name `project_chat` or `parlor`). It has one cursor, the last
+  message examined. The first look proposes nothing; after that each request
+  of yours is one proposal, titled "Asked in" and the conversation's name,
+  and a change of direction supersedes your unfinished work from that
+  conversation (`SUPERSEDED`, `STEERED`). See
+  [delegated_conversation_requests.md](delegated_conversation_requests.md).
 
 **Statuses.** `CANDIDATE`, `QUEUED`, `RUNNING`, `WAITING`, `REVIEW`, then one
 of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
@@ -235,7 +248,7 @@ of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
 - `queue` approves a candidate or waiting attempt under the grant as it is now.
 - `cancel` stops an open attempt.
 - `retry` opens a new attempt of a failed or cancelled one (or a superseded
-  plan-step attempt), unless another attempt at it is already open
+  plan-step or conversation-request attempt), unless another attempt at it is already open
   (`ALREADY_OPEN`).
 - `accept` and `reject` close an attempt that is in `REVIEW`.
 

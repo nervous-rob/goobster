@@ -15,8 +15,11 @@ in the [implementation plan's status table](delegated_assistant_implementation.m
 the shipped behaviour guides are
 [delegated_responsibilities.md](delegated_responsibilities.md),
 [assistant_home.md](assistant_home.md), [delegated_runs.md](delegated_runs.md)
-and, for the plan steps of section 7,
-[delegated_plan_steps.md](delegated_plan_steps.md).
+and, for section 7, [delegated_plan_steps.md](delegated_plan_steps.md) (plan
+steps) and
+[delegated_conversation_requests.md](delegated_conversation_requests.md)
+(requests made in conversation and changes of direction; journey B for
+explicit requests, and the project board of journey G).
 
 Updated: **2026-11-10**. Code baseline: `c3b773ee` (2026-10-27).
 Recheck implementation seams against current main before starting each increment.

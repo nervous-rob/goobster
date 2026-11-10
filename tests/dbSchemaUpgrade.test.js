@@ -604,6 +604,9 @@ describe('SQLite: upgrading an existing database', () => {
         for (const table of ['project_mission_steps', 'project_mission_evidence', 'assistant_initiatives']) {
             expect(shapeOf(database, table)).toEqual(shapeOf(fresh, table));
         }
+        // Where a conversation request came from, and what replaced a superseded attempt (DA-4b).
+        expect(database.prepare("SELECT name FROM pragma_table_info('assistant_initiatives')").all().map(r => r.name))
+            .toEqual(expect.arrayContaining(['originJson', 'supersededBy']));
 
         // Reopening changes nothing.
         const before = database.prepare('SELECT name, sql FROM sqlite_master ORDER BY name').all();
@@ -942,7 +945,7 @@ describePostgres('Postgres: upgrading an existing database', () => {
             `SELECT column_name FROM information_schema.columns
              WHERE table_schema = current_schema() AND table_name = 'assistant_initiatives'`
         );
-        expect(columns.rows.map(r => r.column_name)).toEqual(expect.arrayContaining(['planStepId', 'planRevision']));
+        expect(columns.rows.map(r => r.column_name)).toEqual(expect.arrayContaining(['planStepId', 'planRevision', 'originJson', 'supersededBy']));
     });
 
     test('a pre-pipeline Observatory keeps its jobs and triggers and gains parentage, contracts, and filters', async () => {
