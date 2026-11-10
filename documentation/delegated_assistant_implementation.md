@@ -84,14 +84,14 @@ increment done because its proposal exists.
 | DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
-| DA-11: extended reach | In progress. DA-11c done: findings shared with a project's members under current membership, with the producer shown, only from the project's own sources, never from a run that read private notes, behind the owner-only pilot gate, with receipts deleted when a member leaves ([delegated_project_findings.md](delegated_project_findings.md)). DA-11a done: repository work in a clone of the linked project (`commitProjectRepo`, `pushProjectRepo`, `openPullRequest`), on the grant's branch patterns and never on the base, default or a protected branch, never forced, reconciled against GitHub after a crash, capped by `externalOperations`, refused after a private read, owner-only behind the pilot gate, and grantable from the draft form ([delegated_runs.md](delegated_runs.md#repository-work), ADR 0025, ADR 0015 amendment). Planned: saved-note edits, note connections and archiving (DA-11b), and typed outside connectors (DA-11d) | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
+| DA-11: extended reach | In progress. DA-11c done: findings shared with a project's members under current membership, with the producer shown, only from the project's own sources, never from a run that read private notes, behind the owner-only pilot gate, with receipts deleted when a member leaves ([delegated_project_findings.md](delegated_project_findings.md)). DA-11a done: repository work in a clone of the linked project (`commitProjectRepo`, `pushProjectRepo`, `openPullRequest`), on the grant's branch patterns and never on the base, default or a protected branch, never forced, reconciled against GitHub after a crash, capped by `externalOperations`, refused after a private read, owner-only behind the pilot gate, and grantable from the draft form ([delegated_runs.md](delegated_runs.md#repository-work), ADR 0025, ADR 0015 amendment). DA-11d done as a framework only: the connector registry and manifest, `external.write` and `read` on a named resource of an installed connector, `listConnectors`, `readConnector` and `writeConnector`, the person's own credential, the same guard, private-read rule and `externalOperations` cap as a push, reconciliation or stop-for-review after a crash, revocation that deletes the credential, and connector choices in the draft form; no connector ships, because the owner has not named one ([delegated_connectors.md](delegated_connectors.md), ADR 0028). Planned: saved-note edits, note connections and archiving (DA-11b) | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
 | DA-12: operator controls and model evaluation | Done. The host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). The real-model evaluation set (DA-12b): six fixed, fictional cases, opt-in and never in required CI; see [delegated_evaluation.md](delegated_evaluation.md). The caps hold the DA-3 defaults until the owner records the pilot's numbers, and the "useful result" rubric is a default until the owner records another | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
 in mind; only the first part of DA-7 (DA-7a, deciding a request where it is
-shown), the repository work and project findings of DA-11 (DA-11a, DA-11c)
-and DA-12 (the host's controls and the evaluation set) are implemented.
+shown), the repository work, project findings and outside-connector framework of DA-11
+(DA-11a, DA-11c, DA-11d) and DA-12 (the host's controls and the evaluation set) are implemented.
 Their contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
@@ -517,6 +517,10 @@ entries in the run's tool table (ADR 0018), never by exposing a chat tool:
   writes. The product non-goal of broad surveillance stands: a connector is
   opt-in per responsibility, scoped to named resources, and a connector the
   owner has not recorded a decision for does not ship.
+  **Framework shipped in DA-11d** ([delegated_connectors.md](delegated_connectors.md),
+  ADR 0028), with no connector: the registry refuses a manifest without the
+  owner's recorded decision. Left for a connector's own change: its adapter,
+  its credential provider, and a public-read marker.
 
 Exit scenarios:
 
@@ -528,7 +532,9 @@ Exit scenarios:
 - An archived note is restorable with its connections.
 - A member who leaves a project stops receiving its findings at once. *(Done, DA-11c.)*
 - An outside write that may have happened stops for review, never retries.
+  (DA-11d: `tests/assistantConnectors.test.js`, "after a crash", against a test double.)
 - Revoking a connector stops its use at the next call and removes its tokens.
+  (DA-11d: `tests/assistantConnectors.test.js`, "revoking a connector"; `e2e/assistantConnectors.spec.js`.)
 
 ### DA-12: operator controls and model evaluation
 

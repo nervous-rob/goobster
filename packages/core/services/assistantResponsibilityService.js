@@ -30,6 +30,7 @@ const workFailureService = require('./workFailureService');
 const control = require('./assistantControlService');
 const pilotAccess = require('./assistantAccessService');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
+const connectorRegistry = require('./assistant/connectors/registry');
 
 const FEATURE_ID = 'assistant';
 
@@ -59,7 +60,7 @@ const HUMAN_ACTIONS = ['activate', 'pause', 'resume', 'complete', 'revoke', 'arc
  * beyond the resource kind's own.
  */
 const OPERATIONS = {
-    read: { kinds: ['knowledge', 'web', 'project', 'process', 'repository'], action: 'read', category: null, features: [] },
+    read: { kinds: ['knowledge', 'web', 'project', 'process', 'repository', 'external'], action: 'read', category: null, features: [] },
     research: { kinds: ['knowledge', 'web', 'project'], action: 'compute', category: 'research', features: ['expeditions'] },
     'kg.generated.add': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'kg.generated.amend': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
@@ -235,6 +236,15 @@ function normalizeResource(raw, operation, index) {
                 : kind === 'repository' ? REPO_PATTERN : null;
         const ids = stringList(raw.ids, `${field}.ids`, LIMITS.ids, { pattern, code: 'INVALID_RESOURCE' });
         if (!ids.length) throw bad(`${field}.ids must name at least one ${kind}; there is no wildcard.`, 'INVALID_RESOURCE');
+        // A connector's named resource, as "<connector>:<resource>" (ADR 0028): the
+        // connector must be installed and the resource of the shape it accepts.
+        if (kind === 'external') {
+            for (const id of ids) {
+                if (!connectorRegistry.parseRef(id)) {
+                    throw bad(`${field}.ids has "${id}", which is not a named resource of an installed connector (<connector>:<resource>).`, 'INVALID_RESOURCE');
+                }
+            }
+        }
         resource.ids = kind === 'repository' ? ids.map(id => id.toLowerCase()) : ids;
     } else if (raw.ids !== undefined) {
         throw bad(`${field}.ids is not used for ${kind} resources.`, 'INVALID_RESOURCE');
@@ -576,6 +586,14 @@ class AssistantResponsibilityService {
             }
             return true;
         }
+        case 'external': {
+            const connectors = require('./assistantConnectorService');
+            for (const ref of ids) {
+                const reachable = await connectors.reachable(userId, ref);
+                if (reachable !== true) return reachable;
+            }
+            return true;
+        }
         case 'process':
             for (const ref of ids) {
                 const match = PROCESS_REF.exec(ref);
@@ -610,7 +628,7 @@ class AssistantResponsibilityService {
                     throw new AssistantResponsibilityError('FEATURE_UNAVAILABLE', `"${entry.operation}" needs a feature that is not available.`, 409, { feature: featureId });
                 }
             }
-            const gate = await pilotAccess.allowsOperation(row.ownerUserId, entry.operation);
+            const gate = await pilotAccess.allowsOperation(row.ownerUserId, entry.operation, entry.resource.kind);
             if (!gate.ok) {
                 throw new AssistantResponsibilityError(gate.code,
                     `"${entry.operation}" is limited to the installation's owner until the pilot decision is recorded.`, 409,
@@ -975,7 +993,7 @@ class AssistantResponsibilityService {
         if (!matching) return { ok: false, code: 'OPERATION_OUT_OF_SCOPE' };
 
         // Capabilities still in the pilot are the owner's alone, whatever the grant says.
-        const gate = await pilotAccess.allowsOperation(row.ownerUserId, operation);
+        const gate = await pilotAccess.allowsOperation(row.ownerUserId, operation, resource.kind);
         if (!gate.ok) return { ok: false, code: gate.code, capability: gate.capability };
 
         const reachable = await this._resourceAccess(row.actingUserId, matching.resource, target);
