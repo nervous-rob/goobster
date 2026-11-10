@@ -1319,6 +1319,62 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Repairing a process (assistantProcessRepair.spec.js, DA-5c): a person
+    // (the installation's owner unless `owner: false`) has one automation
+    // that has failed three times
+    // running, and one incident pass has offered the one repair that needs no
+    // judgement. `step: 'outcome'` records what the run after the repair did
+    // (`ok` or `failed`) and runs another pass, as the scheduler and the
+    // steward would. Safe to call again: the seed starts that person over.
+    // No model, no network, and nothing here runs an automation.
+    app.post('/e2e/fixtures/assistant-process-repair', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const processes = require('@goobster/core/services/assistantProcessService');
+            const incidents = require('@goobster/core/services/assistantIncidentService');
+            if (req.body?.step === 'outcome') {
+                const row = await db.get('SELECT id FROM automations WHERE userId = @userId ORDER BY id LIMIT 1', { userId });
+                if (!row) return res.status(409).json({ error: 'seed first' });
+                const failed = req.body?.outcome === 'failed';
+                await processes.record({
+                    processKind: 'automation', processId: row.id, ownerUserId: userId, occurrenceKey: `fire:after:${Date.now()}`,
+                    phase: 'outcome', outcome: failed ? 'failed' : 'ok', reasonCode: failed ? 'RUN_FAILED' : null
+                });
+                return res.json({ ok: true, pass: await incidents.reconcile({ userId }) });
+            }
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Keeper' });
+            if (req.body?.owner !== false) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
+                ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
+                ['assistant_process_cleanups', 'ownerUserId'], ['assistant_process_lifecycle', 'ownerUserId'],
+                ['assistant_process_repairs', 'ownerUserId'], ['automations', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const nextRun = new Date(Date.now() + 86_400_000).toISOString().slice(0, 19).replace('T', ' ');
+            const id = Number(await db.insert(
+                `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+                 VALUES (@userId, @scope, @channel, 'Nightly import', 'fixture', '0 3 * * *', @nextRun)`,
+                { userId, scope: `dm:${userId}`, channel: `inbox:${userId}`, nextRun }
+            ));
+            const outcomes = ['ok', 'failed', 'failed', 'failed'];
+            for (const [index, outcome] of outcomes.entries()) {
+                await processes.record({
+                    processKind: 'automation', processId: id, ownerUserId: userId, occurrenceKey: `fire:${index}`,
+                    phase: 'outcome', outcome, reasonCode: outcome === 'failed' ? 'RUN_FAILED' : null,
+                    observedAt: new Date(Date.now() - (outcomes.length - index) * 3_600_000)
+                });
+            }
+            res.json({ ok: true, id, pass: await incidents.reconcile({ userId }) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {
