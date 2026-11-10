@@ -116,8 +116,9 @@ features are on.
 ## Deciding a request where it is shown
 
 A request that has a concrete decision carries it. The same buttons appear on
-the request under Needs you on Home and on its row in the Inbox, and one
-press settles it in both.
+the request under Needs you on Home, on its row in the Inbox and, when you
+ask in chat what needs you, on a card under the reply. One press settles it
+everywhere.
 
 | Request | Who sees the buttons | Choices |
 | --- | --- | --- |
@@ -132,8 +133,8 @@ where it is decided.
 
 What holds:
 
-- **One operation, wherever you press.** Home and the Inbox post the same
-  decision; it is carried out by the service that owns the request
+- **One operation, wherever you press.** Home, the Inbox and a chat card post
+  the same decision; it is carried out by the service that owns the request
   (`friendService.respond`, `accessRequestService.approve` / `decline`,
   `projectMissionService.approve` / `start`) with that service's own checks.
   Approving a plan still goes through the mission's human approval receipt
@@ -147,7 +148,15 @@ What holds:
   nothing is decided and you are told its current state ("This request was
   already settled. They withdrew this request."); the page then shows it.
 - **Reading and opening still decide nothing.** Only a button press does,
-  and a model can never press one: the operation is not a chat tool.
+  and a model can never press one: the operation is not a chat tool, and it
+  refuses inside any model tool call (`HUMAN_ONLY`).
+- **A press in chat is proved.** A chat card's decision carries a single-use
+  confirmation receipt for that card
+  ([delegated_conversation.md](delegated_conversation.md#confirmation-receipts)).
+  Home and the Inbox need none.
+- **A repeated friend request has one notice.** When someone withdraws a
+  friend request and asks again, only the newest notice asks for an answer.
+  The earlier one stays in the Inbox as a record with no buttons.
 - **Some refusals are the owner's.** A join request on an installation with
   an AI key and no daily spending limit is refused with that reason and
   stays open.
@@ -215,7 +224,13 @@ what a responsibility is and how each action is checked.
   files under folders you name, run code in the sandbox), when it ends, and
   whether proposed work starts automatically. A draft grants nothing.
 - **Activate** shows exactly what will be granted, as you, and until when,
-  and needs your confirmation. Activation requires Attention to be on.
+  and needs your confirmation. The question is built from what the server
+  says this revision allows, and your yes spends a single-use confirmation
+  receipt for it. Activation requires Attention to be on. **Resume** is
+  confirmed the same way.
+- A draft Goobster proposed in a conversation is marked *proposed in a
+  conversation*. *Discard* deletes it
+  ([delegated_conversation.md](delegated_conversation.md)).
 - **Pause / Resume / Mark complete / Revoke / Archive** follow the lifecycle;
   each carries the revision you saw, so a stale page is refused rather than
   applied.
@@ -292,8 +307,8 @@ None of the GET routes writes anything.
 - A card's `revision` comes from the record that owns the request, not from
   the update's display revision, so rewording a notice does not invalidate
   a card and changing the plan does.
-- The caller names its `surface`. `chat` is accepted now so the chat
-  confirmation card (planned) posts to the same route.
+- The caller names its `surface`. The chat card posts to the same route
+  with `surface: 'chat'` and a confirmation receipt.
 - A plan to approve and an approved plan to start share one kind
   (`project_approve`) with one choice each. Review, unblock and answer gates
   have no card yet.
@@ -303,7 +318,7 @@ None of the GET routes writes anything.
 ## Not built yet
 
 - Feedback on a briefing item (useful, already knew, wrong time, ...).
-- Deciding a request from a chat card or a notification, and decisions for
+- Deciding a request from a notification, and decisions for
   the other request kinds (review, unblock, answer, repair, responsibility
   review): those still link to where the request is decided.
 - Signals for the Conversations card beyond updates filed against it.

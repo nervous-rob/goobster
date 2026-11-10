@@ -9,7 +9,7 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
 are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13 except "Deciding a request in place" (13.1), is planned.** Updated 2026-11-09.
+section 13 except 13.1 without its spoken briefing (ADR 0019), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -739,8 +739,8 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with one part implemented: "Deciding a request in place"
-in 13.1 (DA-7a). Nothing else in this section is implemented.** These are the
+**Status: planned, with 13.1 implemented except the spoken briefing (DA-7a,
+DA-7b). Nothing else in this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -756,7 +756,10 @@ grant nothing), `assistantRunService.forInitiative`, the Home projection
 (`assistantHomeService.project`) and the voice turn loop
 (`services/voice/realtimeVoiceEngine.js`, `voiceSessionService`).
 
-Proposed chat tools, all in a new `utils/tools/assistant.js`:
+*Implemented (DA-7b).* Behaviour:
+[delegated_conversation.md](delegated_conversation.md); decision record:
+[ADR 0019](adr/0019-conversational-delegation-and-receipts.md). The chat
+tools, all in `utils/tools/assistant.js`:
 
 | Tool | Does | Authority |
 | --- | --- | --- |
@@ -784,8 +787,25 @@ Rules:
 - Tools act only in the speaker's personal scope. In a guild channel they
   answer that delegation is managed privately and link to the portal.
 
-**Deciding a request in place.** *Implemented for Home and the Inbox
-(DA-7a); the chat card and the repair-proposal descriptor are planned.* The
+As built:
+
+- The rule is enforced in the services, not by the tool list. Every
+  dispatcher of a model tool call enters `utils/modelCallScope.js`; inside
+  it, activation, resume, any edit, keeping a proposal, queue, retry,
+  accept, `decide`, and minting or spending a receipt answer `HUMAN_ONLY`.
+- The receipt (`assistant_confirmation_receipts`,
+  `assistantConfirmationService`) is required by the portal action route
+  for `activate` and `resume`, by any caller for a draft with
+  `proposedBy: 'model'`, and by `decide` with `surface: 'chat'`. Queueing
+  and authority edits do **not** take a receipt: they are refused inside a
+  model call and reachable only from a session route.
+- Confirmation is in the portal only. A Discord DM gets the draft and is
+  told to confirm it there.
+- The tools also call the pilot gate
+  (`assistantAccessService.allows(userId, 'conversation')`, 13.6).
+
+**Deciding a request in place.** *Implemented for Home, the Inbox (DA-7a)
+and the chat card (DA-7b); the repair-proposal descriptor is planned.* The
 shipped behaviour and API are in
 [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown).
 Each gate kind registers a descriptor once
@@ -820,9 +840,10 @@ As built, three things differ from the proposal above them:
 - `revision` is derived from the owning record (`plan:<planRevision>`, the
   request's creation time), not the update's `materialRevision`. The
   update's `occurrence` is still checked.
-- `surface` (`home`, `inbox`, `chat`) is required. `chat` is accepted so the
-  DA-7b confirmation card posts to the same route; `decide` is deliberately
-  not a model tool, and a test fails if a file under `utils/tools/` calls it.
+- `surface` (`home`, `inbox`, `chat`) is required. The chat card posts to the
+  same route with `surface: 'chat'` and a confirmation receipt for the card;
+  `decide` is deliberately not a model tool, refuses inside a model tool
+  call, and a test fails if a file under `utils/tools/` calls it.
 
 Mission approval still mints the mission's own human approval receipt
 (section 7) inside the descriptor, bound to the plan revision on the card.
