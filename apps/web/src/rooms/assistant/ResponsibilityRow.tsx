@@ -34,6 +34,16 @@ const ACTIONS: Record<string, Array<{ action: string; label: string; primary?: b
     EXPIRED: [{ action: 'archive', label: 'Archive' }]
 };
 
+/** Where it takes requests addressed to Goobster, in plain words. */
+function listens(item: Responsibility): string | null {
+    const sources = item.scopes?.sources || [];
+    const places = [
+        sources.includes('project_chat') ? 'its project\'s conversations' : null,
+        sources.includes('parlor') ? 'your discussions' : null
+    ].filter(Boolean);
+    return places.length ? `Takes requests you address to Goobster in ${places.join(' and ')}` : null;
+}
+
 export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWork }: {
     item: Responsibility;
     projects: Map<string, Project>;
@@ -51,6 +61,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 {item.outcome && <div className="hint">{item.outcome}</div>}
                 <ul className="assistant-grants">
                     {describeGrants(item.operations, projects).map((line) => <li key={line}>May {line}</li>)}
+                    {listens(item) && <li data-testid="responsibility-listens">{listens(item)}</li>}
                 </ul>
                 <div className="row-meta">
                     {item.rules?.autoStart ? 'Starts proposed work automatically · ' : 'Each piece of work waits for Start · '}

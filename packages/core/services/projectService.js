@@ -3522,7 +3522,8 @@ class ObservatoryService {
                 count: cards.length,
                 cards: cards.slice(0, 5).map(card => ({
                     id: card.id, column: card.column, title: card.title, detail: card.detail || null,
-                    waitingOn: card.waitingOn || null
+                    mine: card.mine !== false, waitingOn: card.waitingOn || null,
+                    gate: card.gate || null, decision: card.decision || null
                 }))
             };
         } catch { /* missions are optional here */ }

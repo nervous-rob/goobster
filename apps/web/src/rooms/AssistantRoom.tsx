@@ -44,7 +44,10 @@ export function AssistantRoom() {
     const workQ = useQuery({ queryKey: keys.assistantInitiatives, queryFn: () => api.assistantInitiatives(), enabled, refetchInterval: 15_000 });
     const workByResponsibility = new Map<number, AssistantInitiative[]>();
     for (const item of workQ.data?.initiatives || []) {
-        if (item.status === 'SUPERSEDED') continue;
+        // Work a newer look at the same source replaced is history. A request
+        // the person withdrew by changing direction stays, so they can see
+        // what was stopped and start it again.
+        if (item.status === 'SUPERSEDED' && !item.origin) continue;
         const list = workByResponsibility.get(item.responsibilityId) || [];
         if (list.length < 5) list.push(item);
         workByResponsibility.set(item.responsibilityId, list);
