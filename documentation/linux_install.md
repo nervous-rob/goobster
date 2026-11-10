@@ -392,10 +392,12 @@ build reports `APPIMAGETOOL_FAILED` naming the missing command. When the tool
 cannot be fetched or does not match its hash the report says `APPIMAGE_SKIPPED` with a reason
 (`NOT_REQUESTED`, `APPDIR_ONLY`, `HOST_ARCH_MISMATCH`, `TOOL_UNAVAILABLE`,
 `TOOL_HASH_MISMATCH`, `APPIMAGETOOL_FAILED`), and `--require-appimage` turns a
-skip into a failure. The runtime is pinned to upstream's dated release
-(`20251108`), not its rolling `continuous` release, whose files change whenever
-upstream rebuilds it. Run an AppImage on a machine without FUSE with
-`APPIMAGE_EXTRACT_AND_RUN=1`.
+skip into a failure. A build takes each pinned file from Goobster's own copy
+(the `bootstrap-tools` release) and falls back to the upstream URL, checking the
+hash either way, so an upstream rebuild of the runtime's rolling `continuous`
+release does not break a build; a newer upstream build arrives as a pull request
+that a person merges (`documentation/bootstrap_tools.md`). Run an AppImage on a
+machine without FUSE with `APPIMAGE_EXTRACT_AND_RUN=1`.
 
 The payload contains the manager (`bin/goobster-manager`, `apps/manager`); the
 smoke check's `manager.launches` check proves the launcher starts from the
@@ -403,7 +405,9 @@ bundled Node with no system Node.
 
 ## What CI proves
 
-`.github/workflows/linux-bootstrap.yml` builds the payload and both artifacts on
+`.github/workflows/linux-bootstrap.yml` (on pull requests that touch the
+installer, and weekly on `main` so a pinned tool that stops resolving is found
+early) builds the payload and both artifacts on
 `ubuntu-24.04` and `ubuntu-24.04-arm`, checks the `.run` verifies and rebuilds
 byte for byte, and runs `scripts/linux-bootstrap-proof.sh` as root on the
 runner's real systemd:

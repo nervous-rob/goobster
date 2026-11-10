@@ -1,9 +1,28 @@
 {
-    "version": 1,
-    "note": "Tools the bootstrap builds download, pinned by URL and SHA-256. A download that does not match its pin is discarded and the artifact is skipped with APPIMAGE_SKIPPED (Linux) or INSTALLER_SKIPPED (Windows); nothing unpinned is ever executed. Update a pin only after checking the new release's own checksums.",
+    "version": 2,
+    "note": "Third-party tools the bootstrap builds download, pinned by SHA-256. A build fetches Goobster's own copy from the mirror release first and the upstream URL second, and keeps a download only when it matches its pin; otherwise the artifact is skipped with APPIMAGE_SKIPPED (Linux) or INSTALLER_SKIPPED (Windows). Nothing unpinned is ever executed. Pins change only through the procedure in documentation/bootstrap_tools.md: scripts/bootstrap-tools.js verifies a newer upstream build and a person merges the pull request that carries it.",
+    "mirror": {
+        "repository": "nervous-rob/goobster",
+        "tag": "bootstrap-tools",
+        "note": "One release that holds a copy of every file pinned below, each named <upstream file name>.<sha256>. A file is uploaded only after its pin is merged, and is never replaced or removed, so reverting a pin keeps working."
+    },
+    "keys": {
+        "appimage-type2-runtime": {
+            "fingerprint": "570C77ACEA40C0F1B758902CBF96CCA56490F695",
+            "file": "bootstrap-keys/appimage-type2-runtime.asc",
+            "source": "https://github.com/AppImage/type2-runtime/blob/main/signing-pubkey.asc"
+        }
+    },
     "appimagetool": {
         "version": "1.9.0",
         "source": "https://github.com/AppImage/appimagetool/releases/tag/1.9.0",
+        "upstream": {
+            "repository": "AppImage/appimagetool",
+            "track": "versions",
+            "tag": "1.9.0",
+            "commit": "81ee1db4946780292cd046d4c269a9b4fd7bc29d",
+            "uploader": "github-actions[bot]"
+        },
         "x64": {
             "url": "https://github.com/AppImage/appimagetool/releases/download/1.9.0/appimagetool-x86_64.AppImage",
             "sha256": "46fdd785094c7f6e545b61afcfb0f3d98d8eab243f644b4b17698c01d06083d1"
@@ -14,21 +33,41 @@
         }
     },
     "appimageRuntime": {
-        "source": "https://github.com/AppImage/type2-runtime/releases/tag/20251108",
-        "note": "The runtime that mounts the image. Pinned to upstream's dated release, not its rolling 'continuous' release, which is rebuilt on every upstream push and so changes the hash behind a fixed URL. Upstream publishes no checksum file for this release; each hash was computed from the release asset, equals the digest GitHub records for that asset, and the asset's detached signature (runtime-<arch>.sig) verifies against signing-pubkey.asc in the upstream repository (key 570C77ACEA40C0F1B758902CBF96CCA56490F695). To take a newer runtime, move to a newer dated release on purpose and repeat those checks.",
+        "source": "https://github.com/AppImage/type2-runtime/releases/tag/continuous",
+        "note": "The runtime that mounts the image. Upstream publishes it only as a rolling 'continuous' release that is rebuilt on every push, so the upstream URL serves this build only until the next one; the mirror keeps it. Each file carries upstream's detached signature, checked against the pinned key.",
+        "upstream": {
+            "repository": "AppImage/type2-runtime",
+            "track": "tag",
+            "tag": "continuous",
+            "commit": "fedfad51acc2860b2916a1eef32ba4a500ff31ef",
+            "uploader": "github-actions[bot]",
+            "workflow": ".github/workflows/build.yaml",
+            "run": 39320578745,
+            "embedsCommit": true,
+            "signingKey": "appimage-type2-runtime"
+        },
         "x64": {
-            "url": "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64",
-            "sha256": "2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d"
+            "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-x86_64",
+            "sha256": "617aa77314d57c8b8e4fae9c3f0b35af7b30d5529cb69e98f64f92510ed98a46",
+            "signature": "iHUEABYKAB0WIQRXDHes6kDA8bdYkCy/lsylZJD2lQUCatZ/QAAKCRC/lsylZJD2lT9KAQCSUxmQGa214AYnPys4JLn9237xi9jQ9S52+2BdQkdbyQD9GVq+jw1lLnfNo9cUW+WMensDfAxr3tysto59Ut6cXQQ="
         },
         "arm64": {
-            "url": "https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-aarch64",
-            "sha256": "00cbdfcf917cc6c0ff6d3347d59e0ca1f7f45a6df1a428a0d6d8a78664d87444"
+            "url": "https://github.com/AppImage/type2-runtime/releases/download/continuous/runtime-aarch64",
+            "sha256": "9a72a744d221576c9347ec074243acc5c3c7568896b12714e0e82e9f0bf47900",
+            "signature": "iHUEABYKAB0WIQRXDHes6kDA8bdYkCy/lsylZJD2lQUCatZ/QwAKCRC/lsylZJD2lRfkAP96Oxi34rP01PeLRkD2dQL/9StQp9oXPpjkrblG6NuBJwEAxiXjd9FkYDm57IozoHWaoF+iVvD6/zoWXwzIVLFgKAE="
         }
     },
     "winsw": {
         "version": "2.12.0",
         "source": "https://github.com/winsw/winsw/releases/tag/v2.12.0",
-        "note": "The Windows service host (WinSW, .NET Framework 4.x build: runs on a stock Windows 10/11 and Server 2016+). Upstream publishes no checksum for this release; the hash was computed from the release asset and cross-checked against independent Scoop package manifests that pin the same file. The helper (apps/manager/privileged/win32.js) compares the executable against windowsServiceXml.WINSW before it registers anything; tests/windowsService.test.js keeps the two equal.",
+        "note": "The Windows service host (WinSW, .NET Framework 4.x build: runs on a stock Windows 10/11 and Server 2016+). Upstream publishes no checksum or signature for this release; the hash was computed from the release asset and cross-checked against independent Scoop package manifests that pin the same file. The helper (apps/manager/privileged/win32.js) compares the executable against windowsServiceXml.WINSW before it registers anything; tests/windowsService.test.js keeps the two equal, so a pull request that changes this pin must change that constant too.",
+        "upstream": {
+            "repository": "winsw/winsw",
+            "track": "versions",
+            "tag": "v2.12.0",
+            "commit": "eef5bade59fca0254e387ac73ed7625ba6aa7147",
+            "uploader": "nxtn"
+        },
         "file": "WinSW.NET4.exe",
         "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET4.exe",
         "sha256": "923111c7142b3dc783a3c722b19b8a21bcb78222d7a136ac33f0ca8a29f4cb66"

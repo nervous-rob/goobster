@@ -23,6 +23,10 @@ on:
         description: 'Include linux-arm64 (ubuntu-24.04-arm). Untick if the repository has no access to GitHub-hosted arm64 runners; the job would otherwise queue forever.'
         type: boolean
         default: true
+  # Weekly on main, so a pinned tool that no longer resolves (documentation/bootstrap_tools.md)
+  # fails here and not on an unrelated pull request.
+  schedule:
+    - cron: '41 6 * * 1'
   pull_request:
     paths:
       - 'bootstrap/**'
@@ -32,6 +36,8 @@ on:
       - 'scripts/linux-bootstrap-proof.sh'
       - 'scripts/native-service-recovery-proof.js'
       - 'scripts/lib/bootstrapStage.js'
+      - 'scripts/lib/bootstrapTools.js'
+      - 'scripts/lib/download.js'
       - 'scripts/lib/payload*'
       - 'deploy/goobster.service'
       - 'scripts/install-rpi.sh'
@@ -47,6 +53,8 @@ on:
       - 'bootstrap/**'
       - 'scripts/package-bootstrap.js'
       - 'scripts/bootstrap-pins.json'
+      - 'scripts/lib/bootstrapTools.js'
+      - 'scripts/lib/download.js'
       - 'scripts/linux-bootstrap-proof.sh'
       - 'scripts/native-service-recovery-proof.js'
       - 'apps/manager/privileged/**'
