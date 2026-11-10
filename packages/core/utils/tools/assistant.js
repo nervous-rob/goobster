@@ -33,6 +33,7 @@
 const crypto = require('node:crypto');
 const { features } = require('../../features/featureState');
 const { dmScopeId } = require('../dmScope');
+const logger = require('../logger');
 const { incognitoRefusal } = require('../toolPrivacy');
 
 const FEATURE_ID = 'assistant';
@@ -170,9 +171,19 @@ async function voiceEntry(context) {
     return who;
 }
 
-/** The briefing is shown to the model only on a spoken turn of a person who could hear it. */
+/**
+ * The briefing is shown to the model only on a spoken turn of a person who
+ * could hear it. A check that cannot be made hides it: a voice turn goes on
+ * without the briefing rather than failing.
+ */
 async function offeredInVoice(context) {
-    return isVoiceTurn(context) && offered(context);
+    if (!isVoiceTurn(context)) return false;
+    try {
+        return await offered(context);
+    } catch (error) {
+        logger.warn?.(`[assistant tools] spoken briefing not offered: ${error.message}`);
+        return false;
+    }
 }
 
 /** "read, research: the web" - the normalized grant in plain words, one line per resource. */

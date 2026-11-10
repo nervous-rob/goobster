@@ -470,6 +470,13 @@ describe('who may hear it', () => {
         expect(assistantTools.TOOL_NAMES).toContain(TOOL);
     });
 
+    test('when the pilot gate cannot be read, a voice turn goes on without the briefing', async () => {
+        jest.spyOn(access, 'allows').mockRejectedValue(new Error('database is busy'));
+        const definitions = await toolsRegistry.getDefinitions([TOOL, 'performSearch'], { isWeb: true });
+        const kept = await toolsRegistry.offeredTo(definitions, voiceChat(A));
+        expect(kept.map(def => def.name)).toEqual(['performSearch']);
+    });
+
     test('the tool takes no arguments: nothing a model passes changes whose Home it reads', async () => {
         await busyHome();
         const plain = await tool();
