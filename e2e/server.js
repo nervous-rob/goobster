@@ -799,6 +799,28 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // A request the person can decide where it is shown (the decide-in-place
+    // journey): somebody asks to be friends, and can take it back while the
+    // card is still on screen. `step` is ask | withdraw.
+    app.post('/e2e/fixtures/assistant-home/friend-request', express.json(), async (req, res) => {
+        try {
+            const friends = require('@goobster/core/services/friendService');
+            const userId = String(req.body?.userId || '');
+            const fromId = String(req.body?.fromId || '');
+            if (!/^\d{5,20}$/.test(userId) || !/^\d{5,20}$/.test(fromId)) return res.status(400).json({ error: 'userId, fromId' });
+            const pair = `(requesterId = @fromId AND addresseeId = @userId) OR (requesterId = @userId AND addresseeId = @fromId)`;
+            if (req.body?.step === 'withdraw') {
+                const row = await db.get(`SELECT id FROM friendships WHERE status = 'pending' AND (${pair})`, { userId, fromId });
+                return res.json(await friends.cancel({ userId: fromId, requestId: row?.id }));
+            }
+            await identityService.ensureLegacyPrincipal({ discordId: fromId, displayName: req.body?.fromName || 'Ada' });
+            await db.run(`DELETE FROM friendships WHERE ${pair}`, { userId, fromId });
+            const { request } = await friends.request({ userId: fromId, userName: req.body?.fromName || 'Ada', targetId: userId });
+            res.json({ ok: true, requestId: request.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
     // Bypasses the event API so empty-step catalog tours can still show
     // paused/completed rows. Never calls a provider.
