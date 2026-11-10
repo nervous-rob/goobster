@@ -19,6 +19,7 @@ export const keys = {
     responsibilitySources: (id: number) => ['assistant-sources', id] as const,
     assistantKnowledge: ['assistant-knowledge'] as const,
     assistantProcesses: ['assistant-processes'] as const,
+    assistantOutcomes: (days: number) => ['assistant-outcomes', days] as const,
     usage: (days: number) => ['usage', days] as const,
     applets: ['applets'] as const,
     parlorConversations: ['parlor-conversations'] as const,

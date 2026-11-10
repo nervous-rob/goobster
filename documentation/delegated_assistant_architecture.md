@@ -1396,11 +1396,15 @@ DA-12b; how to run and read it is in
 - **Prompt version (implemented).** `assistantRunService.promptVersion()`
   returns `PROMPT_VERSION` and a fingerprint of the run instructions, the
   instructions of a repair run and every tool definition, so a change to any
-  of them is visible whether or not the version was raised. It is recorded by the evaluation; it is not yet stored
-  on production runs.
-- **Pilot record (implemented).** The DA-6 template has the model and prompt
+  of them is visible whether or not the version was raised. It is recorded by the evaluation, and since DA-6 on
+  every production run with the provider and model the run was routed to
+  (`assistant_runs.promptVersion`, `provider`, `model`).
+- **Pilot record (implemented).** The DA-6 template
+  ([delegated_pilot_record.md](delegated_pilot_record.md)) has the model and prompt
   version and the caps in force, so a result can be compared across changes.
-  An evaluation's `manifest.json` carries all of them.
+  An evaluation's `manifest.json` carries all of them, and the outcome summary
+  (`assistantOutcomeService`, [delegated_pilot.md](delegated_pilot.md#the-outcome-summary))
+  reads them from the runs.
 
 See the [implementation plan](delegated_assistant_implementation.md) for the
 increment-specific acceptance matrix and rollout gates. CI establishes these

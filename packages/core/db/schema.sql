@@ -3832,7 +3832,14 @@ CREATE TABLE IF NOT EXISTS assistant_runs (
     heartbeatAt TEXT,
     endedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
-    updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- What the latest attempt was given and which model answered it: the
+    -- label of assistantRunService.promptVersion() and the provider and
+    -- model its calls were routed to when it started. Names, never content.
+    -- NULL on a run that started before these were recorded.
+    promptVersion TEXT,
+    provider TEXT,
+    model TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_runs_owner ON assistant_runs(ownerUserId, status);

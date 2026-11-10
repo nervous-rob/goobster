@@ -256,6 +256,10 @@ const COLUMN_MIGRATIONS = [
     ['followed_sources', 'archivedAt', 'archivedAt TEXT'],
     ['attention_watches', 'pausedAt', 'pausedAt TEXT'],
     ['attention_watches', 'archivedAt', 'archivedAt TEXT'],
+    // What a delegated run was given and which model answered it (the pilot record).
+    ['assistant_runs', 'promptVersion', 'promptVersion TEXT'],
+    ['assistant_runs', 'provider', 'provider TEXT'],
+    ['assistant_runs', 'model', 'model TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

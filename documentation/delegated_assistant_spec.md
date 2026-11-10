@@ -798,6 +798,14 @@ records the pilot decision
   responsibilities, including a page and a file that tell the run to exceed
   its grant, recorded with the model and prompt version used. It spends
   real tokens and never runs by itself.
+- For the first pilot, a runbook and a record to fill in
+  ([delegated_pilot.md](delegated_pilot.md),
+  [delegated_pilot_record.md](delegated_pilot_record.md)), a rehearsal of
+  the journeys in section 11 against a throwaway database
+  (`npm run pilot:rehearsal`), and a summary on the Responsibilities page
+  of what each responsibility achieved and cost, which keeps a result the
+  system checked apart from one a run only reported and never counts notes
+  created or tool calls.
 
 The [implementation plan](delegated_assistant_implementation.md) tracks which
 increments actually land. Update shipped behavior documentation in the same

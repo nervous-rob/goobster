@@ -407,6 +407,8 @@ const GROUPS = [
             'assistantOpportunityChat',
             'assistantOpportunityRuns',
             'assistantOpportunitySources',
+            'assistantOutcomeService',
+            'assistantPilotRehearsal',
             'assistantProjectAudience',
             'assistantPlanStep',
             'assistantProcessAssessment',

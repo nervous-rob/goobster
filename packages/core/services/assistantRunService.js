@@ -155,6 +155,10 @@ class AssistantRunService {
             updateId: row.updateId == null ? null : Number(row.updateId),
             startedAt: row.startedAt,
             endedAt: row.endedAt || null,
+            // Which instructions and which model the latest attempt had (null on older runs).
+            promptVersion: row.promptVersion || null,
+            provider: row.provider || null,
+            model: row.model || null,
             ...(operations ? {
                 // What it did, without the retrieved text.
                 operations: operations.map(op => ({
@@ -303,25 +307,45 @@ class AssistantRunService {
         };
     }
 
+    /**
+     * What an attempt is given and where its model calls go, for the run's
+     * own row: the prompt version label and the provider and model. Names,
+     * never content; an unknown part is null. Never throws.
+     */
+    async _given(actor) {
+        let route = {};
+        try {
+            route = await require('./aiService').routeFor({ usageContext: { userId: actor, guildId: `dm:${actor}` } });
+        } catch { /* recorded as unknown */ }
+        let prompt = null;
+        try { prompt = this.promptVersion().label; } catch { /* recorded as unknown */ }
+        return { prompt, provider: route.provider || null, model: route.model || null };
+    }
+
     /** Open, or resume, the run row of a claimed initiative. */
     async _open(initiative, responsibility) {
         const existing = await db.get('SELECT * FROM assistant_runs WHERE initiativeId = @id', { id: initiative.id });
         const now = utcText();
+        const given = await this._given(responsibility.actingUserId || responsibility.ownerUserId);
         if (existing) {
+            // A resumed attempt works under the instructions of today, so the row names those.
             await db.run(
                 `UPDATE assistant_runs SET attempt = attempt + 1, status = 'RUNNING', stopCode = NULL,
-                    responsibilityRevision = @revision, heartbeatAt = @now, endedAt = NULL, updatedAt = @now
+                    responsibilityRevision = @revision, heartbeatAt = @now, endedAt = NULL, updatedAt = @now,
+                    promptVersion = @prompt, provider = @provider, model = @model
                  WHERE id = @id`,
-                { id: existing.id, revision: initiative.responsibilityRevision, now }
+                { id: existing.id, revision: initiative.responsibilityRevision, now, ...given }
             );
             live().changed(existing.ownerUserId, 'run');
             return db.get('SELECT * FROM assistant_runs WHERE id = @id', { id: existing.id });
         }
         const id = await db.insert(
             `INSERT INTO assistant_runs
-                (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId, heartbeatAt)
-             VALUES (@initiativeId, @responsibilityId, @revision, @owner, @acting, @payer, @now)`,
+                (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId, heartbeatAt,
+                 promptVersion, provider, model)
+             VALUES (@initiativeId, @responsibilityId, @revision, @owner, @acting, @payer, @now, @prompt, @provider, @model)`,
             {
+                ...given,
                 initiativeId: initiative.id,
                 responsibilityId: responsibility.id,
                 revision: initiative.responsibilityRevision,
