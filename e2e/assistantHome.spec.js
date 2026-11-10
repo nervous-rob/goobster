@@ -282,11 +282,13 @@ test.describe('assistant-first Home', () => {
     });
 
     test('a failing process is one incident, stays on its card after it is reviewed, and is judged twice', async ({ page }) => {
-        await seed(page, { seed: false });
-        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
+        // The question carries a decision card, so this is the owner's Home:
+        // until the pilot decision is recorded nobody else is offered one.
+        await seedOwner(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: OWNER } });
         expect(made.ok(), await made.text()).toBe(true);
         expect((await made.json()).pass).toMatchObject({ opened: 1, relevance: 1 });
-        await login(page, { userId: USER, name: NAME });
+        await login(page, { userId: OWNER, name: OWNER_NAME });
 
         // Home: one incident, said once, and one question; the card counts processes, not messages.
         const overview = page.getByTestId('assistant-overview');
@@ -446,10 +448,10 @@ test.describe('assistant-first Home', () => {
     });
 
     test('the question is answered on Home: keep it running, and it is not asked again', async ({ page }) => {
-        await seed(page, { seed: false });
-        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
+        await seedOwner(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: OWNER } });
         expect(made.ok(), await made.text()).toBe(true);
-        await login(page, { userId: USER, name: NAME });
+        await login(page, { userId: OWNER, name: OWNER_NAME });
         const overview = page.getByTestId('assistant-overview');
         const ask = overview.getByTestId('assistant-needs-you-item');
         await expect(ask).toHaveCount(1);
@@ -466,7 +468,7 @@ test.describe('assistant-first Home', () => {
         await expect(row.getByTestId('process-lifecycle')).toContainText('You chose to keep it running');
         // Still judged a candidate from the evidence; the person's answer is what changed.
         await expect(row.getByTestId('process-relevance')).toContainText('May no longer be needed');
-        const pass = await page.request.post('/e2e/fixtures/assistant-home/processes/pass', { data: { userId: USER } });
+        const pass = await page.request.post('/e2e/fixtures/assistant-home/processes/pass', { data: { userId: OWNER } });
         expect(await pass.json()).toMatchObject({ pass: { relevance: 0, paused: 0 } });
         const listed = await (await page.request.get('/api/app/assistant/processes')).json();
         expect(listed.processes.find((entry) => entry.name === 'Release watch')).toMatchObject({ enabled: true, controls: ['pause'] });

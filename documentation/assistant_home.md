@@ -233,6 +233,10 @@ is where it is answered:
 - a mission plan to approve or start keeps its *Open* link to the project,
   where it is approved or started as before, and its card on the project
   board links to the Plan and to the Inbox;
+- a process that may no longer be needed is answered in the Processes list
+  on the Responsibilities page, with its own *Pause* and *Keep it running*
+  ([process_stewardship.md](process_stewardship.md#retiring-a-process));
+  answering there settles the request;
 - a request to join is only ever shown to a host, who is an owner.
 
 The decide route answers 403 `PILOT_ONLY` for an account the gate does not
