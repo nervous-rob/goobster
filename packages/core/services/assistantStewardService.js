@@ -24,7 +24,10 @@
  *  6. file Inbox envelopes still owed by committed updates;
  *  7. send what the interruption rules allow beyond the portal: contacts
  *     still owed for open requests, and each person's digest when it is
- *     due (assistantDeliveryService, through Attention's contact path).
+ *     due (assistantDeliveryService, through Attention's contact path);
+ *  8. record, once, each proposal or finding its owner left alone for a
+ *     week as weak feedback on its source (assistantFeedbackService; not
+ *     while the host's stop-all is on).
  * Each pass records its time in `instance_state` (`assistant_steward_pass`)
  * so the Home projection can say when its picture was last refreshed, and
  * since when passes have followed each other without a gap.
@@ -33,8 +36,9 @@
  * and lifecycle records of processes that are running again 180 days, the
  * daily proposal counters 14 days, the chat-message labels 30 days,
  * confirmation receipts 30 days, a draft proposed in a conversation that its
- * owner neither kept nor activated 7 days, digests 90 days and the contact
- * ledger 30 days.
+ * owner neither kept nor activated 7 days, digests 90 days, the contact
+ * ledger 30 days, and feedback whose finding and work are gone (with what
+ * was learned for a responsibility that ended) 180 days.
  *
  * Domain events (`attention.*`, `mission.*`) only schedule an earlier
  * reconcile for the owner they name. The only model call here is the narrow
@@ -102,6 +106,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
         };
         // After the envelopes: a contact or a digest points at a filed one.
         result.delivery = await require('./assistantDeliveryService').sweep({ now });
+        // Items nobody touched for a week count, once, as weak feedback.
+        result.ignored = await require('./assistantFeedbackService').sweepIgnored({ now });
         // Home says how fresh its picture is from this, in any process.
         await instanceState.set(HEARTBEAT_KEY, { at: now.toISOString(), since: upSince.toISOString() });
         if (runRetention) {
@@ -120,7 +126,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 messageLabels: await require('./assistant/messageClassification').prune({ now }),
                 knowledgeChanges: await require('./knowledgeChangeSetService').prune({ now }),
                 connectorRequests: await require('./assistantConnectorRequestService').prune({ days: RETENTION_DAYS.initiatives, now }),
-                delivery: await require('./assistantDeliveryService').prune({ now })
+                delivery: await require('./assistantDeliveryService').prune({ now }),
+                feedback: await require('./assistantFeedbackService').prune({ now })
             };
         }
         return result;

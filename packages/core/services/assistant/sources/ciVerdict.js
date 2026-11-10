@@ -70,6 +70,7 @@ module.exports = {
     KIND,
     SCOPE,
     capability: CAPABILITY,
+    learns: true,
     MAX_PER_DAY,
     parseCursor,
 

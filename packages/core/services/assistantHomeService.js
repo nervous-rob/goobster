@@ -39,6 +39,7 @@ const loaded = (module_) => {
     return module_;
 };
 const updatesService = () => loaded(requireOptional('./assistantUpdateService', { feature: 'assistant' }));
+const feedbackService = () => loaded(requireOptional('./assistantFeedbackService', { feature: 'assistant' }));
 const responsibilityService = () => loaded(requireOptional('./assistantResponsibilityService', { feature: 'assistant' }));
 const processService = () => loaded(requireOptional('./assistantProcessService', { feature: 'assistant' }));
 const controlService = () => loaded(requireOptional('./assistantControlService', { feature: 'assistant' }));
@@ -298,9 +299,22 @@ class AssistantHomeService {
     /** Unseen informational updates, newest first, minus what Needs you shows. */
     async _brief(owner, shown, now) {
         const { updates } = await updatesService().list({ userId: owner, limit: BRIEF_SCAN, now });
-        return updates
+        const listed = updates
             .filter(update => update.unseen && !update.needsAction && !update.gate && !shown.has(update.id))
-            .slice(0, BRIEF_PREVIEW)
+            .slice(0, BRIEF_PREVIEW);
+        // What the person may say about each of their own findings (DA-10); null when
+        // it is not theirs to answer or could not be read.
+        const feedback = feedbackService();
+        const states = new Map();
+        for (const update of listed) {
+            if (update.audience?.kind !== 'private') continue;
+            try {
+                states.set(update.id, await feedback.stateForUpdate({ userId: owner, updateId: update.id }));
+            } catch (error) {
+                logger.warn?.(`[assistant home] feedback state unavailable: ${error.message}`);
+            }
+        }
+        return listed
             .map(update => ({
                 id: update.id,
                 revision: update.revision,
@@ -314,7 +328,8 @@ class AssistantHomeService {
                 initiativeId: update.initiativeId,
                 actions: update.actions,
                 inboxItemId: update.inboxItemId,
-                happenedAt: update.happenedAt
+                happenedAt: update.happenedAt,
+                feedback: states.get(update.id) || null
             }));
     }
 }

@@ -123,6 +123,9 @@ module.exports = {
     NOT_EXCLUDED,
     covers,
 
+    /** Feedback changes the rate of implied requests only: what was asked for by name is always taken. */
+    learns: origin => Boolean(origin?.implied),
+
     /** Explicit requests (by name) are not capped; implied ones share the day's cap. */
     dailyCap(event) { return event.implied ? MAX_PER_DAY : null; },
 

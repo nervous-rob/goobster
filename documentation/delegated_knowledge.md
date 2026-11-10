@@ -116,6 +116,23 @@ as settled. Undo returns it to `current`. The claim statuses are `current`,
 `disputed`, `superseded` and `retracted`; a retracted note is never presented
 as current.
 
+## Changes made by your feedback
+
+Answering a finding with **This is wrong** or **Keep this wording**
+([delegated_feedback.md](delegated_feedback.md)) changes the notes that
+finding's run wrote, and is recorded here like any other change:
+
+- *You said this was wrong* (`APPLIED`, policy `FEEDBACK_WRONG`): the note's
+  claim status becomes `disputed`. The note, its history and its sources
+  stay. Undo returns it to `current`.
+- *You kept this wording* (`APPLIED`, policy `FEEDBACK_KEEP`): the generated
+  note becomes a saved note of yours ("kept as yours"), which a run may then
+  change only as it may change any saved note. Undo makes it a generated
+  note again.
+
+Both are your own change, made by you, so neither needs a grant and neither
+is made by a run.
+
 ## Connecting notes
 
 `linkNotes` connects two live notes with a short relation. The connection

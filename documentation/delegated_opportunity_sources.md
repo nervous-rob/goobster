@@ -182,8 +182,13 @@ The number is the proposed default (architecture 13.2) and a constant today.
 The count is taken with one conditional write, so a restart or a second
 process cannot exceed it. A change over the cap increments a **not
 proposed** counter, moves the cursor on and is shown on the Assistant page
-("3 of 3 proposed, 2 more not proposed"). Repeatedly dismissed proposals
-lower the rate through DA-10, which scales this number.
+("3 of 3 proposed, 2 more not proposed"). Your feedback scales this number
+down per responsibility and source: "less of this" in three steps to
+nothing, dismissed or ignored proposals slowly and never below one a day.
+The line then shows the cap in force ("2 of 2 proposed"), and the
+responsibility shows what was learned with a reset
+([delegated_feedback.md](delegated_feedback.md)). Feedback never raises a
+cap, and a request you made by name is never slowed.
 
 ## After a pause
 
@@ -243,9 +248,10 @@ The work ledger records classification spend under work kind
 - Steering ("never mind", "instead") in personal chat; steering stays in
   project conversations and discussions.
 - DM channel chats with the Discord bot as a source (only portal chats).
-- A cap that is configuration (it is a constant; DA-10 scales it).
+- A cap that is configuration (it is a constant, which feedback can only
+  scale down).
 - A run being offered only the tools its grant allows: the dispatch check
   refuses the rest, and changing what a run is offered would need every
   refusal test to change with it.
 - `fix`-mode CI watches are not noticed (the watch owns them).
-- Weights and ranking (DA-10).
+- Ranking: a learned rate limits how many are proposed, not which.

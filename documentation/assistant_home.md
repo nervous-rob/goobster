@@ -35,7 +35,12 @@ counts shown here. Hearing it marks nothing reviewed either.
 3. **What changed.** Findings and completed changes you have not reviewed.
    A request already shown under Needs you is not repeated here.
    *Mark reviewed* acknowledges exactly the revision shown; if the same
-   finding changes later it is new again.
+   finding changes later it is new again. *Feedback* on a finding of your
+   own offers the answers that would change something for it (useful,
+   already knew, this is wrong, less of this, wrong time, keep this wording,
+   stop this responsibility), each with the one thing it changes; giving one
+   does not mark the finding reviewed
+   ([delegated_feedback.md](delegated_feedback.md)).
 4. **Components**: Knowledge, Research, Projects, Processes, Conversations.
    Each card is a link to its room and states, in words:
    - *n needs you* - open requests that touch it;
@@ -509,7 +514,9 @@ producer's responsibility
 
 ## Not built yet
 
-- Feedback on a briefing item (useful, already knew, wrong time, ...).
+- Feedback on a request, on a finding shared with a project, or from a
+  notification ([delegated_feedback.md](delegated_feedback.md) covers what
+  is built).
 - Deciding a request from a notification, and decisions for
   the other request kinds (review, unblock, answer, responsibility
   review): those still link to where the request is decided.

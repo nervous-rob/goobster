@@ -431,6 +431,39 @@ describe('one contact budget, shared with Attention', () => {
         expect(pushes).toHaveLength(1);
     });
 
+    test('an hour marked as a wrong time holds delegated work until it ends, and only delegated work', async () => {
+        const grant = await responsibility('immediate');
+        // "Wrong time" feedback marked this hour and the next (documentation/delegated_feedback.md).
+        const started = new Date();
+        const hour = started.getUTCHours();
+        expect(await policies.addAvoidHour({ userId: OWNER, hour })).toMatchObject({ added: true, hours: [hour] });
+        await policies.addAvoidHour({ userId: OWNER, hour: (hour + 1) % 24 });
+        expect(await attention.contactAllowed({ userId: OWNER, reason: 'assistant' })).toMatchObject({ allowed: false, code: 'WRONG_TIME' });
+        expect(await attention.contactAllowed({ userId: OWNER, reason: 'attention' })).toMatchObject({ allowed: true });
+
+        const asked = await request(grant);
+        expect(pushes).toEqual([]);
+        expect(await delivery.sweep({ now: new Date() })).toMatchObject({ contacts: 0, held: 1 });
+        expect(await contacts()).toEqual([]);
+        expect(await outbound(asked.id)).toMatchObject({ outboundKind: null, outboundRevision: 0 });
+        // The request is not lost: it goes out when the marked hours are over.
+        const after = new Date(Date.UTC(started.getUTCFullYear(), started.getUTCMonth(), started.getUTCDate(), hour + 2, 0, 30));
+        expect(await delivery.sweep({ now: after })).toMatchObject({ contacts: 1 });
+        expect(pushes).toHaveLength(1);
+        expect(await outbound(asked.id)).toMatchObject({ outboundKind: 'contact' });
+    });
+
+    test('the digest waits out an hour marked as a wrong time too', async () => {
+        const grant = await responsibility('digest');
+        await policies.setDigestTime({ userId: OWNER, minute: 14 * 60 });
+        await policies.setAvoidHours({ userId: OWNER, hours: [14] });
+        await finding(grant);
+        expect(await delivery.sweep({ now: at(14, 30) })).toMatchObject({ digests: 0 });
+        expect(await digests()).toEqual([]);
+        expect(await delivery.sweep({ now: at(15, 5) })).toMatchObject({ digests: 1 });
+        expect(await digests()).toHaveLength(1);
+    });
+
     test('the cooldown holds a second request; both are never sent back to back', async () => {
         const grant = await responsibility('immediate');
         await request(grant);

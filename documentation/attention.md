@@ -340,6 +340,16 @@ of it at once.
 assistant's daily digest may go out (default 09:00, on the quiet-hours
 clock). It is set in Settings → Initiative.
 
+`attention_policies.avoidHours` is a list of at most 12 hours of the day
+(on the quiet-hours clock) the person marked as a **wrong time** by
+answering a delegated finding
+([delegated_feedback.md](delegated_feedback.md)). `requestContact()` refuses
+with `WRONG_TIME` in such an hour for every reason except `attention`: the
+delegated assistant's digests and contacts wait it out, and **Attention's
+own notices, their score and the calibration below never read it**. It is
+not a learned score and not a second calibration path; it is a hold for one
+producer. The hours are listed, and removed, in Settings → Initiative.
+
 ---
 
 ## The two heartbeats

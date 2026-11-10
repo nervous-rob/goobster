@@ -417,6 +417,8 @@ export type KnowledgeChange = {
     claimStatus: { from: string; to: string } | null; policy: string | null; decision: string | null;
     impact: { source: string | null; reason: string | null; notes: Array<{ id: number; label: string }>; moreNotes: number; assumptions: Array<{ missionId: number; title: string }>; unverifiable: boolean } | null;
     revertible: boolean; createdAt: string; decidedAt: string | null; revertedAt: string | null;
+    /** True for "keep this wording" feedback: the note became the person's own. */
+    kept?: boolean;
 };
 export type KnowledgeArchivedNote = {
     id: number; label: string; content: string; curation: string; archivedAt: string; archivedBy: string | null; archiveCode: string;
@@ -451,6 +453,29 @@ export type AssistantNeedsYouItem = {
     createdAt: string; update: InboxUpdateRef | null; request: string | null;
     decision: GateDecisionCard | null;
 };
+/** What a person can say about a finding or a piece of proposed work (documentation/delegated_feedback.md). */
+export type AssistantFeedbackKind =
+    'useful' | 'already_knew' | 'wrong' | 'less_of_this' | 'wrong_time' | 'keep_wording' | 'stop_responsibility';
+/** What may still be said about one item, and what was said already. Each kind changes exactly one thing. */
+export type AssistantFeedbackState = {
+    offered: AssistantFeedbackKind[];
+    given: AssistantFeedbackKind[];
+    /** How "stop this responsibility" would be done: the ordinary pause or revoke, at this revision. */
+    stop: { responsibilityId: number; revision: number; title: string; actions: Array<'pause' | 'revoke'> } | null;
+    adapter: string | null;
+};
+export type AssistantFeedbackResult = {
+    feedback: { id: number; kind: AssistantFeedbackKind; effect: { code: string | null } & Record<string, unknown> };
+    existing: boolean; message: string; state: AssistantFeedbackState;
+};
+/** What feedback taught about one source of one responsibility: the rate it may propose at now. */
+export type AssistantLearnedRate = {
+    responsibilityId: number; adapter: string; weight: number;
+    /** How many times "less of this" was said and not reset. */
+    lowered: number; dismissals: number; acceptances: number;
+    /** Proposals a day without anything learned, and now; null = no daily limit. */
+    usual: number | null; cap: number | null; stopped: boolean; updatedAt: string;
+};
 export type AssistantBriefItem = {
     id: number; revision: number; kind: string; title: string; summary: string | null; componentIds: string[];
     /** `project` when the finding was shared with a project's members; `producer` says whose assistant found it. */
@@ -458,6 +483,8 @@ export type AssistantBriefItem = {
     producer?: { name: string | null; you: boolean } | null;
     responsibilityId: number | null; initiativeId: number | null; actions: AssistantAction[];
     inboxItemId: number | null; happenedAt: string;
+    /** Null when the finding is not this person's own to answer (a project's shared finding). */
+    feedback?: AssistantFeedbackState | null;
 };
 /** The `assistant` block of GET /api/app/home. A null count is unknown, not zero. */
 /** How a responsibility's updates may reach its owner (documentation/delegated_delivery.md). */
@@ -533,6 +560,7 @@ export type AssistantInitiative = {
     origin?: AssistantInitiativeOrigin | null;
     /** What replaced a superseded attempt: `parlor:<conversation>:<message>` or `plan:<plan id>`. */
     supersededBy?: string | null;
+    feedback?: AssistantFeedbackState | null;
 };
 export type AssistantInitiativeOrigin =
     | {
@@ -1519,6 +1547,8 @@ export type UserSettingsResponse = {
             quietEndMinute: number | null;
             /** When the day's digest of delegated work may go out; null = the default (09:00). */
             digestMinute: number | null;
+            /** Hours (0-23, on the quiet-hours clock) marked "wrong time": nothing from a responsibility is sent in them. */
+            avoidHours?: number[];
             boundaries: Record<string, { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean }>;
             notifyInApp: boolean;
             notifyMentionBanners: boolean;

@@ -203,7 +203,10 @@ Each is the most conservative reading; a later stage can widen it.
   the project, not written into the chat. A message from Goobster in a
   conversation changes what other people see there and needs its own decision.
 - **Findings from plan-step runs** for the project's members.
-- **A producer's findings per member**, such as muting one source, are
-  feedback (DA-10).
+- **Feedback from other members** on a shared finding, such as muting one
+  source for themselves. Feedback
+  ([delegated_feedback.md](delegated_feedback.md)) is the producer's, given
+  on their own notice of the finding; the shared copy offers none. No
+  increment is assigned to this yet.
 - **Responsibilities shared between people** (deferred by owner decision 5).
 - **An opt-in to hide earlier findings from members who join later.**

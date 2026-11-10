@@ -23,6 +23,12 @@ const KIND_TEXT: Record<KnowledgeChange['kind'], string> = {
     source_retraction: 'Source review'
 };
 
+/** A change the person made by giving feedback on a finding (documentation/delegated_feedback.md). */
+const FEEDBACK_TEXT: Record<string, string> = {
+    FEEDBACK_WRONG: 'You said this was wrong',
+    FEEDBACK_KEEP: 'You kept this wording'
+};
+
 const STATUS_TEXT: Record<KnowledgeChange['status'], string> = {
     PROPOSED: 'Waiting for you',
     APPLIED: 'Applied',
@@ -89,9 +95,10 @@ export function KnowledgeChanges() {
                 <ul data-testid="knowledge-change-list">
                     {data.changes.map((change) => (
                         <li key={change.id} data-testid="knowledge-change" data-status={change.status}>
-                            <strong>{KIND_TEXT[change.kind]}</strong>{change.label ? `: ${change.label}` : ''}
+                            <strong>{FEEDBACK_TEXT[change.policy || ''] || KIND_TEXT[change.kind]}</strong>{change.label ? `: ${change.label}` : ''}
                             {' '}<span className="hint">{STATUS_TEXT[change.status]} {whenLabel(change.decidedAt || change.createdAt)}</span>
                             {change.claimStatus && <span className="hint"> (marked {change.claimStatus.to})</span>}
+                            {change.kept && <span className="hint"> (kept as yours)</span>}
                             {change.impact && (
                                 <span className="hint"> - {change.impact.notes.length + change.impact.moreNotes} notes and {change.impact.assumptions.length} project assumptions rest on this source; it is unverifiable, not false</span>
                             )}

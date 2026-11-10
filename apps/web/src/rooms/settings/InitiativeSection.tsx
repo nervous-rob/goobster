@@ -21,6 +21,7 @@ type Draft = {
     quietStart: string;
     quietEnd: string;
     digestTime: string;
+    avoidHours: number[];
     boundaries: Record<string, Boundary>;
     quietHoursTzMode: 'utc' | 'local';
     notifyInApp: boolean;
@@ -46,7 +47,8 @@ const CATEGORY_LABEL: Record<string, string> = {
 const LABELS: Record<string, string> = {
     enabled: 'Paying attention', initiative: 'Initiative level', maxContactsPerDay: 'DMs per day',
     contactCooldownMinutes: 'Minutes between DMs', quietStartMinute: 'Quiet hours start',
-    quietEndMinute: 'Quiet hours end', digestMinute: 'Daily digest time', boundaries: 'Boundaries',
+    quietEndMinute: 'Quiet hours end', digestMinute: 'Daily digest time', avoidHours: 'Hours marked as a wrong time',
+    boundaries: 'Boundaries',
     quietHoursTzMode: 'Quiet hours timezone', notifyInApp: 'In-app notices',
     notifyMentionBanners: 'Mention banners', notifyOutbound: 'Outbound contact',
     notifySounds: 'Notification sounds', presenceVisible: 'Show me as online',
@@ -54,6 +56,7 @@ const LABELS: Record<string, string> = {
 };
 
 const minuteToTime = (m: number | null) => (m === null || m === undefined ? '' : `${String(Math.floor(m / 60)).padStart(2, '0')}:${String(m % 60).padStart(2, '0')}`);
+const hourRange = (hour: number) => `${String(hour).padStart(2, '0')}:00–${String((hour + 1) % 24).padStart(2, '0')}:00`;
 const timeToMinute = (t: string): number | null => {
     if (!t) return null;
     const [h, m] = t.split(':').map(Number);
@@ -68,6 +71,7 @@ const toDraft = (v: Values): Draft => ({
     quietStart: minuteToTime(v.quietStartMinute),
     quietEnd: minuteToTime(v.quietEndMinute),
     digestTime: minuteToTime(v.digestMinute ?? null),
+    avoidHours: [...(v.avoidHours || [])].sort((a, b) => a - b),
     boundaries: v.boundaries || {},
     quietHoursTzMode: v.quietHoursTzMode || 'utc',
     notifyInApp: v.notifyInApp !== false,
@@ -101,6 +105,7 @@ export function InitiativeSection({ section, onDirty }: {
             out.quietEndMinute = timeToMinute(draft.quietEnd);
         }
         if ('digestTime' in diff) out.digestMinute = timeToMinute(draft.digestTime);
+        if ('avoidHours' in diff) out.avoidHours = draft.avoidHours;
         if ('boundaries' in diff) out.boundaries = draft.boundaries;
         if ('quietHoursTzMode' in diff) out.quietHoursTzMode = draft.quietHoursTzMode;
         if ('notifyInApp' in diff) out.notifyInApp = draft.notifyInApp;
@@ -235,6 +240,24 @@ export function InitiativeSection({ section, onDirty }: {
                         {d.draft.digestTime && (
                             <button type="button" className="btn subtle small" onClick={() => d.set({ digestTime: '' })}>Use {defaultDigest}</button>
                         )}
+                    </div>
+                </Field>
+            )}
+
+            {d.draft.avoidHours.length + (section.values.avoidHours || []).length > 0 && (
+                <Field id="avoid-hours" label={d.draft.quietHoursTzMode === 'local' ? 'Hours marked as a wrong time (local)' : 'Hours marked as a wrong time (UTC)'}
+                    hint={'You marked these by answering "Wrong time" on something a responsibility sent. Nothing from your responsibilities is sent during them; it waits until the hour is over. Other notices are not affected, and what is looked for does not change. Remove an hour to allow it again.'}>
+                    <div className="settings-inline-row" data-testid="avoid-hours">
+                        {d.draft.avoidHours.length === 0 && <span className="hint">None. Save to apply.</span>}
+                        {d.draft.avoidHours.map((hour) => (
+                            <span key={hour} className="badge" data-testid="avoid-hour">
+                                {hourRange(hour)}{' '}
+                                <button type="button" className="btn subtle small" aria-label={`Allow ${hourRange(hour)} again`}
+                                    onClick={() => d.set({ avoidHours: d.draft.avoidHours.filter((value) => value !== hour) })}>
+                                    Remove
+                                </button>
+                            </span>
+                        ))}
                     </div>
                 </Field>
             )}

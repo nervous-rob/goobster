@@ -1686,6 +1686,141 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Feedback on delegated work (assistantFeedback.spec.js, ADR 0031): one
+    // person of their own, with a responsibility that follows a source, two
+    // proposals from items they kept, and one finding that wrote a note and
+    // was sent at 14:20 UTC. Steps: `pilot` (the host's decision; null closes
+    // it), `seed` (starts the person over, so it is safe to call twice),
+    // `propose` (more kept items and the next look, `days` from now).
+    // No model, no network.
+    app.post('/e2e/fixtures/assistant-feedback', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const step = String(req.body?.step || '');
+            const access = require('@goobster/core/services/assistantAccessService');
+            const instanceState = require('@goobster/core/services/instanceStateService');
+            const initiatives = require('@goobster/core/services/assistantInitiativeService');
+            const setPilot = async (scope) => {
+                if (scope) await access.recordDecision({ scope: String(scope) });
+                else await instanceState.remove(access.KEY_PILOT);
+            };
+            if (step === 'pilot') {
+                await setPilot(req.body?.scope || null);
+                return res.json({ ok: true, decision: await access.decision() });
+            }
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const keepNew = async (responsibilityId, sourceId, count, now) => {
+                const ids = [];
+                for (let n = 0; n < count; n += 1) {
+                    const key = `e2e-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+                    ids.push(await db.insert(
+                        `INSERT INTO followed_source_entries (sourceId, entryKey, url, title, contentHash, extractedText, isChange, kept)
+                         VALUES (@sourceId, @key, 'https://example.org/item', @title, @key, 'The item in full.', 1, 0)`,
+                        { sourceId, key, title: `Kept item ${key}` }
+                    ));
+                }
+                // An item is seen before it is kept; one already kept at first sight is history.
+                await initiatives.reconcileResponsibility(responsibilityId, { now: new Date(now.getTime() - 30_000) });
+                for (const id of ids) await db.run('UPDATE followed_source_entries SET kept = 1 WHERE id = @id', { id });
+                return (await initiatives.reconcileResponsibility(responsibilityId, { now })).proposed;
+            };
+            if (step === 'propose') {
+                const responsibility = await db.get(
+                    'SELECT id FROM assistant_responsibilities WHERE ownerUserId = @userId ORDER BY id DESC LIMIT 1', { userId }
+                );
+                const source = await db.get('SELECT id FROM followed_sources WHERE userId = @userId ORDER BY id DESC LIMIT 1', { userId });
+                if (!responsibility || !source) return res.status(409).json({ error: 'seed first' });
+                const now = new Date(Date.now() + (Number(req.body?.days) || 0) * 86_400_000 + 60_000);
+                const proposed = await keepNew(responsibility.id, source.id, Math.max(1, Math.min(8, Number(req.body?.count) || 5)), now);
+                return res.json({ ok: true, proposed: proposed.length });
+            }
+            if (step !== 'seed') return res.status(400).json({ error: 'step' });
+
+            const responsibilities = require('@goobster/core/services/assistantResponsibilityService');
+            const updates = require('@goobster/core/services/assistantUpdateService');
+            const steward = require('@goobster/core/services/assistantStewardService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Reader' });
+            const scope = dmScopeId(userId);
+            await db.run('DELETE FROM kg_change_sets WHERE userId = @userId', { userId });
+            await db.run('DELETE FROM kg_nodes WHERE guildId = @scope', { scope });
+            await db.run(
+                'DELETE FROM assistant_run_operations WHERE runId IN (SELECT id FROM assistant_runs WHERE ownerUserId = @userId)', { userId }
+            );
+            for (const [table, column] of [
+                ['assistant_feedback', 'userId'], ['assistant_source_weights', 'ownerUserId'], ['assistant_runs', 'ownerUserId'],
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_proposal_counters', 'ownerUserId'], ['assistant_responsibilities', 'ownerUserId'],
+                ['inbox_items', 'userId'], ['attention_contacts', 'userId'], ['attention_policies', 'userId'],
+                ['followed_sources', 'userId'], ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            await instanceState.set(steward.HEARTBEAT_KEY, { at: new Date().toISOString() });
+            const project = await observatory.createProject({ userId, name: 'Reading list' });
+            const sourceId = await db.insert(
+                `INSERT INTO followed_sources (userId, projectId, url, label, kind, initialized)
+                 VALUES (@userId, @projectId, 'https://example.org/feed', 'Garden journal', 'feed', 1)`,
+                { userId, projectId: project.id }
+            );
+            // Delegating to a followed source is a pilot capability: the host's
+            // decision is open while this person delegates, and closed again after.
+            await setPilot('everyone');
+            let responsibility;
+            let proposed;
+            try {
+                const { responsibility: draft } = await responsibilities.create({
+                    userId,
+                    body: {
+                        title: 'Keep up with my reading',
+                        projectId: project.id,
+                        scopes: { sources: ['followed_source'] },
+                        operations: [
+                            { operation: 'read', resource: { kind: 'project', ids: [String(project.id)] } },
+                            { operation: 'read', resource: { kind: 'process', ids: [`followed_source:${sourceId}`] } }
+                        ]
+                    }
+                });
+                responsibility = (await responsibilities.act({
+                    userId, id: draft.id, action: 'activate', expectedRevision: draft.revision
+                })).responsibility;
+                await initiatives.reconcileResponsibility(responsibility.id, { now: new Date() });
+                proposed = await keepNew(responsibility.id, sourceId, 3, new Date(Date.now() + 60_000));
+            } finally {
+                await setPilot(null);
+            }
+            if (proposed.length !== 3) return res.status(500).json({ error: `expected 3 proposals, got ${proposed.length}` });
+
+            // The first proposal ran: it wrote a note, reported a finding, and the finding was sent at 14:20 UTC.
+            const worked = proposed[0];
+            const runId = await db.insert(
+                `INSERT INTO assistant_runs (initiativeId, responsibilityId, responsibilityRevision, ownerUserId, actingUserId, payerUserId,
+                    status, resultTitle, resultSummary)
+                 VALUES (@initiativeId, @responsibilityId, @revision, @userId, @userId, @userId, 'COMPLETED',
+                    'Tomatoes want six hours of sun', 'One note was added.')`,
+                { initiativeId: worked, responsibilityId: responsibility.id, revision: responsibility.revision, userId }
+            );
+            await db.run("UPDATE assistant_initiatives SET status = 'REVIEW', revision = revision + 1 WHERE id = @id", { id: worked });
+            const note = await knowledgeGraphService.addGeneratedNote({
+                guildId: scope, userId, label: 'Tomato sunlight', content: 'Tomatoes want six hours of direct sun.', originRunId: runId
+            });
+            if (!note.ok) return res.status(500).json({ error: `note: ${note.code}` });
+            const { update } = await updates.publish({
+                audience: { userId }, identityKey: 'e2e:feedback:finding', kind: 'finding', title: 'Tomatoes want six hours of sun',
+                summary: 'One note was added from an item you kept.', components: ['research'],
+                responsibilityId: responsibility.id, initiativeId: worked
+            });
+            const today = new Date();
+            const sentAt = new Date(Date.UTC(today.getUTCFullYear(), today.getUTCMonth(), today.getUTCDate(), 14, 20, 0));
+            await db.run(
+                "UPDATE assistant_updates SET outboundKind = 'contact', outboundRevision = materialRevision, outboundAt = @at WHERE id = @id",
+                { id: update.id, at: sentAt.toISOString().slice(0, 19).replace('T', ' ') }
+            );
+            res.json({ ok: true, responsibilityId: responsibility.id, updateId: update.id, noteId: note.id, proposals: proposed.slice(1) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Seed tutorial progress for Settings Resume / Replay / Reset (F1).
     // Bypasses the event API so empty-step catalog tours can still show
     // paused/completed rows. Never calls a provider.

@@ -831,8 +831,9 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with five parts implemented: 13.1 (DA-7a, DA-7b and the
-spoken briefing, DA-7c), delivery and interruption in 13.3 (DA-9), repository
+**Status: planned, with six parts implemented: 13.1 (DA-7a, DA-7b and the
+spoken briefing, DA-7c), delivery and interruption in 13.3 (DA-9), feedback
+and learned signals in 13.4 (DA-10), repository
 work (DA-11a) and findings for a project's members (DA-11c) in 13.5, and 13.6
 (DA-12: the host's controls and the evaluation set). Nothing else in this
 section is implemented.** These are the
@@ -1144,6 +1145,50 @@ Rules:
 - The current weights are shown on the responsibility with a reset. Both
   tables are per-person data: export, report, erasure, 180-day retention for
   feedback rows whose update is gone.
+
+**Shipped in DA-10** as specified
+([delegated_feedback.md](delegated_feedback.md); ADR 0031 holds the
+reasons). What the implementation settled:
+
+- **The weight is a step, the counters are separate.** `weight` moves only
+  on `less_of_this`, through 1, 0.5, 0.25, 0, and only a reset (deleting the
+  row) raises it. The cap is the adapter's usual cap times the weight,
+  rounded, at least 1 above zero. Every 5 net dismissals take one more off,
+  at most two, never below one a day; the counters stop at a lead of 10.
+- **One reader.** `sourceWeights.capFor()` is called where the daily
+  proposal cap is taken (`assistantInitiativeService._capFor`) and returns
+  the adapter's cap or less. Authorization, budgets and the run's tool table
+  never read a weight.
+- **Adapters declare `learns`.** `attention_item`, `project_plan`,
+  `followed_source`, `job_failure`, `ci_verdict` and an implied
+  `chat_request` learn. `conversation_request`, `project_plan_step`, a chat
+  request by name and `process_incident` (a repair the grant names) do not:
+  work a person asked for is never slowed.
+- **An eighth stored kind, `ignored`,** written once by the steward for a
+  proposal untouched or a finding unopened for 7 days. Nobody can give it.
+  Starting, dismissing, accepting and rejecting work move the counters
+  without a feedback row.
+- **More columns than listed above.** `assistant_feedback` also has
+  `responsibilityId`, `adapter`, `effectCode` and `effectJson` (what the one
+  change was, as a code and small numbers); `assistant_source_weights` also
+  has `ownerUserId`. A kind is stored at most once per person and item.
+- **`wrong_time` is `attention_policies.avoidHours`**: at most 12 whole
+  hours on the quiet-hours clock. `requestContact()` refuses with
+  `WRONG_TIME` in such an hour for every reason except `attention`, so
+  Attention's notices and calibration are untouched.
+- **`wrong` and `keep_wording` act on the notes the finding's run wrote**
+  and are recorded as `kg_change_sets` rows (`direct_change`, policies
+  `FEEDBACK_WRONG` and `FEEDBACK_KEEP`), so the existing Undo applies.
+  `wrong` marks the note `disputed` through a revision; research claims are
+  not touched and nothing is deleted.
+- **`stop_responsibility` calls the ordinary `act()`** with `pause` or
+  `revoke` and the revision the person confirmed.
+- **A kind is offered only where it has an effect**, and each at most once
+  per item. A request waiting for a decision and a project's shared copy of
+  a finding take no feedback.
+- **Gate: capability `feedback`** for giving an answer and for counting weak
+  signals. Reading and resetting what was learned is never gated. Explicit
+  feedback works during the host's stop-all; the ignored pass does not run.
 
 ### 13.5 Extended reach (DA-11)
 

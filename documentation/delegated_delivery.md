@@ -152,6 +152,7 @@ It applies, in this order, read fresh on every call:
 | `ATTENTION_OFF` | Attention is off for this person |
 | `OUTBOUND_OFF` | Settings → Initiative → Outbound contact is off |
 | `QUIET_HOURS` | Inside the person's quiet hours |
+| `WRONG_TIME` | In an hour the person marked as a wrong time ([delegated_feedback.md](delegated_feedback.md)); delegated work only, never Attention's own notices |
 | `CONTACT_CAP` | The daily cap is used up (default 3 in any 24 hours) |
 | `COOLDOWN` | Too soon after the last contact (default 180 minutes) |
 | `NO_CHANNEL` | No enrolled device and no Discord identity to reach |
@@ -238,7 +239,9 @@ Tests: `tests/assistantDeliveryService.test.js`,
 
 ## Not built yet
 
-- "Wrong time" feedback that moves the digest or contact time (DA-10).
+- "Wrong time" feedback moving the digest time. It marks the hour instead
+  ([delegated_feedback.md](delegated_feedback.md)): a digest or contact due
+  in a marked hour goes out when the hour ends.
 - A finding shared with a project's members
   ([delegated_project_findings.md](delegated_project_findings.md)) reaching
   them outside the portal. The shared copy files no personal Inbox item, so
