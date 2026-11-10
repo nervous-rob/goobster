@@ -105,9 +105,16 @@ const PROCESS_KINDS = {
 /**
  * `project_chat` and `parlor` (ADR 0021) let a responsibility take requests
  * the person addresses to Goobster in the linked project's conversations
- * and in their own Parlor discussions. `personal_chat` is reserved (DA-8).
+ * and in their own Parlor discussions. DA-8 (ADR 0026) adds `personal_chat`
+ * (requests in their own portal chats), `followed_source` (an item they
+ * kept from a source they follow), `job_failure` (a new cause of a failed
+ * run in the linked project) and `ci_verdict` (a settled CI result on a
+ * watched branch). Those four are pilot capabilities: only the owner may
+ * activate a responsibility that names one until the pilot decision is
+ * recorded (assistantAccessService, capability `sources`).
  */
-const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project', 'project_chat', 'parlor'];
+const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project', 'project_chat', 'parlor', 'followed_source', 'job_failure', 'ci_verdict'];
+const GATED_SOURCE_SCOPES = ['personal_chat', 'followed_source', 'job_failure', 'ci_verdict'];
 const AUDIENCES = ['private', 'project'];
 const BUDGET_KEYS = ['modelTokens', 'searches', 'computeSeconds', 'concurrentInitiatives', 'repairAttempts', 'externalOperations'];
 const INTERRUPTIONS = ['immediate', 'digest', 'home'];
@@ -625,6 +632,12 @@ class AssistantResponsibilityService {
                 );
             }
         }
+        const gatedSources = (parseJson(row.scopesJson, {}).sources || []).filter(source => GATED_SOURCE_SCOPES.includes(source));
+        if (gatedSources.length && !(await pilotAccess.allows(row.ownerUserId, 'sources'))) {
+            throw new AssistantResponsibilityError(pilotAccess.REFUSAL_CODE,
+                `Noticing work from ${gatedSources.join(', ')} is limited to the installation's owner until the pilot decision is recorded.`, 409,
+                { capability: 'sources', sources: gatedSources });
+        }
         const policy = await attentionPolicyService.get(row.ownerUserId);
         if (!policy || !policy.enabled) {
             throw new AssistantResponsibilityError('ATTENTION_NOT_ENROLLED',
@@ -921,6 +934,17 @@ class AssistantResponsibilityService {
     }
 
     /**
+     * `authorize()` without the ledger note: a source adapter asks it before
+     * it reads anything on a responsibility's behalf, and "not covered" is
+     * the ordinary answer, not a failure worth a ledger row every pass.
+     * `preview` also answers for a DRAFT, so the owner can see what delegating
+     * would read before it is active.
+     */
+    async permits({ responsibilityId, revision, operation, resource, actorUserId, now = new Date(), preview = false }) {
+        return this._authorize({ responsibilityId, revision, operation, resource, actorUserId, now, preview });
+    }
+
+    /**
      * The dispatch-time authority check. Call it immediately before every
      * delegated side effect (and again after long I/O, before committing).
      *
@@ -940,20 +964,11 @@ class AssistantResponsibilityService {
         return result;
     }
 
-    /**
-     * Would `authorize()` allow this right now? The same decision, without
-     * recording a refusal: for a periodic pass that looks for work a grant
-     * covers. It authorizes nothing; the side effect itself still calls
-     * `authorize()` immediately before it happens.
-     */
-    async wouldAuthorize({ responsibilityId, revision, operation, resource, actorUserId, now = new Date() }) {
-        return this._authorize({ responsibilityId, revision, operation, resource, actorUserId, now });
-    }
-
-    async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now }) {
+    async _authorize({ responsibilityId, revision, operation, resource, actorUserId, now, preview = false }) {
         if (features.enforcedOff(FEATURE_ID)) return unavailableResult(FEATURE_ID);
         // The host's stop-all: nothing delegated is dispatched while it is on.
-        if (await control.isPaused()) return { ok: false, code: control.PAUSED_CODE };
+        // (`preview` is a draft's look-back before delegating, which dispatches nothing.)
+        if (!preview && await control.isPaused()) return { ok: false, code: control.PAUSED_CODE };
         const row = await this._row(responsibilityId);
         if (!row) return { ok: false, code: 'RESPONSIBILITY_NOT_FOUND' };
 
@@ -961,7 +976,7 @@ class AssistantResponsibilityService {
         const status = isOverdue(row, nowText) ? 'EXPIRED' : row.status;
         if (status === 'REVOKED' || (status === 'ARCHIVED' && row.finalStatus === 'REVOKED')) return { ok: false, code: 'RESPONSIBILITY_REVOKED' };
         if (status === 'EXPIRED' || (status === 'ARCHIVED' && row.finalStatus === 'EXPIRED')) return { ok: false, code: 'RESPONSIBILITY_EXPIRED' };
-        if (status !== 'ACTIVE') return { ok: false, code: 'RESPONSIBILITY_INACTIVE', status };
+        if (status !== 'ACTIVE' && !(preview && status === 'DRAFT')) return { ok: false, code: 'RESPONSIBILITY_INACTIVE', status };
 
         const presented = Number(revision);
         if (!Number.isSafeInteger(presented) || presented < Number(row.authorityRevision) || presented > Number(row.revision)) {
@@ -1023,3 +1038,4 @@ module.exports.AssistantResponsibilityService = AssistantResponsibilityService;
 module.exports.AssistantResponsibilityError = AssistantResponsibilityError;
 module.exports.OPERATIONS = OPERATIONS;
 module.exports.RESOURCE_KINDS = RESOURCE_KINDS;
+module.exports.GATED_SOURCE_SCOPES = GATED_SOURCE_SCOPES;

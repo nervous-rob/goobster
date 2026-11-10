@@ -129,7 +129,7 @@ stewardship:
 13. **The assistant acts only under an exact grant, checked at the change.**
     On the steward pass, for a `retirement_candidate`, it looks for an
     `ACTIVE` responsibility that names `process.pause` on that reference,
-    probes it with `wouldAuthorize()` and then calls `authorize()`
+    probes it with `permits()` and then calls `authorize()`
     immediately before the pause. `authorize()` applies the Attention
     boundary: `process.*` is compute on the `schedule` category, which is
     off by default. It archives only a process it paused itself as a

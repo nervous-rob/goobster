@@ -764,7 +764,7 @@ class AssistantProcessLifecycleService {
                 responsibilityId: candidate.id, revision: candidate.revision, operation,
                 resource: { kind: 'process', id: ref }, actorUserId: owner, now
             };
-            if ((await responsibilities.wouldAuthorize(request)).ok) return { id: Number(candidate.id), title: candidate.title, request };
+            if ((await responsibilities.permits(request)).ok) return { id: Number(candidate.id), title: candidate.title, request };
         }
         return null;
     }

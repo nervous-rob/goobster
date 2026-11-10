@@ -50,7 +50,7 @@ Work that has no outer context - a sandbox run from a slash command, a delivery 
 
 ## `work_failures`: what went wrong
 
-`services/workFailureService.js`. Kinds: `chat`, `expedition`, `job`, `sandbox`, `automation`, `trigger`, `delivery`, `mission_step`, `watch`, `followup`, `integration_action`, `reflection`, `followed_source`, `assistant_run`.
+`services/workFailureService.js`. Kinds: `chat`, `expedition`, `job`, `sandbox`, `automation`, `trigger`, `delivery`, `mission_step`, `watch`, `followup`, `integration_action`, `reflection`, `followed_source`, `assistant_run`, `assistant_classification`.
 
 Two writers:
 

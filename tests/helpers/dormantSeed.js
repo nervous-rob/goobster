@@ -70,7 +70,9 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_process_lifecycle', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_process_cleanups', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_runs', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' }
+    { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
+    { feature: 'assistant', table: 'assistant_message_labels', column: 'ownerUserId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
@@ -178,6 +180,16 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_source_cursors (responsibilityId, sourceKind, sourceId, sourceRevision, baselineRevision)
              VALUES (@responsibilityId, 'attention_item', '1', 'r1', 1)`,
             { responsibilityId }
+        );
+        await db.run(
+            `INSERT INTO assistant_proposal_counters (responsibilityId, ownerUserId, sourceKind, day, proposed, coalesced)
+             VALUES (@responsibilityId, @u, 'job_failure', '2026-01-01', 3, 2)`,
+            { responsibilityId, u }
+        );
+        await db.run(
+            `INSERT INTO assistant_message_labels (responsibilityId, responsibilityRevision, ownerUserId, messageId, label)
+             VALUES (@responsibilityId, 1, @u, 1, 'request')`,
+            { responsibilityId, u }
         );
         const initiativeId = await db.insert(
             `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,

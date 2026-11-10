@@ -1088,6 +1088,97 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    let assistantSourcesFixture = null;
+    // Wider opportunity sources (assistantSources.spec.js, ADR 0026): the
+    // installation's owner (an operator account, so the pilot capability is
+    // theirs), a project, one portal chat and one failed run that both
+    // pre-date any delegation. Safe to call again: it starts the person over.
+    app.post('/e2e/fixtures/assistant-sources', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const name = String(req.body?.name || 'Owner');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: name });
+            await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            const scope = dmScopeId(userId);
+            await db.run('DELETE FROM messages WHERE guildConversationId IN (SELECT id FROM guild_conversations WHERE guildId = @scope)', { scope });
+            await db.run('DELETE FROM conversations WHERE guildConversationId IN (SELECT id FROM guild_conversations WHERE guildId = @scope)', { scope });
+            await db.run('DELETE FROM guild_conversations WHERE guildId = @scope', { scope });
+            await db.run('DELETE FROM web_conversations WHERE userId = @userId', { userId });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_proposal_counters', 'ownerUserId'], ['assistant_message_labels', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'Pipeline') });
+            const conversation = await webChatService.createConversation(userId);
+            await db.run('UPDATE web_conversations SET title = @title WHERE id = @id', { id: conversation.id, title: 'Framework choice' });
+            const { channelId } = await db.get('SELECT channelId FROM web_conversations WHERE id = @id', { id: conversation.id });
+            await db.run("INSERT INTO users (discordUsername, discordId, username) VALUES ('owner', @id, 'owner') ON CONFLICT DO NOTHING", { id: userId });
+            const human = (await db.get('SELECT id FROM users WHERE discordId = @id', { id: userId })).id;
+            const guildConversationId = await db.insert(
+                'INSERT INTO guild_conversations (guildId, channelId, threadId) VALUES (@scope, @channelId, @threadId)',
+                { scope, channelId, threadId: `thread-${channelId}` }
+            );
+            const personal = await db.insert('INSERT INTO conversations (userId, guildConversationId) VALUES (@human, @guildConversationId)', { human, guildConversationId });
+            const speak = (text) => db.insert(
+                'INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) VALUES (@personal, @guildConversationId, @human, @text, 0)',
+                { personal, guildConversationId, human, text }
+            );
+            await speak('Could you please look into the old licence question from March?');
+            const addJob = (stderr) => db.insert(
+                `INSERT INTO observatory_jobs (projectId, userId, language, code, status, exitCode, stderrTail, finishedAt)
+                 VALUES (@projectId, @userId, 'python', 'print(1)', 'FAILED', 1, @stderr, datetime('now'))`,
+                { projectId: project.id, userId, stderr }
+            );
+            await addJob('Traceback (most recent call last):\n  File "/workspace/old.py", line 3, in <module>\nImportError: no module named legacy');
+            assistantSourcesFixture = { userId, personal, guildConversationId, human, projectId: project.id };
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The person writes in their chat, then the assistant takes its next look.
+    app.post('/e2e/fixtures/assistant-sources/say', express.json(), async (req, res) => {
+        try {
+            const state = assistantSourcesFixture;
+            if (!state) return res.status(409).json({ error: 'seed first' });
+            await db.run(
+                'INSERT INTO messages (conversationId, guildConversationId, createdBy, message, isBot) VALUES (@personal, @guildConversationId, @human, @text, 0)',
+                { personal: state.personal, guildConversationId: state.guildConversationId, human: state.human, text: String(req.body?.text || '') }
+            );
+            const seen = await require('@goobster/core/services/assistantInitiativeService').reconcile({ userId: state.userId, now: new Date(Date.now() + 10_000) });
+            res.json({ ok: true, ...seen });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // Failed runs of the same cause (a changed line number each time), then a look.
+    app.post('/e2e/fixtures/assistant-sources/fail', express.json(), async (req, res) => {
+        try {
+            const state = assistantSourcesFixture;
+            if (!state) return res.status(409).json({ error: 'seed first' });
+            const count = Math.max(1, Math.min(5, Number(req.body?.count) || 3));
+            for (let n = 0; n < count; n += 1) {
+                await db.run(
+                    `INSERT INTO observatory_jobs (projectId, userId, language, code, status, exitCode, stderrTail, finishedAt)
+                     VALUES (@projectId, @userId, 'python', 'print(1)', 'FAILED', 1, @stderr, datetime('now'))`,
+                    {
+                        projectId: state.projectId, userId: state.userId,
+                        stderr: `Traceback (most recent call last):\n  File "/workspace/load.py", line ${10 + n}, in <module>\nKeyError: 'price'`
+                    }
+                );
+            }
+            const seen = await require('@goobster/core/services/assistantInitiativeService').reconcile({ userId: state.userId, now: new Date(Date.now() + 10_000) });
+            res.json({ ok: true, ...seen });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // Repository grants in the draft form (assistantRepository.spec.js,
     // DA-11a): a dedicated person with Attention at "delegate", their own
     // project and one repository cloned into it (the row only: nothing here

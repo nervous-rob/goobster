@@ -34,7 +34,7 @@ const logger = require('../utils/logger');
 
 const COMPONENTS = ['knowledge', 'research', 'projects', 'processes', 'conversations', 'responsibilities'];
 const KINDS = ['finding', 'progress', 'process', 'question', 'responsibility'];
-const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review', 'open_conversation'];
+const ACTION_KINDS = ['open_responsibility', 'open_initiative', 'open_process', 'open_project', 'open_evidence', 'open_review', 'open_conversation', 'open_chat'];
 /** Where a member who is not the producer may be sent from a project's update. */
 const SHARED_ACTIONS = ['open_project', 'open_conversation', 'open_evidence', 'open_review'];
 const INBOX_SOURCE_TYPE = 'assistant_update';

@@ -71,12 +71,13 @@ function actionPath(action: AssistantAction | undefined): { to: string; hash?: s
     if (action.kind === 'open_responsibility' || action.kind === 'open_initiative') return { to: '/assistant' };
     if (action.kind === 'open_process') return { to: '/assistant', hash: 'processes' };
     if (action.kind === 'open_conversation') return { to: /^\d+$/.test(String(action.id)) ? `/discussions/${action.id}` : '/discussions' };
+    if (action.kind === 'open_chat') return { to: /^\d+$/.test(String(action.id)) ? `/chat/${action.id}` : '/chat' };
     return null;
 }
 
 /** The conversation an update came from, when it names one and that is not already where "Open" leads. */
 function conversationPath(actions: AssistantAction[] | undefined): string | null {
-    const index = (actions || []).findIndex((action) => action.kind === 'open_conversation');
+    const index = (actions || []).findIndex((action) => action.kind === 'open_conversation' || action.kind === 'open_chat');
     return index > 0 ? actionPath(actions?.[index])?.to ?? null : null;
 }
 
