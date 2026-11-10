@@ -562,7 +562,21 @@ describe('the portal voice chat', () => {
             method: 'POST', headers: { Cookie: session, 'Content-Type': 'application/json' }, body: JSON.stringify({ message, spoken })
         });
         expect(res.status).toBe(200);
-        return res.text();
+        const body = await res.text();
+        await settled();
+        return body;
+    }
+    /**
+     * A finished turn kicks the person's queue without awaiting it. Wait for
+     * that to end, so nothing of the turn is still querying when the suite
+     * closes its database.
+     */
+    async function settled() {
+        const webChat = require('../packages/core/services/webChatService');
+        for (let quiet = 0, tries = 0; quiet < 3 && tries < 200; tries++) {
+            await new Promise(resolve => setTimeout(resolve, 20));
+            quiet = webChat._kicking.size === 0 ? quiet + 1 : 0;
+        }
     }
     /** The model asks for the briefing if it was offered it, then says what the tool gave it. */
     function scripted() {
