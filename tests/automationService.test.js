@@ -144,14 +144,20 @@ describe('AutomationService.executeWithTimeout', () => {
             releaseClaim({ changes: 1 });
             await jest.advanceTimersByTimeAsync(0);
             expect(handleChatInteraction).toHaveBeenCalledTimes(1);
-            expect(db.run).toHaveBeenCalledTimes(1); // no second claim
+            // One claim, then the record that this run has started (what a
+            // pause counts as work under way). No second claim.
+            expect(db.run).toHaveBeenCalledTimes(2);
+            expect(db.run).toHaveBeenLastCalledWith(
+                expect.stringContaining('INSERT INTO assistant_process_observations'),
+                expect.objectContaining({ id: String(AUTOMATION.id), phase: 'dispatch', code: 'STARTED' })
+            );
 
             await jest.advanceTimersByTimeAsync(49);
             expect(returned).toBe(false);
             await jest.advanceTimersByTimeAsync(1);
             await execution;
             expect(returned).toBe(true);
-            expect(db.run).toHaveBeenCalledTimes(1); // still running, not marked complete
+            expect(db.run).toHaveBeenCalledTimes(2); // still running, not marked complete
 
             releaseRun();
             await jest.advanceTimersByTimeAsync(0);

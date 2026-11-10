@@ -362,7 +362,7 @@ Feature id: `discordActivity`. The Discord Embedded Activity transport. Depends 
 
 ## Delegated assistant
 
-Feature id: `assistant`. Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations, a health and relevance assessment, and incidents. Inert until a person activates one.
+Feature id: `assistant`. Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations, a health and relevance assessment, incidents, and reversible pause, archive and restore with exact cleanup. Inert until a person activates one.
 
 - **Kind:** feature
 - **Fresh install default:** off

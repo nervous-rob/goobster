@@ -41,6 +41,7 @@ const db = require('../db');
 const logger = require('../utils/logger');
 const { features } = require('../features/featureState');
 const { SCHEDULED_WORK } = require('./scheduledWorkRegistry');
+const requireOptional = require('../utils/optionalModule').forModule(module);
 
 const STAGES = ['ACTIVE', 'PAUSED', 'ARCHIVED', 'CLEANED'];
 const ACTIONS = ['pause', 'resume', 'archive', 'restore', 'keep', 'preview_cleanup', 'cleanup'];
@@ -79,7 +80,8 @@ const OWNERS = {
         startedPolicy: 'finish'
     },
     project_trigger: {
-        service: () => require('./projectTriggerService'),
+        // Owned by the projects feature: absent when that feature is not installed.
+        service: () => requireOptional('./projectTriggerService', { feature: 'projects' }),
         startedPolicy: 'finish'
     },
     attention_watch: {
@@ -103,6 +105,13 @@ class AssistantProcessLifecycleService {
     _error(code, message, status = 409, details = null) {
         const { AssistantProcessError } = require('./assistantProcessService');
         return new AssistantProcessError(code, message, status, details);
+    }
+
+    /** The service that owns processes of this kind. */
+    _ownerOf(kind) {
+        const service = OWNERS[kind]?.service();
+        if (!service) throw this._error('UNAVAILABLE', 'What this process belongs to is not available on this installation.');
+        return service;
     }
 
     present(row) {
@@ -290,7 +299,7 @@ class AssistantProcessLifecycleService {
             throw this._error('NOT_RUNNING', 'This process is already switched off.');
         }
         const spec = OWNERS[entry.kind];
-        const outcome = await this._owning(() => spec.service().stewardPause({ id: entry.id, now: utcText(now) }));
+        const outcome = await this._owning(() => this._ownerOf(entry.kind).stewardPause({ id: entry.id, now: utcText(now) }));
         if (!outcome.changed) throw this._error('CHANGED', 'This process changed while that was being applied. Refresh and try again.');
         const started = outcome.started ?? (entry.kind === 'automation' ? await this._startedRuns(entry.kind, entry.id, now) : 0);
         const written = await this._write(owner, entry, row, {
@@ -318,7 +327,7 @@ class AssistantProcessLifecycleService {
         const stage = row?.stage || 'ACTIVE';
         if (entry.described.archived && (stage === 'ARCHIVED' || stage === 'CLEANED')) return { row, changed: false };
         if (this._switchedOn(entry.described)) throw this._error('PAUSE_FIRST', 'Pause this process before archiving it.');
-        const outcome = await this._owning(() => OWNERS[entry.kind].service().stewardArchive({ id: entry.id, now: utcText(now) }));
+        const outcome = await this._owning(() => this._ownerOf(entry.kind).stewardArchive({ id: entry.id, now: utcText(now) }));
         if (!outcome.changed && !entry.described.archived) {
             throw this._error('CHANGED', 'This process changed while that was being applied. Refresh and try again.');
         }
@@ -437,7 +446,7 @@ class AssistantProcessLifecycleService {
                 `It depends on ${blockedBy.map(ref => quoted(byRef.get(ref)?.described.name || ref)).join(', ')}, which ${blockedBy.length === 1 ? 'is' : 'are'} not running. Resume ${blockedBy.length === 1 ? 'that' : 'those'} first.`,
                 409, { blockedBy });
         }
-        const outcome = await this._owning(() => OWNERS[entry.kind].service().stewardResume({ id: entry.id, userId: owner }));
+        const outcome = await this._owning(() => this._ownerOf(entry.kind).stewardResume({ id: entry.id, userId: owner }));
         // Resuming something whose purpose is over is the person's answer to
         // "is it still needed": it is not asked, or paused, again for that reason.
         const reason = this._endedReason(entry);
@@ -463,7 +472,7 @@ class AssistantProcessLifecycleService {
         if (!entry.described.archived && stage !== 'ARCHIVED' && stage !== 'CLEANED') {
             throw this._error('NOT_ARCHIVED', 'This process is not archived.');
         }
-        await this._owning(() => OWNERS[entry.kind].service().stewardRestore({ id: entry.id }));
+        await this._owning(() => this._ownerOf(entry.kind).stewardRestore({ id: entry.id }));
         const written = await this._write(owner, entry, row, {
             stage: 'PAUSED', actorKind: 'person', responsibilityId: null, reasonCode: 'RESTORED',
             pausedAt: utcText(now), archivedAt: null, startedCount: 0, startedPolicy: null, updatedAt: utcText(now)
