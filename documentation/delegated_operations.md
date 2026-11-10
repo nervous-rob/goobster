@@ -121,8 +121,8 @@ records the pilot decision, only the owner has them.**
 - **The owner** is any active account with the operator role. An
   installation with two operators has two owners; a disabled or demoted
   operator is not one.
-- **What is gated today.** Of DA-7 through DA-11, the conversational part
-  of DA-7 has shipped, and all of it checks `conversation`:
+- **What is gated today.** The conversational part of DA-7 has shipped,
+  and all of it checks `conversation`:
   - *Deciding a request from its card* (DA-7a,
     [assistant_home.md](assistant_home.md#who-is-offered-a-card-the-pilot-gate))
     on Home, in the Inbox, on a project board and in chat. Anyone but the
@@ -142,15 +142,21 @@ records the pilot decision, only the owner has them.**
     Drafting and activating your own responsibility on the Responsibilities
     page is not part of DA-7 and stays open to everyone.
 
-  The
-  grant vocabulary already contains the `reach` operations (`repo.commit`,
+  Of `reach`, two things are gated. The grant vocabulary already contains
+  the `reach` operations (`repo.commit`,
   `repo.push`, `pr.create`, `kg.saved.amend`, `kg.edge`, `kg.archive`,
   `external.write`), so those are gated now: for anyone but the owner,
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.
-  Everything delegated runs can do today (reading, generated notes, project
-  files, sandbox runs, research) is not gated.
+  Sharing a responsibility's findings with its project's members
+  (`scopes.audience: "project"`, DA-11c,
+  [delegated_project_findings.md](delegated_project_findings.md)) is also a
+  `reach` capability: for anyone but the owner, creating, editing or
+  activating such a responsibility is refused with `PILOT_ONLY` (naming the
+  capability), and a finding published after the gate closed comes to its
+  person alone. Everything else delegated runs can do today (reading,
+  generated notes, project files, sandbox runs, research) is not gated.
 - **Recording the decision.** *Open to everyone* records the decision with
   its time and opens every gated capability to every account. *Limit to the
   host* closes them again; other people's responsibilities that use a gated

@@ -421,6 +421,13 @@ None of the GET routes writes anything.
   check. An account outside the pilot gets the same fallback as an
   installation with the feature off.
 
+A brief item that was shared with a project says so: its `audience` is
+`{ kind: 'project', projectId }` and `producer` names whose assistant found it
+(`you: true` on the producer's own view), shown on Home as *Shared with this
+project by Ada's assistant*. The other member sees no link into the
+producer's responsibility
+([delegated_project_findings.md](delegated_project_findings.md)).
+
 ## Not built yet
 
 - Feedback on a briefing item (useful, already knew, wrong time, ...).

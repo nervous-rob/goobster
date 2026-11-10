@@ -545,6 +545,19 @@ class AssistantResponsibilityService {
         }
     }
 
+    /**
+     * Findings for a project's members (DA-11c) are part of the `reach`
+     * pilot capability: until the host records the pilot decision only the
+     * owner may ask for them. The run checks again when it publishes.
+     */
+    async _checkProjectAudience(scopesJson, userId) {
+        if (parseJson(scopesJson, {}).audience !== 'project') return;
+        if (await pilotAccess.allows(userId, 'reach')) return;
+        throw new AssistantResponsibilityError('PILOT_ONLY',
+            'Sharing findings with a project is limited to the installation\'s owner until the pilot decision is recorded.', 409,
+            { capability: 'reach' });
+    }
+
     async _projectAccess(userId, projectId) {
         const row = await db.get(
             `SELECT 1 AS ok FROM observatory_projects p
@@ -607,6 +620,7 @@ class AssistantResponsibilityService {
             throw new AssistantResponsibilityError('ACTOR_MISMATCH', 'This responsibility has no acting principal that can use it.', 409);
         }
         await this._validateLinks(row, row.ownerUserId);
+        await this._checkProjectAudience(row.scopesJson, row.ownerUserId);
         const operations = parseJson(row.operationsJson, []);
         if (!operations.length) throw bad('Grant at least one operation before activating.', 'INVALID_OPERATION');
         for (const entry of operations) {
@@ -783,6 +797,7 @@ class AssistantResponsibilityService {
         const earlier = await replay();
         if (earlier) return earlier;
         await this._validateLinks(fields, owner);
+        if (fields.scopesJson) await this._checkProjectAudience(fields.scopesJson, owner);
 
         try {
             return await this._insert({ owner, fields, key, activate: proposal ? false : activate, proposal });
@@ -859,6 +874,7 @@ class AssistantResponsibilityService {
                 throw new AssistantResponsibilityError('INVALID_TRANSITION', `A ${row.status.toLowerCase()} responsibility cannot be changed.`, 409);
             }
             await this._validateLinks({ ...row, ...fields }, row.ownerUserId);
+            if (fields.scopesJson) await this._checkProjectAudience(fields.scopesJson, row.ownerUserId);
             // A person who edits a proposal has taken it on: it is no longer pruned.
             if (row.proposedBy === 'model' && !row.proposalKeptAt) fields.proposalKeptAt = utcText();
             const updated = await this._write(row, expectedRevision, fields, {
