@@ -2480,7 +2480,17 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .assistant-component.is-needs_you .assistant-component-state { color: var(--text); font-weight: 600; }
 .assistant-component.is-blocked { border-color: var(--danger); box-shadow: inset 3px 0 0 var(--danger); }
 .assistant-component.is-blocked .assistant-component-state { color: var(--text); font-weight: 600; }
+.assistant-component.is-degraded { border-color: var(--warn, var(--accent)); box-shadow: inset 3px 0 0 var(--warn, var(--accent)); }
+.assistant-component.is-degraded .assistant-component-state { color: var(--text); font-weight: 600; }
 .assistant-component.is-unavailable, .assistant-component.is-unknown { border-style: dashed; }
+.assistant-processes { margin-top: 28px; }
+.assistant-processes h2 { margin: 0 0 6px; font-size: 1rem; }
+.process-judgment { margin-top: 4px; font-size: 0.9rem; overflow-wrap: anywhere; }
+.process-axis { color: var(--text-dim); }
+.process-state { font-weight: 600; }
+.process-row.is-blocked, .process-row.is-stalled, .process-row.is-unreachable { box-shadow: inset 3px 0 0 var(--danger); }
+.process-row.is-degraded { box-shadow: inset 3px 0 0 var(--warn, var(--accent)); }
+.process-incident { border-color: var(--danger); }
 .assistant-grants { margin: 6px 0; padding-left: 18px; font-size: 0.9rem; }
 .assistant-draft { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
 .assistant-draft h2 { margin: 0; font-size: 1rem; }
