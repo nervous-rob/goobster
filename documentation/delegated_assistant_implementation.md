@@ -14,9 +14,10 @@ responsibility and verified; requests made in conversation, changes of
 direction and project boards on the canonical gates), DA-7a (deciding a
 request on Home and in the Inbox), DA-7b (delegating and steering by
 conversation, with confirmation receipts), DA-9 (live Home, the interruption
-rule, the daily digest and the shared contact path) and DA-12 (the host's
+rule, the daily digest and the shared contact path), DA-10 (typed feedback
+and learned source rates) and DA-12 (the host's
 controls and the evaluation set) are implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b, DA-7b, DA-9, DA-12a and DA-12b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
+document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b, DA-7b, DA-9, DA-10, DA-12a and DA-12b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -84,15 +85,16 @@ increment done because its proposal exists.
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
 | DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Done: the chat tools, confirmation receipts and the chat cards (DA-7b: [delegated_conversation.md](delegated_conversation.md), [ADR 0023](adr/0023-conversational-delegation-and-receipts.md)). Planned: the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Done. Four adapters (`chat_request` for `personal_chat`, `followed_source`, `job_failure`, `ci_verdict`), each opt-in in `scopes.sources` and behind the owner-only `sources` pilot capability; history before activation is never acted on; one narrow model label for implied requests in personal chat (charged to the responsibility's budget, at most 10 percent of it); a daily cap of 3 per source that coalesces the excess; one investigation per failure cause; skipped CI is not passing; a lookback preview ([delegated_opportunity_sources.md](delegated_opportunity_sources.md), [ADR 0026](adr/0026-wider-opportunity-sources.md)) | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
-| DA-9: delivery and interruption | Done: `assistant.changed` and the `assistant` stream event (Home and the Responsibilities page change while open and refetch after a reconnect), the interruption rule (`home` / `digest` / `immediate`), one digest a day at the person's digest time (default 09:00), and `attentionService.requestContact()` as the one contact path, with delegated contacts and Attention's notices sharing the daily cap and cooldown; see [delegated_delivery.md](delegated_delivery.md). Owner-only until the pilot decision. Left for later increments: timing feedback (DA-10), the spoken briefing as a delivery (DA-7c). Not assigned to an increment: a project's shared findings reaching its members outside the portal | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
-| DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
+| DA-9: delivery and interruption | Done: `assistant.changed` and the `assistant` stream event (Home and the Responsibilities page change while open and refetch after a reconnect), the interruption rule (`home` / `digest` / `immediate`), one digest a day at the person's digest time (default 09:00), and `attentionService.requestContact()` as the one contact path, with delegated contacts and Attention's notices sharing the daily cap and cooldown; see [delegated_delivery.md](delegated_delivery.md). Owner-only until the pilot decision. Left for later increments: the spoken briefing as a delivery (DA-7c). Not assigned to an increment: a project's shared findings reaching its members outside the portal | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
+| DA-10: feedback and learning | Done: seven typed answers on a finding or a piece of proposed work (`useful`, `already_knew`, `wrong`, `less_of_this`, `wrong_time`, `keep_wording`, `stop_responsibility`), each with one effect in the system it belongs to; a learned rate per responsibility and source (`assistant_source_weights`) that only scales the daily proposal cap, shown on the responsibility with a reset; dismissing and ignoring as weak feedback with a floor of one a day; hours marked as a wrong time (`attention_policies.avoidHours`, `WRONG_TIME`) holding delegated contacts only; see [delegated_feedback.md](delegated_feedback.md) and ADR 0031. Owner-only until the pilot decision. Not assigned to an increment: feedback from a notification, feedback by other members on a project's shared finding, ranking | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
 | DA-11: extended reach | In progress. DA-11c done: findings shared with a project's members under current membership, with the producer shown, only from the project's own sources, never from a run that read private notes, behind the owner-only pilot gate, with receipts deleted when a member leaves ([delegated_project_findings.md](delegated_project_findings.md)). DA-11a done: repository work in a clone of the linked project (`commitProjectRepo`, `pushProjectRepo`, `openPullRequest`), on the grant's branch patterns and never on the base, default or a protected branch, never forced, reconciled against GitHub after a crash, capped by `externalOperations`, refused after a private read, owner-only behind the pilot gate, and grantable from the draft form ([delegated_runs.md](delegated_runs.md#repository-work), ADR 0025, ADR 0015 amendment). DA-11d done as a framework only: the connector registry and manifest, `external.write` and `read` on a named resource of an installed connector, `listConnectors`, `readConnector` and `writeConnector`, the person's own credential, the same guard, private-read rule and `externalOperations` cap as a push, reconciliation or stop-for-review after a crash, revocation that deletes the credential, and connector choices in the draft form; no connector ships, because the owner has not named one ([delegated_connectors.md](delegated_connectors.md), ADR 0028). DA-11b done: saved-note proposals the person applies as a diff, direct edits only under a grant that names them, note connections with evidence, archiving and reversible merge, claim status, confirmation and source-retraction review, owner-only behind the pilot gate ([delegated_knowledge.md](delegated_knowledge.md), ADR 0027) | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
 | DA-12: operator controls and model evaluation | Done. The host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). The real-model evaluation set (DA-12b): six fixed, fictional cases, opt-in and never in required CI; see [delegated_evaluation.md](delegated_evaluation.md). The caps hold the DA-3 defaults until the owner records the pilot's numbers, and the "useful result" rubric is a default until the owner records another | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
 in mind; the first part of DA-7 (DA-7a, deciding a request where it is
-shown), DA-9 (delivery and interruption), the repository work, project
+shown), DA-9 (delivery and interruption), DA-10 (feedback and learning),
+the repository work, project
 findings and outside-connector framework of DA-11 (DA-11a, DA-11c, DA-11d)
 and DA-12 (the host's controls and the evaluation set) are implemented.
 Their contracts are in
@@ -501,6 +503,17 @@ Exit scenarios:
 - Ignoring an item is weak feedback and cannot by itself silence a source.
 - Feedback and derived signals are in the export, the report and erasure.
 - No learned signal can widen a grant, raise a budget or skip authorization.
+
+**Shipped in DA-10** ([delegated_feedback.md](delegated_feedback.md), ADR
+0031). Each exit scenario is covered by `tests/assistantFeedbackService.test.js`
+(and, for the hold itself, `tests/assistantDeliveryService.test.js`) on both
+engines, and the portal journey by `e2e/assistantFeedback.spec.js`. Defaults
+chosen: weight steps 1, 0.5, 0.25, 0; five net dismissals per proposal a day
+taken off, at most two, never below one a day; ignored after 7 days; at most
+12 hours marked as a wrong time; "wrong" marks the note the run wrote as
+disputed (an undoable change) rather than opening an editor. The edits a
+person makes to a generated note are not used as a signal yet; "keep this
+wording" is the explicit form of that.
 
 ### DA-11: extended reach
 
