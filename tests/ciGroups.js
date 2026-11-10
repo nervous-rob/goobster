@@ -5,6 +5,11 @@
  * Every `tests/*.test.js` file must appear in exactly one group. The
  * inventory check (`scripts/check-test-groups.js` and `tests/ciGroups.test.js`)
  * fails if a file is missing, duplicated, or listed but not discovered.
+ *
+ * Each engine job in `.github/workflows/ci.yml` is a matrix of shards, and a
+ * shard runs the groups in its `groups` list. The same check fails if a group
+ * is in no shard of an engine, or in two. Which shard a group runs in is a
+ * timing decision (ADR 0007) and lives in the workflow, not here.
  */
 'use strict';
 
@@ -12,16 +17,14 @@ const GROUPS = [
     {
         id: 'core',
         name: 'Core infrastructure',
-        description: 'Database, migrations, gateways, locks, configuration',
+        description: 'Database, migrations, gateways, locks, configuration, feature gating',
         files: files([
             'activityGatewayAccess',
             'accessRequests',
             'operatorSchedules',
             'scheduledWorkRegistry',
             'activityService',
-            'autoUpdate',
             'backupRestore',
-            'macosCodeSign',
             'postgresToolConnection',
             'ciGroups',
             'cliResolver',
@@ -29,7 +32,6 @@ const GROUPS = [
             'configFile',
             'providerProbes',
             'instanceDefaults',
-            'managerConfig',
             'effectiveConfig',
             'configJson',
             'cursorAgentService',
@@ -52,47 +54,20 @@ const GROUPS = [
             'globalCommandPayload',
             'identityService',
             'nativeAuth',
-            'packagePayloadRules',
-            'payloadManifest',
-            'payloadReduced',
-            'payloadStage',
-            'payloadApply',
             'emailAuth',
             'integrationActions',
             'integrationsWebhooks',
             'issueCaptureAndBridges',
-            'managerAuth',
-            'managerBoot',
-            'managerBridge',
-            'managerEngine',
-            'managerSupervisor',
-            'managerLifecycle',
-            'lifecycleAdapters',
             'commandDeployHash',
             'workInterruption',
             'maintenanceBarrier',
             'maintenanceFence',
-            'installEngine',
-            'installCli',
-            'installRoutes',
-            'managerServer',
-            'managerStatic',
             'dbMigrationInspect',
             'dbMigration',
             'dbMigrationCli',
-            'managerEnvironmentOverlay',
             'dbConnectionProbe',
-            'databaseKinds',
-            'databaseRoutes',
             'backupOperations',
             'maintenanceCli',
-            'privilegedHelper', 'linuxService', 'serviceKinds', 'bootstrapStage', 'bootstrapCli',
-            'dockerDaemon', 'dockerPostgresKinds',
-            'nativePostgresAdapters', 'nativePostgresHelper', 'nativePostgresKinds',
-            'launchdService', 'darwinHelper', 'darwinBootstrapCli', 'darwinBootstrapStage',
-            'windowsService', 'windowsHelper', 'windowsBootstrapCli', 'packageBootstrapWin32',
-            'releaseIndex', 'releaseArtifacts', 'releaseManagerTrust', 'releaseWorkflow', 'releaseAcceptanceReport', 'releaseAcceptanceWorkflow',
-            'updateCheck', 'updateStage', 'updateApply', 'updateHandoff', 'updateRoutes', 'updateHostRoutes', 'updateService',
             'presenceService',
             'reportIntegrations',
             'safeFetch',
@@ -106,6 +81,67 @@ const GROUPS = [
             'usageBudgets',
             'workshopPinMigration',
             'wrappedService'
+        ])
+    },
+    {
+        id: 'install',
+        name: 'Installer and lifecycle',
+        description: 'Manager, installer, payloads, service adapters, managed Postgres, releases, updates',
+        files: files([
+            'autoUpdate',
+            'macosCodeSign',
+            'managerConfig',
+            'packagePayloadRules',
+            'payloadManifest',
+            'payloadReduced',
+            'payloadStage',
+            'payloadApply',
+            'managerAuth',
+            'managerBoot',
+            'managerBridge',
+            'managerEngine',
+            'managerSupervisor',
+            'managerLifecycle',
+            'lifecycleAdapters',
+            'installEngine',
+            'installCli',
+            'installRoutes',
+            'managerServer',
+            'managerStatic',
+            'managerEnvironmentOverlay',
+            'databaseKinds',
+            'databaseRoutes',
+            'privilegedHelper',
+            'linuxService',
+            'serviceKinds',
+            'bootstrapStage',
+            'bootstrapCli',
+            'dockerDaemon',
+            'dockerPostgresKinds',
+            'nativePostgresAdapters',
+            'nativePostgresHelper',
+            'nativePostgresKinds',
+            'launchdService',
+            'darwinHelper',
+            'darwinBootstrapCli',
+            'darwinBootstrapStage',
+            'windowsService',
+            'windowsHelper',
+            'windowsBootstrapCli',
+            'packageBootstrapWin32',
+            'releaseIndex',
+            'releaseArtifacts',
+            'releaseManagerTrust',
+            'releaseWorkflow',
+            'releaseAcceptanceReport',
+            'releaseAcceptanceWorkflow',
+            'updateCheck',
+            'updateStage',
+            'updateApply',
+            'updateHandoff',
+            'updateRoutes',
+            'updateHostRoutes',
+            'updateService'
         ])
     },
     {
@@ -477,6 +513,113 @@ function auditTestGroups({ discovered, groups = GROUPS, workflowSource } = {}) {
                 'named groups must be ordinary job steps'
             );
         }
+        errors.push(...auditEngineShards({ groups, workflowSource }));
+    }
+
+    return errors;
+}
+
+const ENGINE_JOBS = ['test-sqlite', 'test-postgres'];
+const AGGREGATOR_JOB = 'both-engines';
+
+/**
+ * Check the shard matrix of each engine job: every group in exactly one
+ * shard, every group step gated on its own id, the shard's result decided by
+ * `require-test-groups.js`, and the aggregator waiting on both engine jobs.
+ * A shard matrix that drops a group would otherwise pass with that group
+ * never run.
+ *
+ * @param {object} opts
+ * @param {object[]} opts.groups
+ * @param {string} opts.workflowSource - `.github/workflows/ci.yml` text
+ */
+function auditEngineShards({ groups = GROUPS, workflowSource }) {
+    const errors = [];
+    const workflowPath = '.github/workflows/ci.yml';
+    let jobs;
+    try {
+        jobs = require('yaml').parse(workflowSource).jobs;
+    } catch (err) {
+        return [`${workflowPath} is not valid YAML: ${err.message}`];
+    }
+    if (!jobs || typeof jobs !== 'object') {
+        return [`${workflowPath} has no jobs`];
+    }
+
+    const known = new Set(groups.map((group) => group.id));
+    for (const jobId of ENGINE_JOBS) {
+        const job = jobs[jobId];
+        if (!job) {
+            errors.push(`${workflowPath} has no ${jobId} job`);
+            continue;
+        }
+        const shards = job.strategy && job.strategy.matrix && job.strategy.matrix.include;
+        if (!Array.isArray(shards) || !shards.length) {
+            errors.push(`${jobId} has no shard matrix (strategy.matrix.include)`);
+            continue;
+        }
+        if (job.strategy['fail-fast'] !== false) {
+            errors.push(`${jobId} must set strategy.fail-fast: false so one failed shard does not cancel the others`);
+        }
+
+        const shardsOf = new Map();
+        for (const shard of shards) {
+            const label = shard.shard || JSON.stringify(shard);
+            if (!Array.isArray(shard.groups) || !shard.groups.length) {
+                errors.push(`${jobId} shard "${label}" lists no groups`);
+                continue;
+            }
+            for (const id of shard.groups) {
+                if (!shardsOf.has(id)) shardsOf.set(id, []);
+                shardsOf.get(id).push(label);
+            }
+        }
+        for (const group of groups) {
+            const owners = shardsOf.get(group.id) || [];
+            if (owners.length === 0) {
+                errors.push(`group id "${group.id}" is in no shard of ${jobId}; it would never run on that engine`);
+            } else if (owners.length > 1) {
+                errors.push(`group id "${group.id}" is in ${owners.length} shards of ${jobId} (${owners.join(', ')})`);
+            }
+        }
+        for (const id of [...shardsOf.keys()].sort()) {
+            if (!known.has(id)) {
+                errors.push(`${jobId} shard matrix references unknown group id "${id}"`);
+            }
+        }
+
+        const steps = Array.isArray(job.steps) ? job.steps : [];
+        for (const group of groups) {
+            const step = steps.find((candidate) =>
+                new RegExp(`run-test-group\\.js\\s+${group.id}\\s*$`).test(String(candidate.run || '').trim()));
+            if (!step) {
+                errors.push(`${jobId} has no step for group id "${group.id}"`);
+                continue;
+            }
+            const expected = `contains(matrix.groups, '${group.id}')`;
+            if (String(step.if || '').trim() !== expected) {
+                errors.push(`${jobId} step for group id "${group.id}" must have \`if: ${expected}\``);
+            }
+        }
+        const verdict = steps.find((candidate) => /require-test-groups\.js/.test(String(candidate.run || '')));
+        if (!verdict) {
+            errors.push(`${jobId} has no require-test-groups.js step; a failed group would not fail the shard`);
+        } else {
+            if (String(verdict.if || '').trim() !== 'always()') {
+                errors.push(`${jobId} require-test-groups.js step must have \`if: always()\``);
+            }
+            if (!/require-test-groups\.js\s+\$\{\{\s*join\(matrix\.groups,\s*' '\)\s*\}\}/.test(String(verdict.run))) {
+                errors.push(`${jobId} require-test-groups.js step must be given \${{ join(matrix.groups, ' ') }}`);
+            }
+        }
+    }
+
+    const aggregator = jobs[AGGREGATOR_JOB];
+    const needs = aggregator ? [].concat(aggregator.needs || []) : [];
+    for (const jobId of ENGINE_JOBS) {
+        if (!needs.includes(jobId)) {
+            errors.push(`${AGGREGATOR_JOB} must need ${jobId}`);
+        }
     }
 
     return errors;
@@ -488,6 +631,7 @@ function resolveEngine(env = process.env) {
 
 module.exports = {
     GROUPS,
+    auditEngineShards,
     auditTestGroups,
     groupById,
     listedFiles,

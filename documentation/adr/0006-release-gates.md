@@ -38,7 +38,9 @@ It cannot SSH to the production Pi.
 ## Operator checklist (cannot be done from this repository)
 
 - Enable ruleset 6215449 (or an equivalent) on `main`.
-- Require `both engines`, or both `test (sqlite)` and `test (postgres)`.
+- Require `both engines`. (Since ADR 0007's shard amendment the engine
+  jobs are several checks each, named per shard, so the aggregator is the
+  only stable name to require. It also waits on `static checks`.)
 - On the Pi: `/etc/goobster-update.conf` must contain
   `GOOBSTER_REQUIRE_CI=true`. Confirm with
   `sudo ./scripts/auto-update.sh --check` and the updater journal.
