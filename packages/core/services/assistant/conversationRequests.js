@@ -142,4 +142,40 @@ function parse(text, name = assistantName()) {
     };
 }
 
-module.exports = { ASSISTANT_NAME, assistantName, POLITE, WORK_VERBS, STEERING, NEGATIONS, normalize, addressed, asksForWork, parse };
+const LEADING_GREETING_RE = new RegExp(`^(?:(?:${alternation(GREETINGS)})${SEPARATORS}+)+`, 'iu');
+
+/**
+ * Does the message ask for work in the plain polite way people ask an
+ * assistant ("can you look into that for me", "please compare ...")?
+ * Used for a one-to-one chat, where the name is not needed to know who is
+ * being asked (DA-8, ADR 0026). A bare verb ("check this out") is not
+ * enough: it is as likely to be talk as an order.
+ */
+function asksPolitely(text) {
+    const rest = addressed(text);
+    const whole = rest === null ? normalize(text) : rest;
+    return [whole, whole.replace(LEADING_GREETING_RE, '')].some((value) => {
+        const polite = POLITE_RE.exec(value);
+        return Boolean(polite) && WORK_RE.test(value.slice(polite[0].length).trim());
+    });
+}
+
+/** Phrases that make a message worth one model look: a request or a stated commitment. */
+const CUE_RE = new RegExp(`(?:${alternation([
+    'can you', 'could you', 'would you', 'will you', 'please', 'i need to', 'i need you', 'i have to', 'i should',
+    "i'll", 'i will', "i'm going to", 'i am going to', 'we need to', 'we should', "let's", 'let me', 'remind me',
+    'follow up', 'get back to', 'make sure', 'i want to', 'i want you', "i'd like", 'help me'
+])}|\b(?:${alternation(WORK_VERBS)})\b)`, 'iu');
+const CUE_MIN = 12;
+const CUE_MAX = 1500;
+
+/** Cheap pre-filter: only a message that passes it is ever shown to a model. */
+function hasCue(text) {
+    const value = normalize(text);
+    return value.length >= CUE_MIN && value.length <= CUE_MAX && CUE_RE.test(value);
+}
+
+module.exports = {
+    ASSISTANT_NAME, assistantName, POLITE, WORK_VERBS, STEERING, NEGATIONS, CUE_MAX,
+    normalize, addressed, asksForWork, asksPolitely, hasCue, parse
+};

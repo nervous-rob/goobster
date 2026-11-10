@@ -73,6 +73,12 @@ function mountAssistant(app, ctx, h) {
         expectedRevision: req.body?.expectedRevision
     })));
 
+    // What delegating would do with the wider sources this responsibility names:
+    // the cutoff, the history it will not act on, and today's proposal counts.
+    app.get(`${base}/:id/sources`, requireAuth, route(async (req) => initiatives.sourcesOverview({
+        userId: req.webUser.userId, id: req.params.id
+    })));
+
     // What the host's policy means for this person: whether delegated work
     // is stopped, the budget a responsibility gets when it sets none (also
     // the most it can set), and which pilot capabilities they have.
@@ -103,7 +109,7 @@ function mountAssistant(app, ctx, h) {
     // viewer may see it now: the conversation, an excerpt of what they
     // asked and the link back, or `available: false`.
     const withOrigins = async (userId, list) => {
-        const origins = await require('../../services/assistant/conversationRequestRun').origins({ userId, initiatives: list });
+        const origins = await require('../../services/assistant/originRuns').origins({ userId, initiatives: list });
         return list.map(item => ({ ...item, origin: origins.get(item.id) || null }));
     };
     app.get(initiativeBase, requireAuth, route(async (req) => {

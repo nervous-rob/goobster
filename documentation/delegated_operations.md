@@ -113,7 +113,7 @@ records the pilot decision, only the owner has them.**
 | Capability | Increment | What it covers |
 | --- | --- | --- |
 | `conversation` | DA-7 | Delegating, inspecting and stopping work by talking |
-| `sources` | DA-8 | Work proposed from more kinds of source |
+| `sources` | DA-8 | Work proposed from more kinds of source: the scopes `personal_chat`, `followed_source`, `job_failure`, `ci_verdict` ([delegated_opportunity_sources.md](delegated_opportunity_sources.md)) |
 | `delivery` | DA-9 | Live overview, the interruption rule, the digest, push and Discord echoes |
 | `feedback` | DA-10 | Feedback that changes selection, timing and authority |
 | `reach` | DA-11 | Repository work, editing saved notes, connecting and archiving notes, outside connectors |

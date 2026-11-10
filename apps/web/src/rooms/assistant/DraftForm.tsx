@@ -7,6 +7,7 @@ import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import type { ResponsibilityOperation } from '../../lib/types';
 import { DEFAULT_EXTERNAL_OPERATIONS, MAX_EXTERNAL_OPERATIONS, type Project } from './grants';
+import { NO_WIDER_SOURCES, SourceChoices, widerOperations, widerScopes, type WiderSources } from './SourceChoices';
 
 type Clone = { name: string; repo: string; clonedBranch: string };
 
@@ -26,6 +27,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [planSteps, setPlanSteps] = useState(false);
     const [projectRequests, setProjectRequests] = useState(false);
     const [parlorRequests, setParlorRequests] = useState(false);
+    const [wider, setWider] = useState<WiderSources>(NO_WIDER_SOURCES);
     const [shareFindings, setShareFindings] = useState(false);
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
@@ -95,6 +97,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 if (openPulls) list.push({ operation: 'pr.create', resource });
             }
         }
+        list.push(...widerOperations(wider, (project || undefined)));
         for (const connector of connectors) {
             const choice = pick(connector.id);
             const resource = { kind: 'external', ids: [`${connector.id}:${choice.resource.trim()}`] };
@@ -109,6 +112,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         const list: string[] = [];
         if (projectId && projectRequests) list.push('project_chat');
         if (parlorRequests) list.push('parlor');
+        list.push(...widerScopes(wider, (project || undefined)));
         return list;
     }
 
@@ -141,6 +145,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             });
             setTitle('');
             setOutcome('');
+            setWider(NO_WIDER_SOURCES);
             toast('Saved as a draft. Review it below, then activate it.');
             await onCreated();
         } catch (error) { toast((error as Error).message, true); } finally { setSaving(false); }
@@ -320,6 +325,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                     </div>
                 )}
             </fieldset>
+            <SourceChoices project={(project || undefined)} value={wider} onChange={setWider} />
             <label className="field">
                 <span>Ends</span>
                 <select value={days} onChange={(e) => setDays(e.target.value)}>
