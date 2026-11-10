@@ -180,6 +180,8 @@ organ becomes proactive by adding one — not by teaching a model about it:
 | `observatory_job` | A background run went wrong, or a *tracked* run finished |
 | `project_mission` | A Project Mission is blocked, ready for review, or nearing its deadline |
 | `contradiction` | The personal graph gained a `contradicts` edge |
+| `process_health` | A recurring process has an open incident: one candidate per incident, however many processes or failures are in it |
+| `process_relevance` | A recurring process outlived its stated purpose while still switched on, or a review date set on it has passed |
 | `unconfirmed_loop` | A mined guess is worth confirming |
 
 Two details worth knowing:
@@ -195,6 +197,14 @@ Two details worth knowing:
 - **`project_mission` ignores drafts, approvals, step completions, and
   completed missions.** Those are loops the person is already in. It speaks
   only for `BLOCKED`, `REVIEW`, and an approaching deadline.
+
+- **`process_health` and `process_relevance` read records, not runs.** The
+  first reads incidents the assistant's periodic pass already opened (three
+  failures running, with a recovery period, so a flapping process is one
+  candidate). The second needs a stated purpose and a typed fact that it is
+  over; a result nobody opened never produces one. Both are part of the
+  `assistant` feature and produce nothing when it is off. See
+  [process_stewardship.md](process_stewardship.md).
 
 ### Idempotence without a durable event log
 

@@ -367,6 +367,8 @@ async function forgetAssistantResponsibilities(userId) {
     const digests = (await db.run('DELETE FROM assistant_digests WHERE userId = @userId', { userId })).changes;
     const processContracts = (await db.run('DELETE FROM assistant_process_contracts WHERE ownerUserId = @userId', { userId })).changes;
     const processObservations = (await db.run('DELETE FROM assistant_process_observations WHERE ownerUserId = @userId', { userId })).changes;
+    const incidentMembers = (await db.run('DELETE FROM assistant_process_incident_members WHERE ownerUserId = @userId', { userId })).changes;
+    const incidents = (await db.run('DELETE FROM assistant_process_incidents WHERE ownerUserId = @userId', { userId })).changes;
 
     const revisions = (await db.run(
         `DELETE FROM assistant_responsibility_revisions
@@ -451,7 +453,8 @@ async function forgetAssistantResponsibilities(userId) {
     }
     return {
         responsibilities, revisions, anonymized: others.length,
-        initiatives, cursors, updates, receipts, processContracts, processObservations, runs, runOperations, digests
+        initiatives, cursors, updates, receipts, processContracts, processObservations, incidents, incidentMembers,
+        runs, runOperations, digests
     };
 }
 
@@ -490,7 +493,11 @@ async function countAssistantResponsibilities(userId) {
         updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
         digests: await count('SELECT COUNT(*) AS c FROM assistant_digests WHERE userId = @userId'),
         processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
-        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId')
+        processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId'),
+        processIncidents: await count('SELECT COUNT(*) AS c FROM assistant_process_incidents WHERE ownerUserId = @userId'),
+        openProcessIncidents: await count(
+            "SELECT COUNT(*) AS c FROM assistant_process_incidents WHERE ownerUserId = @userId AND status <> 'RESOLVED'"
+        )
     };
 }
 
@@ -522,6 +529,8 @@ async function auditAssistantResponsibilities(userId) {
         digests: await count('SELECT COUNT(*) AS c FROM assistant_digests WHERE userId = @userId'),
         processContracts: await count('SELECT COUNT(*) AS c FROM assistant_process_contracts WHERE ownerUserId = @userId'),
         processObservations: await count('SELECT COUNT(*) AS c FROM assistant_process_observations WHERE ownerUserId = @userId'),
+        incidents: await count('SELECT COUNT(*) AS c FROM assistant_process_incidents WHERE ownerUserId = @userId'),
+        incidentMembers: await count('SELECT COUNT(*) AS c FROM assistant_process_incident_members WHERE ownerUserId = @userId'),
         runs: await count('SELECT COUNT(*) AS c FROM assistant_runs WHERE ownerUserId = @userId OR actingUserId = @userId OR payerUserId = @userId'),
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId')
     };

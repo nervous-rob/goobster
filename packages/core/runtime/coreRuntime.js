@@ -70,7 +70,9 @@ const IN_FLIGHT_POLL_MS = 100;
 const ATTENTION_GENERATOR_TABLES = {
     observatory_job: 'observatory_jobs',
     research_outcome: 'spitball_expeditions',
-    project_mission: 'project_missions'
+    project_mission: 'project_missions',
+    process_health: 'assistant_process_incidents',
+    process_relevance: 'assistant_process_contracts'
 };
 /** How often a paused process re-reads the instance pause flag. */
 const PAUSE_POLL_MS = 10 * 1000;

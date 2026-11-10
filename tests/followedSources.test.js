@@ -20,7 +20,7 @@ const row = source => db.get('SELECT * FROM followed_sources WHERE id = @id', { 
 async function poll(source, text) { now += 3600_001; if (text) fetchSource.mockResolvedValue(response(text)); return service.poll(await row(source)); }
 async function candidates() { return service.candidates({ userId: U, policy: await policy.get(U), now }); }
 beforeEach(async () => {
-    for (const table of ['followed_sources', 'source_fetch_hosts', 'attention_notices', 'attention_feedback', 'attention_policies', 'attention_state', 'observatory_projects', 'kg_nodes', 'work_failures', 'instance_state']) await db.run(`DELETE FROM ${table}`);
+    for (const table of ['followed_sources', 'source_fetch_hosts', 'attention_notices', 'attention_feedback', 'attention_policies', 'attention_state', 'observatory_projects', 'kg_nodes', 'work_failures', 'instance_state', 'assistant_process_observations']) await db.run(`DELETE FROM ${table}`);
     now = Date.parse('2026-09-26T12:00:00Z');
     fetchSource = jest.fn(async () => response(feed()));
     service = new FollowedSourceService({ fetch: fetchSource, now: () => now });
@@ -131,6 +131,29 @@ test('failed fetches write a safe work ledger row and back off', async () => {
     expect(failures).toHaveLength(1); expect(failures[0]).toMatchObject({ kind: 'followed_source', actor: U });
     expect(JSON.stringify(failures)).not.toContain('do-not-record');
     expect((await row(source)).nextCheckAt).toBeTruthy();
+});
+test('a day of checks is one typed occurrence: the last check decides the run and a change found is kept', async () => {
+    const observed = () => db.all(`SELECT occurrenceKey, phase, outcome, reasonCode FROM assistant_process_observations
+        WHERE processKind = 'followed_source' ORDER BY phase`);
+    const day = 'day:2026-09-26';
+    const source = await create(); await poll(source, feed([1]));
+    expect(await observed()).toEqual([
+        { occurrenceKey: day, phase: 'execution', outcome: 'ok', reasonCode: null },
+        { occurrenceKey: day, phase: 'output', outcome: 'skipped', reasonCode: 'BASELINE' }]);
+    await poll(source, feed([2, 1]));
+    expect((await observed())[1]).toEqual({ occurrenceKey: day, phase: 'output', outcome: 'ok', reasonCode: 'CONTENT_CHANGED' });
+    await poll(source, feed([2, 1]));
+    expect(await observed()).toEqual([
+        { occurrenceKey: day, phase: 'execution', outcome: 'ok', reasonCode: null },
+        { occurrenceKey: day, phase: 'output', outcome: 'ok', reasonCode: 'CONTENT_CHANGED' }]);
+    fetchSource.mockRejectedValue(new Error('secret=do-not-record'));
+    expect((await poll(source)).status).toBe('failed');
+    const rows = await observed();
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toEqual({ occurrenceKey: day, phase: 'execution', outcome: 'failed', reasonCode: 'FETCH_OR_PARSE_FAILED' });
+    expect(JSON.stringify(await db.all('SELECT * FROM assistant_process_observations'))).not.toContain('do-not-record');
+    const [entry] = (await require('@goobster/core/services/assistantProcessService').list({ userId: U, now: new Date(now) })).processes;
+    expect(entry).toMatchObject({ kind: 'followed_source', assessment: { execution: 'degraded', reasons: { execution: 'RECENT_FAILURE' } } });
 });
 test('pause, keep and source removal preserve per-owner boundaries and delete evidence', async () => {
     const source = await create(); await poll(source); await poll(source, feed([1, 2]));

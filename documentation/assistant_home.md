@@ -34,8 +34,12 @@ start research, run a job, turn on Attention or activate a responsibility.
 4. **Components**: Knowledge, Research, Projects, Processes, Conversations.
    Each card is a link to its room and states, in words:
    - *n needs you* - open requests that touch it;
-   - *n blocked* - recurring processes whose latest recorded outcome in the
-     last 7 days was a failure or a block;
+   - *n not working* - recurring processes that are blocked, stalled or
+     cannot reach what they act on;
+   - *n with a problem* - recurring processes that run but are degraded.
+     Both come from the processes' own records
+     ([process_stewardship.md](process_stewardship.md)), so they stay on the
+     Processes card after you mark the message about them reviewed;
    - *n new updates* - findings you have not reviewed;
    - *n working* - work running right now under a valid lease;
    - *Up to date*, *Status unknown* or *Unavailable here*.
@@ -257,6 +261,15 @@ what a responsibility is and how each action is checked.
   updates reach you (kept on Home, one digest a day, or a contact when it
   needs your decision; see [delegated_delivery.md](delegated_delivery.md)).
   A draft grants nothing.
+- **Repository work.** When the chosen project has a repository cloned into
+  it, the form also offers: commit there, push to GitHub, and open pull
+  requests, on the branches you name (`goobster/*` to start with), with how
+  many pushes and pull requests a day (2 to start with). The form, the
+  responsibility's row and the activation dialog each say that a push or a
+  pull request cannot be undone from here. While repository work is in the
+  pilot this part of the form is shown only to the installation's owner
+  (`GET /api/app/assistant/access`, `capabilities.reach`). See
+  [delegated_runs.md](delegated_runs.md#repository-work).
 - **Activate** shows exactly what will be granted, as you, where it will
   take requests from, and until when, and needs your confirmation. Activation requires Attention to be on.
 - **Pause / Resume / Mark complete / Revoke / Archive** follow the lifecycle;
@@ -275,8 +288,16 @@ piece of work or a run that changes sends the portal a reason to read
 again, never the content
 ([delegated_delivery.md](delegated_delivery.md#live-updates)).
 
-Grants the form cannot express yet (repositories, processes, budgets) can be
-created through the API.
+Grants the form cannot express yet (processes, the other budgets, more
+than one repository) can be created through the API.
+
+Below the responsibilities, **Processes** reports on the recurring work you
+have set up (scheduled tasks, project triggers, watches, followed sources).
+Each process shows two separate answers in words, whether it is working and
+whether it is still needed, with the reason for each, and the incidents still
+open are listed above them. The Home Processes card opens this section. It
+is a report with no controls: a process is still changed where you made it.
+See [process_stewardship.md](process_stewardship.md).
 
 ## API
 
@@ -291,7 +312,7 @@ created through the API.
     "freshness": { "state": "current", "lastPassAt": "2026-11-09T22:28:00.000Z" },
     "responsibilities": { "counts": { "active": 1, "paused": 0, "needsReview": 0, "draft": 0 }, "items": [] },
     "counts": { "unseen": 1, "needsAction": 1, "running": 0 },
-    "components": [{ "id": "knowledge", "state": "updates", "unseen": 1, "needsAction": 0, "running": 0, "blocked": 0, "freshness": "current", "latestUpdateId": 7, "unavailable": null }],
+    "components": [{ "id": "knowledge", "state": "updates", "unseen": 1, "needsAction": 0, "running": 0, "blocked": 0, "degraded": 0, "freshness": "current", "latestUpdateId": 7, "unavailable": null }],
     "needsYou": [],
     "brief": [],
     "partial": []
@@ -303,9 +324,12 @@ created through the API.
   host has [stopped all delegated work](delegated_operations.md#stop-all)
   (Home then says so in place of the status line), `false` otherwise, and
   `null` when it could not be read or the feature is off. Component `state` is
-  `needs_you`, `blocked`, `working`, `updates`, `quiet`, `unknown` or
-  `unavailable`. `assistant` is `null` only if the projection itself failed;
-  the rest of the Home payload is unaffected.
+  `needs_you`, `blocked`, `degraded`, `working`, `updates`, `quiet`,
+  `unknown` or `unavailable`, in that order of precedence. `blocked` and
+  `degraded` are counts of processes (not working, and running with a
+  problem); only the Processes component has them above zero. `assistant` is
+  `null` only if the projection itself failed; the rest of the Home payload
+  is unaffected.
 - `GET /api/app/inbox?view=all|needs_you|updates|snoozed` (with the existing
   `unread`, `archived`, `limit`, `cursor`). The response adds `view` and
   `needsYou`; each item adds `needsAction`, `update`

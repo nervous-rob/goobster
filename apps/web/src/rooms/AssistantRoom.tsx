@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Link } from '@tanstack/react-router';
+import { useEffect, useState } from 'react';
+import { Link, useLocation } from '@tanstack/react-router';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { keys } from '../lib/query';
@@ -11,7 +11,8 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, describeInterruption, describeListening, type Project } from './assistant/grants';
+import { describeGrants, describeInterruption, describeListening, externalOperationsPerDay, reachesGitHub, type Project } from './assistant/grants';
+import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
 /**
@@ -21,9 +22,12 @@ import { ResponsibilityRow } from './assistant/ResponsibilityRow';
  * lifecycle (activate, pause, resume, complete, revoke, archive). A draft
  * grants nothing; only Activate, pressed by the person, turns one on.
  *
+ * Below them, Processes reports on the recurring work the person has set up
+ * (documentation/process_stewardship.md). That part is read-only.
+ *
  * This file is the page: its queries and the two action handlers. The parts
  * live under ./assistant (the draft form, one responsibility's row, its work
- * list, and the wording of grants).
+ * list, the wording of grants, and the process report).
  */
 
 export function AssistantRoom() {
@@ -44,6 +48,13 @@ export function AssistantRoom() {
     // event stream says when (documentation/delegated_delivery.md); the gentle
     // poll covers an account or a moment the stream does not reach.
     const workQ = useQuery({ queryKey: keys.assistantInitiatives, queryFn: () => api.assistantInitiatives(), enabled, refetchInterval: 15_000 });
+    // Health is judged on every read, and incidents move on the steward's pass.
+    const processesQ = useQuery({ queryKey: keys.assistantProcesses, queryFn: () => api.assistantProcesses(), enabled, refetchInterval: 60_000 });
+    const hash = useLocation({ select: (location) => location.hash }).replace(/^#/, '');
+    const processesReady = Boolean(processesQ.data);
+    useEffect(() => {
+        if (hash === 'processes' && processesReady) document.getElementById('processes')?.scrollIntoView({ block: 'start' });
+    }, [hash, processesReady]);
     const workByResponsibility = new Map<number, AssistantInitiative[]>();
     for (const item of workQ.data?.initiatives || []) {
         // Work a newer look at the same source replaced is history. A request
@@ -68,7 +79,7 @@ export function AssistantRoom() {
         const grants = describeGrants(item.operations, projectById);
         const listening = describeListening(item, me.assistant.name);
         const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} ${describeInterruption(item.rules?.interruption)}. You can pause or revoke it at any time.`
+            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${listening ? ` ${listening}; only your own messages are read for this.` : ''}${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${reachesGitHub(item.operations) ? ` Pushes and pull requests go to GitHub as you and cannot be undone from here; at most ${externalOperationsPerDay(item.budgets)} a day.` : ''}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} ${describeInterruption(item.rules?.interruption)}. You can pause or revoke it at any time.`
             : question;
         if (ask && !await confirm(ask)) return;
         setBusy(item.id);
@@ -144,6 +155,7 @@ export function AssistantRoom() {
                         <div style={{ marginTop: 22 }}>
                             <DraftForm projects={projects} onCreated={refresh} />
                         </div>
+                        <ProcessList data={processesQ.data} pending={processesQ.isPending} error={processesQ.isError ? processesQ.error as Error : null} />
                     </>
                 )}
             </div>

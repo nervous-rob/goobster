@@ -19,7 +19,7 @@ const KINDS = [
  * was down sent no event, so Home, the Responsibilities page and the Inbox
  * are refetched instead of waiting for the next change.
  */
-const AFTER_RECONNECT = ['home', 'assistant-responsibilities', 'assistant-initiatives', 'inbox'];
+const AFTER_RECONNECT = ['home', 'assistant-responsibilities', 'assistant-initiatives', 'assistant-processes', 'inbox'];
 
 export type InboxEvent = {
     itemId?: number;

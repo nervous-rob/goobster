@@ -34,9 +34,10 @@ const B = '740000000000000002';
 const KG_ADD = { operation: 'kg.generated.add', resource: { kind: 'knowledge', ids: ['personal'] } };
 
 const TABLES = [
-    'assistant_update_receipts', 'assistant_updates', 'assistant_process_observations', 'assistant_initiatives',
+    'assistant_update_receipts', 'assistant_updates', 'assistant_process_incident_members', 'assistant_process_incidents',
+    'assistant_process_observations', 'assistant_process_contracts', 'assistant_initiatives',
     'assistant_responsibility_revisions', 'assistant_responsibilities', 'attention_policies', 'inbox_items',
-    'friendships', 'instance_state'
+    'friendships', 'instance_state', 'automations'
 ];
 
 afterAll(async () => {
@@ -55,6 +56,29 @@ async function active(userId = A, title = 'Keep my garden notes current') {
     await policies.enroll({ userId, initiative: 'assist' });
     const { responsibility } = await responsibilities.create({ userId, body: { title, operations: [KG_ADD] } });
     return (await responsibilities.act({ userId, id: responsibility.id, action: 'activate', expectedRevision: responsibility.revision })).responsibility;
+}
+
+const utc = (minutesAgo = 0) => new Date(Date.now() - minutesAgo * 60000).toISOString().slice(0, 19).replace('T', ' ');
+
+/** A daily automation whose next run is still ahead, so only its observations decide its health. */
+const automation = (userId = A, name = 'nightly import') => db.insert(
+    `INSERT INTO automations (userId, guildId, channelId, name, promptText, schedule, nextRun)
+     VALUES (@userId, 'g1', 'c1', @name, 'import', '0 3 * * *', @nextRun)`,
+    { userId, name, nextRun: utc(-600) }
+);
+
+/** Typed outcomes for one process, oldest first, an hour apart, the newest an hour ago. */
+async function observe(id, outcomes, userId = A) {
+    for (const [index, outcome] of outcomes.entries()) {
+        await db.run(
+            `INSERT INTO assistant_process_observations (ownerUserId, processKind, processId, occurrenceKey, phase, outcome, reasonCode, observedAt)
+             VALUES (@owner, 'automation', @id, @key, 'outcome', @outcome, @code, @at)`,
+            {
+                owner: userId, id: String(id), key: `fire:${index}`, outcome,
+                code: outcome === 'failed' ? 'RUN_FAILED' : null, at: utc((outcomes.length - index) * 60)
+            }
+        );
+    }
 }
 
 const beat = (date = new Date()) => instanceState.set(steward.HEARTBEAT_KEY, { at: date.toISOString() });
@@ -178,23 +202,44 @@ describe('the Home projection', () => {
              VALUES (@rid, @rev, @owner, @owner, 'project_plan', '1', 'a', 'k1', 'Advance the plan', 'RUNNING', 't', @later)`,
             { rid: grant.id, rev: grant.revision, owner: A, later }
         );
-        const now = new Date().toISOString().slice(0, 19).replace('T', ' ');
-        for (const [key, outcome, at] of [['fire:1', 'ok', '2000-01-01 00:00:00'], ['fire:2', 'failed', now]]) {
-            await db.run(
-                `INSERT INTO assistant_process_observations (ownerUserId, processKind, processId, occurrenceKey, phase, outcome, observedAt)
-                 VALUES (@owner, 'automation', '5', @key, 'outcome', @outcome, @at)`,
-                { owner: A, key, outcome, at }
-            );
-        }
+        await observe(await automation(), ['ok', 'failed', 'failed', 'failed']);
         const view = await home.project({ userId: A });
         expect(view.counts).toMatchObject({ running: 1, unseen: 0, needsAction: 0 });
         const by = Object.fromEntries(view.components.map(c => [c.id, c]));
         expect(by.projects).toMatchObject({ state: 'working', running: 1, unseen: 0 });
-        expect(by.processes).toMatchObject({ state: 'blocked', blocked: 1 });
+        expect(by.processes).toMatchObject({ state: 'blocked', blocked: 1, degraded: 0 });
         expect(view.responsibilities.items[0].initiatives).toMatchObject({ running: 1 });
         // A lapsed lease is not "working".
         await db.run("UPDATE assistant_initiatives SET leaseExpiresAt = '2000-01-01 00:00:00'", {});
         expect((await home.project({ userId: A })).counts.running).toBe(0);
+    });
+
+    test('a process that runs with a problem is degraded, not blocked; one that only looks idle is neither', async () => {
+        await active();
+        await beat();
+        await observe(await automation(A, 'flaky report'), ['ok', 'ok', 'failed']);
+        await observe(await automation(A, 'steady report'), ['ok', 'ok', 'ok']);
+        await automation(A, 'never observed');
+        const processes = (await home.project({ userId: A })).components.find(c => c.id === 'processes');
+        expect(processes).toMatchObject({ state: 'degraded', blocked: 0, degraded: 1 });
+    });
+
+    test('process health stays on its card after the update about it is acknowledged', async () => {
+        await active();
+        await beat();
+        await observe(await automation(), ['failed', 'failed', 'failed']);
+        const incidents = require('@goobster/core/services/assistantIncidentService');
+        expect(await incidents.reconcile({ userId: A })).toMatchObject({ opened: 1 });
+        const before = (await home.project({ userId: A })).components.find(c => c.id === 'processes');
+        expect(before).toMatchObject({ state: 'blocked', blocked: 1, unseen: 1 });
+
+        const { updates: listed } = await updates.list({ userId: A, component: 'processes' });
+        expect(listed).toHaveLength(1);
+        await updates.acknowledge({ userId: A, items: [{ id: listed[0].id, revision: listed[0].revision }] });
+        const after = (await home.project({ userId: A })).components.find(c => c.id === 'processes');
+        expect(after).toMatchObject({ state: 'blocked', blocked: 1, unseen: 0 });
+        // Acknowledging did not close the incident either.
+        expect((await incidents.list({ userId: A })).incidents).toEqual([expect.objectContaining({ status: 'OPEN' })]);
     });
 
     test('freshness comes from the steward\'s last pass; stale or unknown is never shown as quiet', async () => {

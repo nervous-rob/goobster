@@ -39,8 +39,9 @@ How it works:
 2. The portal event stream (`GET /api/app/events`) forwards it to that
    person's own sessions as an `assistant` event:
    `{ kinds, invalidate, at }`. `invalidate` is a list of query names
-   (`home`, `assistant-responsibilities`, `assistant-initiatives`, and
-   `inbox` when an update or a request changed).
+   (`home`, `assistant-responsibilities`, `assistant-initiatives`, `inbox`
+   when an update or a request changed, and `assistant-processes` when an
+   update changed, since it may be a process incident).
 3. The client reads those again through the ordinary routes, which check
    the session and what it may see on every read. The event is a reason to
    look, never the data.

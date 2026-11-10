@@ -761,6 +761,9 @@ class PrivacyService {
             counts.assistantUpdateReceipts = forgottenResponsibilities.receipts;
             counts.processContracts = forgottenResponsibilities.processContracts;
             counts.processObservations = forgottenResponsibilities.processObservations;
+            // Process incidents and the processes named in them.
+            counts.processIncidents = forgottenResponsibilities.incidents;
+            counts.processIncidentMembers = forgottenResponsibilities.incidentMembers;
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
@@ -1304,6 +1307,8 @@ class PrivacyService {
             assistant_update_receipts: responsibilities.receipts,
             assistant_process_contracts: responsibilities.processContracts,
             assistant_process_observations: responsibilities.processObservations,
+            assistant_process_incidents: responsibilities.incidents,
+            assistant_process_incident_members: responsibilities.incidentMembers,
             assistant_runs: responsibilities.runs,
             assistant_run_operations: responsibilities.runOperations,
             assistant_digests: responsibilities.digests,

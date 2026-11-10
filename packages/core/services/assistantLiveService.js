@@ -35,7 +35,8 @@ const PROGRESS_INTERVAL_MS = 5000;
 
 /** What the client refetches for each kind (query-key hints, see apps/web/src/lib/parseSse.cjs). */
 const BASE_HINTS = ['home', 'assistant-responsibilities', 'assistant-initiatives'];
-const KIND_HINTS = { update: ['inbox'], gate: ['inbox'], initiative: [], run: [] };
+// An update may be a process incident: the Responsibilities page's Processes report reads again too.
+const KIND_HINTS = { update: ['inbox', 'assistant-processes'], gate: ['inbox'], initiative: [], run: [] };
 
 class AssistantLiveService {
     constructor() {
