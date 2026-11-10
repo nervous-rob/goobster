@@ -39,6 +39,7 @@ const loaded = (module_) => {
     return module_;
 };
 const updatesService = () => loaded(requireOptional('./assistantUpdateService', { feature: 'assistant' }));
+const feedbackService = () => loaded(requireOptional('./assistantFeedbackService', { feature: 'assistant' }));
 const responsibilityService = () => loaded(requireOptional('./assistantResponsibilityService', { feature: 'assistant' }));
 const processService = () => loaded(requireOptional('./assistantProcessService', { feature: 'assistant' }));
 const controlService = () => loaded(requireOptional('./assistantControlService', { feature: 'assistant' }));
@@ -303,7 +304,7 @@ class AssistantHomeService {
             .slice(0, BRIEF_PREVIEW);
         // What the person may say about each of their own findings (DA-10); null when
         // it is not theirs to answer or could not be read.
-        const feedback = require('./assistantFeedbackService');
+        const feedback = feedbackService();
         const states = new Map();
         for (const update of listed) {
             if (update.audience?.kind !== 'private') continue;

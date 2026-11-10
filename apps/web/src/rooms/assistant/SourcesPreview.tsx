@@ -10,7 +10,10 @@ import { useDateLabel } from '../../hooks/useDateLabel';
  * the daily cap. Read only; nothing is read that the source itself would not.
  */
 
-const SOURCE_TEXT: Record<string, string> = {
+export const SOURCE_TEXT: Record<string, string> = {
+    attention_item: 'Changes to the goal it looks after',
+    project_plan: 'Changes to the project plan',
+    project_plan_step: 'Steps of the project plan',
     conversation_request: 'Requests in conversations',
     chat_request: 'Requests in your own chats',
     followed_source: 'Items you kept from followed sources',

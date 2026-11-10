@@ -1,4 +1,5 @@
 import { Link } from '@tanstack/react-router';
+import { AssistantFeedback } from '../../components/AssistantFeedback';
 import type { AssistantInitiative } from '../../lib/types';
 
 /** The proposed, running and finished work under one responsibility. */
@@ -7,6 +8,9 @@ const WORK_STATUS: Record<string, string> = {
     CANDIDATE: 'proposed', QUEUED: 'queued', RUNNING: 'working', WAITING: 'waiting', REVIEW: 'needs review',
     COMPLETED: 'done', FAILED: 'failed', CANCELLED: 'cancelled', SUPERSEDED: 'superseded'
 };
+
+/** Feedback is offered on work that waits for the person or has reported back, not on work in flight. */
+const FEEDBACK_ON = ['CANDIDATE', 'REVIEW', 'COMPLETED'];
 
 /** Plain words for the machine codes a run can stop with. */
 const STOP_TEXT: Record<string, string> = {
@@ -108,6 +112,7 @@ export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[];
                             {run && (run.tokensUsed > 0 || run.searches > 0) && (
                                 <div className="row-meta">Used {run.tokensUsed.toLocaleString()} tokens · {run.searches} web search{run.searches === 1 ? '' : 'es'}</div>
                             )}
+                            {FEEDBACK_ON.includes(item.status) && <AssistantFeedback state={item.feedback} target={{ initiativeId: item.id }} />}
                         </div>
                         <div className="assistant-row-actions">
                             {item.status === 'CANDIDATE' && (

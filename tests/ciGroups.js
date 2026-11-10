@@ -396,6 +396,7 @@ const GROUPS = [
             'assistantEvaluation',
             'assistantGateDecisions', 'assistantConversation',
             'assistantDeliveryService',
+            'assistantFeedbackService',
             'assistantHomeService',
             'assistantIncidentService',
             'assistantInitiativeService',

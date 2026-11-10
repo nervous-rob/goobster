@@ -8,6 +8,7 @@ import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { GateDecision } from '../../components/GateDecision';
+import { AssistantFeedback } from '../../components/AssistantFeedback';
 import type {
     AssistantAction, AssistantBriefItem, AssistantComponent, AssistantHome, AssistantNeedsYouItem
 } from '../../lib/types';
@@ -25,7 +26,9 @@ import type {
  * separately-labelled numbers. A process that is blocked or running with a
  * problem stays on its card after the update about it was reviewed: its
  * health is judged, not read. A count the server could not read is shown as
- * unknown, not as zero.
+ * unknown, not as zero. A finding of the person's own carries the feedback
+ * they may give on it (<AssistantFeedback>, documentation/delegated_feedback.md);
+ * giving feedback does not mark it reviewed.
  */
 
 const COMPONENT_META: Record<AssistantComponent['id'], { label: string; mark: string; to: string; hash?: string; what: string }> = {
@@ -153,6 +156,7 @@ function BriefRow({ item, onReviewed, busy }: { item: AssistantBriefItem; onRevi
                     {item.componentIds.map((id) => COMPONENT_META[id as AssistantComponent['id']]?.label).filter(Boolean).join(' · ')}
                     {' · '}<span title={item.happenedAt}>{formatRelativeTime(`${item.happenedAt.replace(' ', 'T')}Z`)}</span>
                 </div>
+                <AssistantFeedback state={item.feedback} target={{ updateId: item.id }} />
             </div>
             <div className="assistant-row-actions">
                 {target && <Link to={target.to as never} hash={target.hash} className="btn subtle">Open →</Link>}

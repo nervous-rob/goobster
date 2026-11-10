@@ -480,16 +480,17 @@ class AssistantInitiativeService {
             const found = locked ? { sources: 0, ignored: 0, examples: [] } : await adapter.lookback(responsibility, { now });
             rows.push({ sourceKind, scopes: named, locked, ...found });
         }
+        // Each count against the cap as it is now, which feedback may have lowered.
+        const today = [];
+        for (const entry of await require('./assistant/proposalCaps').today({ responsibilityId: responsibility.id, now })) {
+            const learned = await sourceWeights.get(responsibility.id, entry.sourceKind);
+            today.push(learned ? { ...entry, cap: sourceWeights.describe(learned).cap ?? entry.cap } : entry);
+        }
         return {
             cutoff: utcText(now),
             locked: rows.some(row => row.locked),
             sources: rows,
-            // Each count against the cap as it is now, which feedback may have lowered.
-            today: await Promise.all((await require('./assistant/proposalCaps').today({ responsibilityId: responsibility.id, now }))
-                .map(async (entry) => {
-                    const learned = await sourceWeights.get(responsibility.id, entry.sourceKind);
-                    return learned ? { ...entry, cap: sourceWeights.describe(learned).cap ?? entry.cap } : entry;
-                }))
+            today
         };
     }
 
