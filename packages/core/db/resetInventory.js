@@ -116,7 +116,8 @@ const WORK_KIND_OWNER = Object.freeze({
     mission_step: 'projects',
     trigger: 'projects',
     integration_action: 'github',
-    assistant_run: 'assistant'
+    assistant_run: 'assistant',
+    assistant_classification: 'assistant'
 });
 
 /** resource_events.kind values that belong to a feature rather than core. */
