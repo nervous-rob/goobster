@@ -224,8 +224,78 @@ const accessRequest = {
     }
 };
 
+// --- A process that may no longer be needed (gate kind `process_retirement`) --
+
+/**
+ * Asked by the steward pass when a process's purpose is over, it is still
+ * switched on, and no responsibility lets the assistant pause it
+ * (documentation/process_stewardship.md, "When Goobster does it for you").
+ * Both answers go through `assistantProcessLifecycleService.act`, the same
+ * call the Processes list makes; this descriptor decides nothing itself.
+ */
+const processRetirement = {
+    staleCodes: ['REVISION_CONFLICT', 'NOT_A_CANDIDATE', 'NOT_RUNNING', 'ARCHIVED', 'CHANGED', 'NOT_FOUND'],
+
+    /** The process a gate names, as its owner sees it now; null when it is gone or not theirs. */
+    async _entry(gate, viewer) {
+        const { processes } = await require('./assistantProcessService').assess({ userId: viewer.userId });
+        return processes.find(entry => entry.ref === String(gate.id)) || null;
+    },
+
+    async describe(gate, viewer) {
+        const entry = await this._entry(gate, viewer);
+        if (!entry) return null;
+        const lifecycle = require('./assistantProcessLifecycleService');
+        const { ENDED_TEXT } = require('./assistantIncidentService');
+        const name = `"${String(entry.described.name || 'A process').slice(0, 80)}"`;
+        const reason = entry.assessment.reasons.relevance;
+        const row = entry.lifecycle || null;
+        // Open while "keep it running" is still on offer: its purpose is over, it is on, and it was not kept.
+        const open = lifecycle.controls(entry, row).includes('keep');
+        let outcome = null;
+        if (!open) {
+            if (entry.described.archived) outcome = `${name} is archived.`;
+            else if (!entry.described.enabled && row?.stage === 'PAUSED') outcome = `${name} is paused.`;
+            else if (!entry.described.enabled) outcome = `${name} is switched off.`;
+            else if (entry.assessment.relevance === 'retirement_candidate') outcome = `You chose to keep ${name} running.`;
+            else outcome = `Nothing says ${name} has outlived its purpose any more.`;
+        }
+        return {
+            state: open ? 'open' : 'resolved',
+            title: `${name} may no longer be needed`,
+            detail: `${ENDED_TEXT[reason] || 'What it was for is over.'} It is still switched on.`,
+            outcome,
+            // The contract and reason asked about, and the stage the options were read at.
+            revision: `c${entry.contract?.revision ?? 0}:${reason}:l${row?.revision ?? 0}`,
+            options: [
+                { id: 'pause', label: 'Pause it', effect: 'Nothing new starts. A run already under way finishes. Nothing is deleted, and you can resume it from Processes.' },
+                { id: 'keep', label: 'Keep it running', effect: 'It stays on, and you are not asked again unless its purpose changes.' }
+            ]
+        };
+    },
+
+    async decide(gate, viewer, optionId, { revision }) {
+        if (optionId !== 'pause' && optionId !== 'keep') throw stale();
+        const ref = /^([a-z_]+):(\d+)$/.exec(String(gate.id));
+        const shown = /:l(\d+)$/.exec(String(revision));
+        if (!ref || !shown) throw stale();
+        const result = await require('./assistantProcessLifecycleService').act({
+            userId: viewer.userId, kind: ref[1], id: ref[2], action: optionId, expectedRevision: Number(shown[1])
+        });
+        const name = `"${result.process.name}"`;
+        if (optionId === 'keep') return { message: `${name} stays on.` };
+        const running = result.started?.count
+            ? result.started.policy === 'abandon'
+                ? ' A check that was under way was dropped.'
+                : ` ${plural(result.started.count, 'run')} already under way will finish.`
+            : '';
+        return { message: `Paused ${name}. Nothing new will start.${running}` };
+    }
+};
+
 module.exports = {
     project_approve: projectApprove,
     friend_request: friendRequest,
-    access_request: accessRequest
+    access_request: accessRequest,
+    process_retirement: processRetirement
 };

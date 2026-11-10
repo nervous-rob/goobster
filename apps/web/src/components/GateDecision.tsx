@@ -21,7 +21,8 @@ import type { GateDecisionCard, GateDecisionOption, GateSurface } from '../lib/t
 const ALSO_REFRESH: Record<string, QueryKey[]> = {
     friend_request: [keys.friends],
     access_request: [['admin-accounts'], ['admin-access-requests']],
-    project_approve: [['project-mission'], ['project-needs-you'], ['project-now']]
+    project_approve: [['project-mission'], ['project-needs-you'], ['project-now']],
+    process_retirement: [keys.assistantProcesses]
 };
 
 export function GateDecision({ card, surface }: { card: GateDecisionCard; surface: GateSurface }) {

@@ -5,8 +5,9 @@
  * records nothing. This service is the part that remembers: on the steward
  * pass it turns "this process is not working" into one incident per cause,
  * keeps that incident through recovery, and files one canonical update for
- * it. It observes and reports. It never pauses, repairs, archives or
- * deletes a process, and it never runs a model.
+ * it. It observes and reports, and it never runs a model. What happens to a
+ * process whose purpose is over (a pause under a grant, or a request to the
+ * person) is assistantProcessLifecycleService's, called from this pass.
  *
  * An incident opens when a process has failed `incidentFailures` times
  * running or has been stalled for `stalledIncidentSeconds` while this
@@ -26,9 +27,8 @@
  * Nothing is opened or announced for a person who has not turned Attention
  * on; an incident that is already open still runs to its end.
  *
- * Seams for later stages: a repair attempt (DA-5c) refers to an incident by
- * id and adds a gate to its update; a pause or archive proposal (DA-5b)
- * adds a gate to the `process_relevance:<ref>` update filed here.
+ * Seam for DA-5c: a repair attempt refers to an incident by id and adds a
+ * gate to its update.
  *
  * Spec: documentation/process_stewardship.md.
  */
@@ -183,10 +183,12 @@ class AssistantIncidentService {
      *   running without a gap. A schedule that slipped while nothing ran is
      *   not the process's failure, so a stall opens an incident only once it
      *   has lasted `stalledIncidentSeconds` of that time. Omitted: no limit.
-     * @returns {Promise<{ owners: number, opened: number, reopened: number, recovering: number, resolved: number, relevance: number }>}
+     * @returns {Promise<{ owners: number, opened: number, reopened: number, recovering: number, resolved: number,
+     *   relevance: number, paused: number, archived: number }>} `relevance` counts retirement requests filed or revised;
+     *   `paused` and `archived` what the assistant did under a grant
      */
     async reconcile({ userId = null, now = new Date(), upSince = null } = {}) {
-        const result = { owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0 };
+        const result = { owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0 };
         if (features.enforcedOff('assistant')) return result;
         let after = '';
         for (;;) {
@@ -201,7 +203,7 @@ class AssistantIncidentService {
                 try {
                     const outcome = await this._reconcileOwner(owner.userId, { now, announce: owner.announce, upSince });
                     result.owners += 1;
-                    for (const key of ['opened', 'reopened', 'recovering', 'resolved', 'relevance']) result[key] += outcome[key];
+                    for (const key of ['opened', 'reopened', 'recovering', 'resolved', 'relevance', 'paused', 'archived']) result[key] += outcome[key];
                 } catch (error) {
                     logger.warn?.(`[assistant incidents] pass failed for one person: ${error.message}`);
                 }
@@ -213,7 +215,7 @@ class AssistantIncidentService {
     }
 
     async _reconcileOwner(owner, { now, announce, upSince }) {
-        const result = { opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0 };
+        const result = { opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0, paused: 0, archived: 0 };
         const { processes: entries } = await require('./assistantProcessService').assess({ userId: owner, now });
         const byRef = new Map(entries.map(entry => [entry.ref, entry]));
         const { incidents: open } = await this.list({ userId: owner });
@@ -317,7 +319,13 @@ class AssistantIncidentService {
             }
         }
 
-        if (announce) result.relevance = await this._announceRelevance(owner, entries);
+        if (announce) {
+            // A process whose purpose is over: paused under a grant, or asked about (DA-5b).
+            const retired = await require('./assistantProcessLifecycleService').steward({ owner, entries, now });
+            result.relevance = retired.requested;
+            result.paused = retired.paused;
+            result.archived = retired.archived;
+        }
         return result;
     }
 
@@ -455,37 +463,6 @@ class AssistantIncidentService {
         return update.id;
     }
 
-    /**
-     * One informational update per process whose purpose is over while it is
-     * still switched on. Its identity is the process; a contract change or a
-     * different reason is a new revision. DA-5b adds the proposal to act.
-     */
-    async _announceRelevance(owner, entries) {
-        let announced = 0;
-        for (const entry of entries) {
-            if (entry.assessment.relevance !== 'retirement_candidate') continue;
-            const reason = entry.assessment.reasons.relevance;
-            try {
-                const { changed } = await require('./assistantUpdateService').publish({
-                    audience: { userId: owner },
-                    identityKey: `${RELEVANCE_IDENTITY}${entry.ref}`,
-                    kind: 'process',
-                    title: `${quoted(entry.described.name)} may no longer be needed`,
-                    summary: `${ENDED_TEXT[reason] || 'What it was for is over.'} It is still switched on. Nothing was changed.`,
-                    components: ['processes'],
-                    source: { kind: 'process', id: entry.ref, revision: `r${entry.contract.revision}:${reason}` },
-                    evidence: [{ kind: 'process', id: entry.ref }],
-                    actions: [{ kind: 'open_process', id: entry.ref }],
-                    deliver: true
-                });
-                if (changed) announced += 1;
-            } catch (error) {
-                logger.warn?.(`[assistant incidents] relevance update failed: ${error.message}`);
-            }
-        }
-        return announced;
-    }
-
     async _unraised(userId, candidates) {
         if (!candidates.length) return [];
         const rows = await db.all(
@@ -534,7 +511,12 @@ class AssistantIncidentService {
         const out = [];
         for (const entry of processes) {
             const judged = entry.assessment;
+            // The person already said this one should keep running for this reason.
+            const kept = entry.lifecycle?.keptRevision != null
+                && Number(entry.lifecycle.keptRevision) === Number(entry.contract?.revision)
+                && entry.lifecycle.keptReason === judged.reasons.relevance;
             if (judged.relevance === 'retirement_candidate') {
+                if (kept) continue;
                 out.push({
                     key: `process_relevance:${entry.ref}:r${entry.contract.revision}:${judged.reasons.relevance}`,
                     category: 'schedule',
@@ -580,3 +562,4 @@ module.exports = new AssistantIncidentService();
 module.exports.AssistantIncidentService = AssistantIncidentService;
 module.exports.INCIDENT_IDENTITY = INCIDENT_IDENTITY;
 module.exports.RELEVANCE_IDENTITY = RELEVANCE_IDENTITY;
+module.exports.ENDED_TEXT = ENDED_TEXT;

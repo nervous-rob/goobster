@@ -220,6 +220,13 @@ const COLUMN_MIGRATIONS = [
     ['parlor_messages', 'stepsJson', 'stepsJson TEXT'],
     // Process contracts: which of the person's processes this one cannot work without.
     ['assistant_process_contracts', 'dependsOnJson', 'dependsOnJson TEXT'],
+    // Process lifecycle (DA-5b): archived definitions stay in their own table,
+    // and a watch (which has no on/off switch of its own) can be paused.
+    ['automations', 'archivedAt', 'archivedAt TEXT'],
+    ['project_triggers', 'archivedAt', 'archivedAt TEXT'],
+    ['followed_sources', 'archivedAt', 'archivedAt TEXT'],
+    ['attention_watches', 'pausedAt', 'pausedAt TEXT'],
+    ['attention_watches', 'archivedAt', 'archivedAt TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

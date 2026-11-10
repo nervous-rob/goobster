@@ -85,6 +85,8 @@ const INVENTORY = [
     ['assistant_process_observations', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_incidents', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_incident_members', 'ownerUserId = @userId', '*', 'incidentId, processKind, processId'],
+    ['assistant_process_lifecycle', 'ownerUserId = @userId', '*', 'id'],
+    ['assistant_process_cleanups', 'ownerUserId = @userId', '*', 'id'],
     // The secret hash stays out of the archive. The label and prefix are
     // enough to see which clients were connected (documentation/mcp.md).
     ['mcp_tokens', 'userId = @userId', 'id, userId, label, tokenPrefix, scope, createdAt, lastUsedAt, revokedAt, expiresAt'],

@@ -258,7 +258,7 @@ async function handleToggle(interaction) {
     try {
         // Check if automation exists and belongs to user
         const automation = await db.get(
-            `SELECT id, schedule, isEnabled
+            `SELECT id, schedule, isEnabled, archivedAt
              FROM automations
              WHERE userId = @userId AND guildId = @guildId AND name = @name`,
             { userId: interaction.user.id, guildId: getConversationScopeId(interaction), name }
@@ -277,12 +277,20 @@ async function handleToggle(interaction) {
             const interval = CronExpressionParser.parse(automation.schedule, { tz: 'UTC' });
             const nextRun = interval.next().toDate();
 
-            await db.run(
+            // An archived automation stays off until it is restored (the guard is part of the write).
+            const result = automation.archivedAt ? { changes: 0 } : await db.run(
                 `UPDATE automations
                  SET isEnabled = @enabled, nextRun = @nextRun, updatedAt = CURRENT_TIMESTAMP
-                 WHERE id = @id`,
+                 WHERE id = @id AND archivedAt IS NULL`,
                 { enabled, nextRun, id: automation.id }
             );
+            if (result.changes === 0) {
+                await interaction.reply({
+                    content: `❌ Automation "${name}" is archived. Restore it from the Assistant's Processes list in the portal first.`,
+                    ephemeral: true
+                });
+                return;
+            }
         } else {
             await db.run(
                 `UPDATE automations

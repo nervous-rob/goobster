@@ -541,6 +541,13 @@ Restoring an archived process restores it paused. Recheck current access,
 dependencies and grants before explicit resume, and disclose any artifacts that
 permanent cleanup has made unavailable to restore.
 
+**Available:** pause, resume, archive, restore and exact cleanup of a process
+by its owner; pause and archive by the assistant under a responsibility that
+names that process; and a request, answered on Home or in the Inbox, when
+there is none
+([process_stewardship.md](process_stewardship.md#retiring-a-process)). Repair
+and cleanup by the assistant are planned.
+
 ## 9. Further capabilities in the same loop
 
 - **Assumption monitoring:** track consequential assumptions behind active work;
@@ -684,7 +691,8 @@ DA-12. The technical contracts are in
 - A request can be answered where you see it: on Home, in the Inbox, in the
   notification or in chat. The choice shown is the concrete decision, with
   what it will change. **Available on Home and in the Inbox** for a friend
-  request, a request to join and a mission plan to approve or start
+  request, a request to join, a mission plan to approve or start and a
+  process that may no longer be needed
   ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)),
   **and from a card in portal chat**; the notification is planned.
 - A spoken briefing tells you what needs you and what changed. Hearing it

@@ -288,27 +288,34 @@ test.describe('assistant-first Home', () => {
         expect((await made.json()).pass).toMatchObject({ opened: 1, relevance: 1 });
         await login(page, { userId: USER, name: NAME });
 
-        // Home: one incident and one relevance note, each said once; the card counts processes, not messages.
+        // Home: one incident, said once, and one question; the card counts processes, not messages.
         const overview = page.getByTestId('assistant-overview');
         const card = overview.getByTestId('assistant-component-processes');
+        await expect(card).toContainText('1 needs you');
         await expect(card).toContainText('1 not working');
         await expect(card).toContainText('1 with a problem');
         await expect(card).toContainText('2 new updates');
         const brief = overview.getByTestId('assistant-brief-item');
-        await expect(brief).toHaveCount(2);
-        await expect(brief.filter({ hasText: '"Nightly import" keeps failing' })).toHaveCount(1);
-        await expect(brief.filter({ hasText: '"Release watch" may no longer be needed' })).toHaveCount(1);
-        // Neither asks for anything.
-        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
+        await expect(brief).toHaveCount(1);
+        await expect(brief).toContainText('"Nightly import" keeps failing');
+        // Whether the watch is still needed is a question for the person: it
+        // is asked once under Needs you and is not repeated as a finding.
+        const asks = overview.getByTestId('assistant-needs-you-item');
+        await expect(asks).toHaveCount(1);
+        await expect(asks).toContainText('Still needed?');
+        await expect(asks).toContainText('"Release watch" may no longer be needed');
+        // It can be answered right there, and says what each answer does.
+        await expect(asks.getByTestId('gate-decision').getByRole('button')).toHaveText(['Pause it', 'Keep it running']);
+        await expect(asks.getByTestId('gate-decision')).toContainText('The goal it was set up for is resolved. It is still switched on.');
 
-        // Reviewing the updates does not make the process healthy.
-        for (const title of ['keeps failing', 'may no longer be needed']) {
-            await brief.filter({ hasText: title }).getByRole('button', { name: 'Mark reviewed' }).click();
-            await expect(brief.filter({ hasText: title })).toHaveCount(0);
-        }
+        // Reviewing the update does not make the process healthy.
+        await brief.getByRole('button', { name: 'Mark reviewed' }).click();
         await expect(overview.getByTestId('assistant-brief-empty')).toBeVisible();
         await expect(card).toContainText('1 not working');
-        await expect(card).not.toContainText('new update');
+        // The question is still unanswered, so it is still the one thing new on the card.
+        await expect(card).toContainText('1 needs you');
+        await expect(card).toContainText('1 new update');
+        await expect(card).not.toContainText('2 new updates');
 
         // The card opens the report, where each process has both judgments in words.
         await card.click();
@@ -342,8 +349,9 @@ test.describe('assistant-first Home', () => {
         await expect(watch.getByTestId('process-relevance')).toContainText('May no longer be needed');
         await expect(watch.getByTestId('process-relevance')).toContainText('The goal it was set up for is resolved. It is still switched on.');
 
-        // A report only: nothing on it changes a process.
-        await expect(rows.getByRole('button')).toHaveCount(0);
+        // Each process offers only what applies to it, and asking changed nothing.
+        await expect(digest.getByRole('button')).toHaveText(['Pause']);
+        await expect(watch.getByRole('button')).toHaveText(['Pause', 'Keep it running']);
         await expect(incident.getByRole('button')).toHaveCount(0);
 
         // A switched-off process with nothing to report is folded away, not dropped.
@@ -355,6 +363,115 @@ test.describe('assistant-first Home', () => {
         const after = await (await page.request.get('/api/app/assistant/processes')).json();
         expect(after.processes.filter((entry) => entry.enabled).map((entry) => entry.name).sort())
             .toEqual(['Morning digest', 'Nightly import', 'Price check', 'Release watch']);
+    });
+
+    test('a process is paused, archived, cleaned up and restored from the page, and its definition is never deleted', async ({ page }) => {
+        await seed(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
+        expect(made.ok(), await made.text()).toBe(true);
+        await login(page, { userId: USER, name: NAME });
+        const overview = page.getByTestId('assistant-overview');
+        await expect(overview.getByTestId('assistant-needs-you-item')).toHaveCount(1);
+        const processOf = async (name) => (await (await page.request.get('/api/app/assistant/processes')).json())
+            .processes.find((entry) => entry.name === name);
+
+        // The question on Home leads to the process it is about.
+        await overview.getByTestId('assistant-needs-you-item').getByRole('link', { name: 'Open →' }).click();
+        const report = page.getByTestId('assistant-processes');
+        const notice = report.getByTestId('process-notice');
+        const row = report.getByTestId('process-row').filter({ hasText: 'Release watch' });
+        await expect(row).toHaveCount(1);
+
+        // Pause: nothing new starts, it says who paused it, and the question is answered.
+        await row.getByRole('button', { name: 'Pause' }).click();
+        await expect(notice).toHaveText('Paused "Release watch". Nothing new will start.');
+        await expect(row.getByTestId('process-lifecycle')).toContainText('Paused by you');
+        await expect(row.getByTestId('process-execution')).toContainText('It is paused, so it is not being judged.');
+        await expect(row.getByRole('button')).toHaveText(['Resume', 'Archive']);
+        await expect(report.getByTestId('processes-summary')).toContainText('1 paused');
+        expect(await processOf('Release watch')).toMatchObject({ enabled: false, archived: false, lifecycle: { stage: 'paused', actor: 'person' } });
+        await page.goto('/app/');
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
+        await overview.getByTestId('assistant-component-processes').click();
+
+        // Archive: said plainly before it happens, and it leaves the list without leaving the installation.
+        await row.getByRole('button', { name: 'Archive' }).click();
+        const dialog = page.getByRole('dialog');
+        await expect(dialog).toContainText('Archive "Release watch"?');
+        await expect(dialog).toContainText('nothing is deleted');
+        await dialog.getByRole('button', { name: 'Confirm' }).click();
+        await expect(notice).toHaveText('Archived "Release watch". It and its history are kept.');
+        await expect(row).toHaveCount(0);
+        await expect(report.getByTestId('processes-summary')).toContainText('4 processes');
+        await expect(report.getByTestId('processes-summary')).toContainText('1 archived');
+        await report.getByTestId('processes-show-archived').click();
+        const kept = report.getByTestId('processes-archived').getByTestId('process-row');
+        await expect(kept).toHaveCount(1);
+        await expect(kept).toContainText('Release watch');
+        await expect(kept.getByTestId('process-lifecycle')).toContainText('Archived by you');
+        await expect(kept.getByRole('button')).toHaveText(['Restore', 'Clean up…']);
+
+        // Cleanup shows exactly what it would remove, and removes nothing until confirmed.
+        await kept.getByRole('button', { name: 'Clean up…' }).click();
+        const preview = kept.getByTestId('process-cleanup-preview');
+        await expect(preview).toContainText('This removes exactly: 2 run records.');
+        await expect(preview).toContainText('It keeps the process itself, its purpose.');
+        await preview.getByRole('button', { name: 'Cancel' }).click();
+        await expect(preview).toHaveCount(0);
+        const before = await (await page.request.get(`/api/app/assistant/processes/automation/${(await processOf('Release watch')).id}`)).json();
+        expect(before.observations).toHaveLength(2);
+
+        await kept.getByRole('button', { name: 'Clean up…' }).click();
+        await preview.getByTestId('process-cleanup-confirm').click();
+        await expect(notice).toHaveText('Removed 2 run records of "Release watch".');
+        await expect(kept.getByTestId('process-lifecycle')).toContainText('2 run records removed');
+        const after = await (await page.request.get(`/api/app/assistant/processes/automation/${before.process.id}`)).json();
+        expect(after.observations).toEqual([]);
+        expect(after.contract.purpose).toBe('Tell me when the release ships');
+
+        // Restore brings it back paused, and says what did not come back.
+        await kept.getByRole('button', { name: 'Restore' }).click();
+        await expect(notice).toHaveText(
+            'Restored "Release watch". It is paused until you resume it. What was cleaned up (2 run records) is not restored.'
+        );
+        await expect(report.getByTestId('processes-show-archived')).toHaveCount(0);
+        await expect(row.getByTestId('process-lifecycle')).toContainText('It stays paused until you resume it.');
+        expect(await processOf('Release watch')).toMatchObject({ enabled: false, archived: false, lifecycle: { stage: 'paused' } });
+
+        // Resume is a separate act; it is also the answer to "is it still needed".
+        await row.getByRole('button', { name: 'Resume' }).click();
+        await expect(notice).toHaveText('Resumed "Release watch".');
+        await expect(row.getByRole('button')).toHaveText(['Pause']);
+        expect(await processOf('Release watch')).toMatchObject({ enabled: true, lifecycle: { stage: 'active' } });
+    });
+
+    test('the question is answered on Home: keep it running, and it is not asked again', async ({ page }) => {
+        await seed(page, { seed: false });
+        const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
+        expect(made.ok(), await made.text()).toBe(true);
+        await login(page, { userId: USER, name: NAME });
+        const overview = page.getByTestId('assistant-overview');
+        const ask = overview.getByTestId('assistant-needs-you-item');
+        await expect(ask).toHaveCount(1);
+        await ask.getByRole('button', { name: 'Keep it running' }).click();
+        await expect(page.locator('#toast')).toHaveText('"Release watch" stays on.');
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
+        await expect(overview.getByTestId('assistant-component-processes')).not.toContainText('needs you');
+
+        // The Processes list shows the answer, and no longer offers the question.
+        await overview.getByTestId('assistant-component-processes').click();
+        const report = page.getByTestId('assistant-processes');
+        const row = report.getByTestId('process-row').filter({ hasText: 'Release watch' });
+        await expect(row.getByRole('button')).toHaveText(['Pause']);
+        await expect(row.getByTestId('process-lifecycle')).toContainText('You chose to keep it running');
+        // Still judged a candidate from the evidence; the person's answer is what changed.
+        await expect(row.getByTestId('process-relevance')).toContainText('May no longer be needed');
+        const pass = await page.request.post('/e2e/fixtures/assistant-home/processes/pass', { data: { userId: USER } });
+        expect(await pass.json()).toMatchObject({ pass: { relevance: 0, paused: 0 } });
+        const listed = await (await page.request.get('/api/app/assistant/processes')).json();
+        expect(listed.processes.find((entry) => entry.name === 'Release watch')).toMatchObject({ enabled: true, controls: ['pause'] });
+        await page.goto('/app/');
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
     });
 
     test('with Attention off the page says why nothing runs', async ({ page }) => {

@@ -1,7 +1,7 @@
 ---
 title: The assistant overview on Home, and Needs you
 kind: reference
-summary: Home opens with what Goobster is looking after for you - a status line derived from records, Needs you (requests still waiting on you), What changed (findings you have not reviewed), five component cards and your responsibilities. Needs you is a filter of the Inbox, not a second queue; reading never resolves a request; loading Home changes nothing. A friend request, a request to join and a mission plan can be decided from the same buttons on Home, in the Inbox and on a project's Needs-you board (`POST /api/app/assistant/gates/:ref/decide`), and a card that changed is refused with the current state (`STALE_GATE`). Also covers the Inbox's All / Needs you / Updates / Snoozed filters, project boards as a view of the same requests, the Responsibilities page and the read-only projection behind them.
+summary: Home opens with what Goobster is looking after for you - a status line derived from records, Needs you (requests still waiting on you), What changed (findings you have not reviewed), five component cards and your responsibilities. Needs you is a filter of the Inbox, not a second queue; reading never resolves a request; loading Home changes nothing. A friend request, a request to join, a mission plan and a process that may no longer be needed can be decided from the same buttons on Home, in the Inbox and on a project's Needs-you board (`POST /api/app/assistant/gates/:ref/decide`), and a card that changed is refused with the current state (`STALE_GATE`). Also covers the Inbox's All / Needs you / Updates / Snoozed filters, project boards as a view of the same requests, the Responsibilities page and the read-only projection behind them.
 when: Understanding what Home shows and why a card is highlighted; telling an unread update from a request that still needs you; finding a snoozed or archived request; accepting, approving or declining a request from Home or the Inbox, and what a `STALE_GATE` refusal means; why a project board card has or lacks a button, or says it is waiting on the owner; adding a decision for a new kind of request (`gateDecisions`); drafting, activating, pausing or revoking a responsibility in the portal; checking what `GET /api/app/home` returns under `assistant`.
 tags: [assistant, home, inbox, needs-you, responsibilities, portal, updates]
 ---
@@ -170,6 +170,7 @@ settles it in all of them.
 | Someone asking to join | A host (an operator) | *Approve*, *Decline* |
 | A mission plan waiting for approval | A project member who may approve it | *Approve plan* |
 | An approved mission waiting to start | A project member who may start it | *Start mission* |
+| A process that may no longer be needed | The person who owns the process | *Pause it*, *Keep it running* |
 
 Every other request (work to review, a blocked mission, a question, a repair
 to review, a responsibility to review) keeps its *Open* link to the place
@@ -181,13 +182,14 @@ What holds:
   and a chat card post the same decision; it is carried out by the service
   that owns the request
   (`friendService.respond`, `accessRequestService.approve` / `decline`,
-  `projectMissionService.approve` / `start`) with that service's own checks.
+  `projectMissionService.approve` / `start`,
+  `assistantProcessLifecycleService.act`) with that service's own checks.
   Approving a plan still goes through the mission's human approval receipt
   for the plan revision you were shown.
 - **The card is the decision.** Each card names the request's `occurrence`
   and a `revision` taken from the record (the plan revision of a mission,
-  the time a friend or join request was made). The decision is applied only
-  to that card.
+  the time a friend or join request was made, the contract and retirement
+  stage of a process). The decision is applied only to that card.
 - **A stale card is refused, with what the request is now.** If the request
   was answered, withdrawn, reopened or changed after the card was shown,
   nothing is decided and you are told its current state ("This request was
@@ -281,8 +283,9 @@ The card every surface renders:
 ```
 
 `ref` is the canonical update's id for a request that is an assistant update
-(a project gate), and `inbox-<item id>` for a request that is its own Inbox
-item (a friend request, a request to join). An option marked `danger` is
+(a project gate, a process that may no longer be needed), and
+`inbox-<item id>` for a request that is its own Inbox item (a friend request,
+a request to join). An option marked `danger` is
 confirmed in the portal before it is sent.
 
 ## Responsibilities page
@@ -335,9 +338,13 @@ Below the responsibilities, **Processes** reports on the recurring work you
 have set up (scheduled tasks, project triggers, watches, followed sources).
 Each process shows two separate answers in words, whether it is working and
 whether it is still needed, with the reason for each, and the incidents still
-open are listed above them. The Home Processes card opens this section. It
-is a report with no controls: a process is still changed where you made it.
-See [process_stewardship.md](process_stewardship.md).
+open are listed above them. The Home Processes card opens this section. Each
+row has the actions that apply to it: *Pause*, *Resume*, *Archive*,
+*Restore*, *Keep it running* and *Clean up…*. None of them deletes a process,
+and a cleanup shows exactly what it would remove before you confirm it.
+Archived processes are behind *Show archived*. What a process does is still
+edited where you made it.
+See [process_stewardship.md](process_stewardship.md#retiring-a-process).
 
 ## API
 

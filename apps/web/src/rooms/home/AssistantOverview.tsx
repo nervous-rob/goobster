@@ -55,6 +55,7 @@ const REQUEST_LABEL: Record<string, string> = {
     project_unblock: 'Blocked work',
     project_answer: 'A question for you',
     process_repair: 'Repair to review',
+    process_retirement: 'Still needed?',
     responsibility_review: 'Responsibility to review'
 };
 
