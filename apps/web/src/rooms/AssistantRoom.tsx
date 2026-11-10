@@ -25,7 +25,8 @@ import { ResponsibilityRow } from './assistant/ResponsibilityRow';
  * grants nothing; only Activate, pressed by the person, turns one on.
  *
  * Below them, Processes reports on the recurring work the person has set up
- * (documentation/process_stewardship.md). That part is read-only.
+ * (documentation/process_stewardship.md) and lets them pause, archive,
+ * restore and clean up each one; it owns those actions itself.
  *
  * This file is the page: its queries and the two action handlers. The parts
  * live under ./assistant (the draft form, one responsibility's row, its work

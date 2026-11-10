@@ -129,13 +129,13 @@ module.exports = {
     },
     assistant: {
         title: 'Delegated assistant',
-        summary: 'Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations, a health and relevance assessment, and incidents. Inert until a person activates one.',
+        summary: 'Responsibilities: versioned, human-activated grants of bounded authority checked operation by operation, with the opportunities they derive from linked sources, canonical updates with per-person read receipts, and a process catalog with typed observations, a health and relevance assessment, incidents, and reversible pause, archive and restore with exact cleanup. Inert until a person activates one.',
         apiKeys: [],
         configKeys: ['assistant.installationRuns', 'assistant.runsPerAccount', 'assistant.defaultModelTokens', 'assistant.defaultSearches', 'assistant.defaultComputeSeconds'],
         docs: ['documentation/delegated_responsibilities.md', 'documentation/delegated_runs.md', 'documentation/delegated_plan_steps.md', 'documentation/delegated_conversation_requests.md', 'documentation/delegated_operations.md', 'documentation/delegated_project_findings.md', 'documentation/delegated_knowledge.md', 'documentation/delegated_evaluation.md', 'documentation/delegated_connectors.md', 'documentation/process_stewardship.md'],
         payload: {
             files: [
-                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantIncidentService,assistantStewardService,assistantGateService,assistantGateDescriptors,assistantRunService,assistantRunnerService,assistantControlService,assistantAccessService,assistantConnectorService,knowledgeChangeSetService,knowledgeImpactService}.js',
+                'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantProcessLifecycleService,assistantIncidentService,assistantStewardService,assistantGateService,assistantGateDescriptors,assistantRunService,assistantRunnerService,assistantControlService,assistantAccessService,assistantConnectorService,knowledgeChangeSetService,knowledgeImpactService}.js',
                 'packages/core/utils/textDiff.js',
                 // Run tool modules (runTools/) and initiative source adapters (sources/).
                 'packages/core/services/assistant/**',

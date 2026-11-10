@@ -404,6 +404,7 @@ const GROUPS = [
             'assistantProjectAudience',
             'assistantPlanStep',
             'assistantProcessAssessment',
+            'assistantProcessLifecycle',
             'assistantProcessService',
             'assistantProjectBoard',
             'assistantRepoTools',
