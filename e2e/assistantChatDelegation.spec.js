@@ -11,9 +11,9 @@
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 
-const USER = '99000000000000431';
+const USER = '99000000000000711';
 const NAME = 'Owner';
-const FRIEND = '99000000000000432';
+const FRIEND = '99000000000000712';
 const TITLE = 'Keep my garden notes current';
 
 const PROPOSE = {
@@ -29,10 +29,10 @@ const PROPOSE = {
 };
 
 const script = async (page, rounds, reply) => {
-    const seeded = await page.request.post('/e2e/fixtures/assistant-conversation', { data: { userId: USER, name: NAME, rounds, reply } });
+    const seeded = await page.request.post('/e2e/fixtures/assistant-chat-delegation', { data: { userId: USER, name: NAME, rounds, reply } });
     expect(seeded.ok(), await seeded.text()).toBe(true);
 };
-const state = async (page) => (await page.request.get(`/e2e/fixtures/assistant-conversation/state?userId=${USER}`)).json();
+const state = async (page) => (await page.request.get(`/e2e/fixtures/assistant-chat-delegation/state?userId=${USER}`)).json();
 
 /** Send one message in a new chat and wait for the turn to settle (the new chat gets its own address then). */
 async function say(page, text, reply) {
@@ -47,7 +47,7 @@ test.describe('delegating by conversation', () => {
     test.describe.configure({ mode: 'serial' });
 
     test.afterAll(async ({ request }) => {
-        await request.post('/e2e/fixtures/assistant-conversation', { data: { restore: true } });
+        await request.post('/e2e/fixtures/assistant-chat-delegation', { data: { restore: true } });
     });
 
     test('a request in chat becomes a draft, and only the person turns it on', async ({ page }) => {
