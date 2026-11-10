@@ -29,7 +29,12 @@ const VOICE_TOOL_NAMES = [
     'eventContracts', 'tradeSpread', 'tradePerp', 'goblinWheel',
     'auditAccount', 'auditExchange',
     // Tavern: read-only info and dice work anywhere by voice
-    'tavernInfo', 'rollDice'
+    'tavernInfo', 'rollDice',
+    // Delegated work: a voice channel is shared, so here this tool can only
+    // answer that a briefing is private and where to hear it (the person's
+    // own voice chat in the portal). It is listed so that answer is the
+    // tool's, not the model's guess (documentation/delegated_conversation.md).
+    'spokenBriefing'
 ];
 // These tools post to / reference a text channel, so they are only offered
 // when the session has a transcript text channel to deliver into. The two
@@ -49,6 +54,17 @@ function getVoiceToolNames(session) {
     return session.textChannel
         ? [...VOICE_TOOL_NAMES, ...TEXT_CHANNEL_TOOL_NAMES]
         : VOICE_TOOL_NAMES;
+}
+
+/**
+ * The tool definitions for one voice turn: the session's subset, minus the
+ * tools this turn's speaker may not use at all (a tool's own `offered`).
+ * @param {Object} session
+ * @param {{ context: Object }} toolContext - from buildToolContext
+ */
+async function getVoiceToolDefinitions(session, toolContext) {
+    const definitions = await toolsRegistry.getDefinitions(getVoiceToolNames(session));
+    return toolsRegistry.offeredTo(definitions, toolContext.context);
 }
 
 /**
@@ -316,6 +332,7 @@ module.exports = {
     VOICE_TOOL_NAMES,
     TEXT_CHANNEL_TOOL_NAMES,
     getVoiceToolNames,
+    getVoiceToolDefinitions,
     shouldRespond,
     buildToolContext,
     buildScreenTurnContext,

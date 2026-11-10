@@ -393,6 +393,7 @@ const GROUPS = [
             'assistantProcessService',
             'assistantResponsibilityService',
             'assistantRunService',
+            'assistantSpokenBriefing',
             'assistantStewardService',
             'assistantUpdateService',
             'dmPrivacy',

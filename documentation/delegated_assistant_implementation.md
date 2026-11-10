@@ -9,10 +9,11 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
 canonical updates and process observations), the read-only DA-2 Home, the
-DA-3 runner, DA-7a (deciding a request on Home and in the Inbox) and DA-7b
-(delegating and steering by conversation, with confirmation receipts) are
+DA-3 runner, DA-7a (deciding a request on Home and in the Inbox), DA-7b
+(delegating and steering by conversation, with confirmation receipts) and
+DA-7c (the spoken briefing) are
 implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-7 through DA-12 added as planned increments; DA-7a and DA-7b shipped).
+document is still planned.** Updated 2026-11-10 (DA-7 through DA-12 added as planned increments; DA-7a, DA-7b and DA-7c shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -78,7 +79,7 @@ increment done because its proposal exists.
 | DA-4: project continuity | Planned | DA-3 | Conversation-derived opportunities advancing approved/delegated project work with verified outcomes |
 | DA-5: process stewardship | Planned | DA-1 observations; DA-3 runner | Purpose-aware health/relevance, bounded repair, pause/archive and dependent-aware cleanup |
 | DA-6: integrated personal pilot | Planned | DA-2 through DA-5 | Observed repeat use and an owner-recorded decision about broader scope |
-| DA-7: conversational delegation and control | In progress. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Done: the chat tools, confirmation receipts and the chat cards (DA-7b: [delegated_conversation.md](delegated_conversation.md), [ADR 0019](adr/0019-conversational-delegation-and-receipts.md)). Planned: the spoken briefing (DA-7c) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
+| DA-7: conversational delegation and control | Done, except confirmation in Discord and the planned gate descriptors named below. Done: deciding a request where it is shown, on Home and in the Inbox (DA-7a: the `gateDecisions` registry, `POST /api/app/assistant/gates/:ref/decide`, stale-card refusal; see [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)). Done: the chat tools, confirmation receipts and the chat cards (DA-7b: [delegated_conversation.md](delegated_conversation.md), [ADR 0019](adr/0019-conversational-delegation-and-receipts.md)). Done: the spoken briefing (DA-7c: the `spokenBriefing` tool in the person's own portal voice chat; [delegated_conversation.md](delegated_conversation.md#hearing-a-briefing)) | DA-2, DA-3 | Delegating, inspecting and stopping work by talking; deciding a request where it is shown; a spoken briefing |
 | DA-8: wider opportunity sources | Planned | DA-3; DA-4 for plan-driven work | Work proposed from conversations, followed sources, failed runs and CI, with bounded volume |
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
@@ -363,14 +364,15 @@ DA-7 ships in three parts:
 | --- | --- | --- |
 | DA-7a: decide a request where it is shown | Done | The `gateDecisions` registry in `assistantGateService` with descriptors for mission plan approval and start, friend requests and requests to join; `POST /api/app/assistant/gates/:ref/decide`; the same decision buttons on Home and in the Inbox; `STALE_GATE` refusal with the current card. Behaviour: [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown) |
 | DA-7b: chat tools and confirmation receipts | Done | `proposeResponsibility`, `describeDelegatedWork`, `controlDelegatedWork` in the speaker's own private chat; drafts marked `proposedBy: 'model'`; the single-use human confirmation receipt on activate, resume and chat decisions; the model-call scope that makes every authority-raising call refuse inside a tool call; the proposal card and the decision card in portal chat (`surface: 'chat'`). Behaviour: [delegated_conversation.md](delegated_conversation.md); decision: [ADR 0019](adr/0019-conversational-delegation-and-receipts.md) |
-| DA-7c: spoken briefing | Planned | A voice intent over the Home projection that acknowledges nothing |
+| DA-7c: spoken briefing | Done | The `spokenBriefing` tool, offered only in a spoken turn of the person's own portal chat: `services/assistant/spokenBriefing.js` composes the words from `assistantHomeService.project` (the counts Home shows, up to five Needs-you titles, up to three findings), records delivery only (`deliveredRevision`) and acknowledges nothing; refused in a Discord voice channel and a shared table before anything is read. Behaviour: [delegated_conversation.md](delegated_conversation.md#hearing-a-briefing) |
 
 Still planned for the registry: a descriptor for the repair proposal (with
 DA-5, which creates that request) and for review, unblock and answer gates.
 
-Exit scenarios (all met by DA-7a and DA-7b except the last, the spoken
-briefing, which is DA-7c; confirmation is in the portal only, not in a
-Discord DM):
+Exit scenarios (all met: the last, the spoken briefing, by DA-7c and the
+rest by DA-7a and DA-7b; confirmation is in the portal only, not in a
+Discord DM, and the briefing is spoken only in the person's own portal
+voice chat):
 
 - "Keep an eye on X and update my plan" produces a draft with the narrowest
   grant that covers it, shown for confirmation; nothing is active until the
