@@ -4,7 +4,7 @@
  *
  * `project()` builds the `assistant` block of `GET /api/app/home` from
  * records that already exist: responsibilities, initiatives, canonical
- * updates with this person's receipts, typed process observations and the
+ * updates with this person's receipts, the process assessment and the
  * Inbox. It is a READ and nothing else: it never runs a model, a search or
  * a job, never grants or activates anything, never marks an item read,
  * delivered or resolved, and never enables Attention.
@@ -12,8 +12,10 @@
  * Rules the shape encodes:
  *  - Needs you is the Inbox's Needs-you filter (the same query), previewed.
  *  - What changed never repeats a card already shown under Needs you.
- *  - Unseen updates, open requests, running work and blocked processes are
- *    separate numbers; nothing here sums them.
+ *  - Unseen updates, open requests, running work and blocked or degraded
+ *    processes are separate numbers; nothing here sums them.
+ *  - A process's health is judged from its evidence on every read, so it
+ *    stays on its card after the update about it was acknowledged.
  *  - A section that cannot be read is `unknown`, never a reassuring zero:
  *    its name is listed in `partial` and its counts are null.
  *  - Freshness comes from the steward's recorded last pass, not from an
@@ -38,14 +40,13 @@ const loaded = (module_) => {
 };
 const updatesService = () => loaded(requireOptional('./assistantUpdateService', { feature: 'assistant' }));
 const responsibilityService = () => loaded(requireOptional('./assistantResponsibilityService', { feature: 'assistant' }));
+const processService = () => loaded(requireOptional('./assistantProcessService', { feature: 'assistant' }));
 
 const SCHEMA_VERSION = 1;
 const NEEDS_YOU_PREVIEW = 5;
 const BRIEF_PREVIEW = 6;
 const BRIEF_SCAN = 30;
 const RESPONSIBILITY_PREVIEW = 8;
-const BLOCKED_WINDOW_DAYS = 7;
-const OBSERVATION_SCAN = 500;
 /** Where the steward records its last pass, and how old that may be before Home calls its picture stale. */
 const HEARTBEAT_KEY = 'assistant_steward_pass';
 const STALE_AFTER_MS = 15 * 60 * 1000;
@@ -115,7 +116,7 @@ class AssistantHomeService {
         }, null);
         const summary = await section('updates', () => updatesService().summary({ userId: owner, now }), null);
         const running = await section('running', () => this._running(owner), null);
-        const blocked = await section('processes', () => this._blockedProcesses(owner, now), null);
+        const health = await section('processes', () => this._processHealth(owner, now), null);
         const freshness = await section('freshness', () => this._freshness(now), { state: 'unknown', lastPassAt: null });
         const shown = new Set((needsYou?.items || []).map(item => item.update?.id).filter(Boolean));
         const brief = await section('brief', () => this._brief(owner, shown, now), []);
@@ -143,7 +144,7 @@ class AssistantHomeService {
                 component,
                 summary ? summary.components.find(entry => entry.id === component.id) : null,
                 running ? (running.byComponent[component.id] || 0) : null,
-                component.id === 'processes' ? blocked : 0,
+                component.id === 'processes' ? health : { blocked: 0, degraded: 0 },
                 freshness.state
             )),
             needsYou: needsYou ? needsYou.items : [],
@@ -153,19 +154,22 @@ class AssistantHomeService {
     }
 
     /** One component card's signals; null means unknown, not zero. */
-    _component(component, counts, running, blocked, freshness) {
+    _component(component, counts, running, health, freshness) {
         const unavailable = Boolean(component.feature && features.enforcedOff(component.feature));
         const known = counts !== null && counts !== undefined;
         const unseen = known ? counts.unseen : null;
         const needsAction = known ? counts.needsAction : null;
+        const blocked = health ? health.blocked : null;
+        const degraded = health ? health.degraded : null;
         let state = 'quiet';
         if (unavailable) state = 'unavailable';
         else if (!known) state = 'unknown';
         else if (needsAction > 0) state = 'needs_you';
         else if (blocked > 0) state = 'blocked';
+        else if (degraded > 0) state = 'degraded';
         else if (running > 0) state = 'working';
         else if (unseen > 0) state = 'updates';
-        else if (freshness !== 'current') state = 'unknown';
+        else if (health === null || freshness !== 'current') state = 'unknown';
         return {
             id: component.id,
             state,
@@ -173,7 +177,8 @@ class AssistantHomeService {
             unseen: unavailable ? null : unseen,
             needsAction: unavailable ? null : needsAction,
             running: unavailable ? null : running,
-            blocked: unavailable ? null : (blocked ?? null),
+            blocked: unavailable ? null : blocked,
+            degraded: unavailable ? null : degraded,
             freshness: unavailable ? 'unknown' : freshness,
             latestUpdateId: known ? counts.latestUpdateId : null
         };
@@ -262,21 +267,15 @@ class AssistantHomeService {
         return { total, byComponent };
     }
 
-    /** Processes whose most recent typed observation is a failure or a block. */
-    async _blockedProcesses(owner, now) {
-        const cutoff = utcText(new Date(now.getTime() - BLOCKED_WINDOW_DAYS * 86400000));
-        const rows = await db.all(
-            `SELECT processKind, processId, outcome FROM assistant_process_observations
-             WHERE ownerUserId = @owner AND observedAt >= @cutoff
-             ORDER BY observedAt DESC, id DESC LIMIT ${OBSERVATION_SCAN}`,
-            { owner, cutoff }
-        );
-        const latest = new Map();
-        for (const row of rows) {
-            const key = `${row.processKind}:${row.processId}`;
-            if (!latest.has(key)) latest.set(key, row.outcome);
-        }
-        return [...latest.values()].filter(outcome => outcome === 'failed' || outcome === 'blocked').length;
+    /**
+     * How the person's recurring processes are doing, from the assessment
+     * (assistantProcessService.assess). `blocked` counts the ones not doing
+     * their job at all (blocked, stalled or unreachable); `degraded` the ones
+     * running with a problem. Neither depends on what has been read.
+     */
+    async _processHealth(owner, now) {
+        const { counts } = await processService().assess({ userId: owner, now });
+        return { blocked: counts.notWorking, degraded: counts.degraded };
     }
 
     async _freshness(now) {

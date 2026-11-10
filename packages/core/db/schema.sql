@@ -3658,6 +3658,8 @@ CREATE TABLE IF NOT EXISTS assistant_process_contracts (
     revision INTEGER NOT NULL DEFAULT 1,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    -- JSON list of '<kind>:<id>' references this process cannot work without
+    dependsOnJson TEXT,
     UNIQUE (processKind, processId)
 );
 
@@ -3757,3 +3759,50 @@ CREATE TABLE IF NOT EXISTS assistant_run_operations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_run_operations_owner ON assistant_run_operations(ownerUserId, createdAt);
+
+-- Process incidents (DA-5a, ADR 0019): one row per cause and occurrence.
+-- incidentKey is 'cause:<CODE>' for an upstream cause several processes
+-- share, else 'process:<kind>:<id>'. OPEN while anything in it is failing,
+-- RECOVERING through the cooldown, then RESOLVED; a later failure streak is
+-- the next occurrence. Machine codes only. The steward writes these; the
+-- assessment they summarize is computed on read and stored nowhere.
+CREATE TABLE IF NOT EXISTS assistant_process_incidents (
+    id INTEGER PRIMARY KEY,
+    ownerUserId TEXT NOT NULL,
+    incidentKey TEXT NOT NULL,
+    occurrence INTEGER NOT NULL DEFAULT 1,
+    status TEXT NOT NULL DEFAULT 'OPEN' CHECK (status IN ('OPEN', 'RECOVERING', 'RESOLVED')),
+    causeCode TEXT,
+    criticality TEXT NOT NULL DEFAULT 'normal' CHECK (criticality IN ('low', 'normal', 'high')),
+    -- RESOLVED: recovered | merged (its processes joined another incident) | removed
+    resolution TEXT,
+    -- The incident's canonical update (assistant_updates.id)
+    updateId INTEGER,
+    openedAt TEXT NOT NULL,
+    recoveringSince TEXT,
+    resolvedAt TEXT,
+    revision INTEGER NOT NULL DEFAULT 1,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (ownerUserId, incidentKey, occurrence)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_incidents_owner ON assistant_process_incidents(ownerUserId, status);
+
+-- The processes in an incident. role 'failing' is a process that is itself
+-- failing or stalled; 'dependent' is one that cannot run until those do.
+-- name is the process's label when it joined (private user data), kept so
+-- the incident still reads after the process is gone.
+CREATE TABLE IF NOT EXISTS assistant_process_incident_members (
+    incidentId INTEGER NOT NULL REFERENCES assistant_process_incidents(id) ON DELETE CASCADE,
+    ownerUserId TEXT NOT NULL,
+    processKind TEXT NOT NULL,
+    processId TEXT NOT NULL,
+    name TEXT,
+    role TEXT NOT NULL DEFAULT 'failing' CHECK (role IN ('failing', 'dependent')),
+    state TEXT NOT NULL DEFAULT 'failing' CHECK (state IN ('failing', 'recovering', 'clear')),
+    joinedAt TEXT NOT NULL,
+    PRIMARY KEY (incidentId, processKind, processId)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_process_incident_members_owner ON assistant_process_incident_members(ownerUserId);

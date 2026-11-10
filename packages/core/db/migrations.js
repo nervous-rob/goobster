@@ -200,6 +200,8 @@ const COLUMN_MIGRATIONS = [
     ['web_sessions', 'sessionVersion', 'sessionVersion INTEGER'],
     // Parlor / project-table replies keep their "Thinking" timeline.
     ['parlor_messages', 'stepsJson', 'stepsJson TEXT'],
+    // Process contracts: which of the person's processes this one cannot work without.
+    ['assistant_process_contracts', 'dependsOnJson', 'dependsOnJson TEXT'],
 ];
 
 module.exports = { COLUMN_MIGRATIONS };
