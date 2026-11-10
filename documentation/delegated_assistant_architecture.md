@@ -822,7 +822,8 @@ As built, three things differ from the proposal above them:
   update's `occurrence` is still checked.
 - `surface` (`home`, `inbox`, `chat`) is required. `chat` is accepted so the
   DA-7b confirmation card posts to the same route; `decide` is deliberately
-  not a model tool, and a test fails if a file under `utils/tools/` calls it.
+  not a model tool, and a test fails if a chat tool (`utils/tools/`) or a
+  run tool (`services/assistant/runTools/`) calls it.
 
 Mission approval still mints the mission's own human approval receipt
 (section 7) inside the descriptor, bound to the plan revision on the card.
