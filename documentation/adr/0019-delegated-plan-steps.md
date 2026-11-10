@@ -17,7 +17,7 @@ all under `packages/core/`.
 
 DA-4b (opportunities derived from conversations, supersession when a person
 steers, project boards reading the canonical gates) is not part of this
-decision.
+decision; it is [ADR 0021](0021-conversation-requests-and-steering.md).
 
 ## Context
 

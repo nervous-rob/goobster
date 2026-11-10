@@ -195,5 +195,6 @@ Design and reasons: [ADR 0018](adr/0018-delegated-runs.md); for plan steps,
 
 Editing notes you saved, connecting or archiving notes, repository work
 (commit, push, pull requests), acting on processes, findings shared with a
-project's members, and work proposed from what was said in a conversation
-(DA-4b).
+project's members, and work recognized by a model from what was said in a
+conversation. Requests you address to Goobster in a conversation are built:
+see [delegated_conversation_requests.md](delegated_conversation_requests.md).

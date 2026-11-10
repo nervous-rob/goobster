@@ -20,6 +20,14 @@
  *    pass; it never loses one.
  *  - (responsibility, dedupeKey, sourceRevision, attempt) is unique, so
  *    repeated hints and rescans produce one opportunity per source change.
+ *  - a stream source (requests made to Goobster in conversations, ADR
+ *    0021) keeps one cursor over the message log instead of one per
+ *    record: each newer message is proposed at most once, and a message
+ *    that changes direction supersedes the work it replaces
+ *    (./assistant/steering.js).
+ *  - every pass also withdraws proposed or queued attempts whose
+ *    opportunity is gone (the plan moved on, the message was deleted), so
+ *    stale work does not wait in the list to be refused at dispatch.
  *
  * Authority: candidates are derived only for ACTIVE, unexpired grants whose
  * owner has Attention enabled. `claim()` re-checks the grant at the moment a
@@ -114,6 +122,11 @@ class AssistantInitiativeService {
                 id: Number(row.planStepId),
                 planRevision: row.planRevision == null ? null : Number(row.planRevision)
             },
+            // Where a conversation-derived attempt came from (ADR 0021):
+            // references only. Routes add the live excerpt and link.
+            origin: (() => { try { return row.originJson ? JSON.parse(row.originJson) : null; } catch { return null; } })(),
+            // SUPERSEDED: what replaced it ('parlor:<conversation>:<message>', 'plan:<id>').
+            supersededBy: row.supersededBy || null,
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             endedAt: row.endedAt || null
@@ -167,7 +180,7 @@ class AssistantInitiativeService {
      * sourceRevision, attempt 1); an older open attempt at the same
      * opportunity is superseded. Must run inside a transaction.
      */
-    async _propose(responsibility, source, sourceKind) {
+    async _propose(responsibility, source, sourceKind, { status = null, stopCode = null } = {}) {
         const dedupeKey = `${sourceKind}:${source.sourceId}`;
         const existing = await db.get(
             `SELECT * FROM assistant_initiatives
@@ -191,14 +204,17 @@ class AssistantInitiativeService {
             `INSERT INTO assistant_initiatives
                 (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, audience, projectId,
                  sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status,
-                 planStepId, planRevision)
+                 planStepId, planRevision, originJson, stopCode, endedAt)
              VALUES (@rid, @rrev, @owner, @acting, @audience, @projectId,
                  @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason, @status,
-                 @planStepId, @planRevision)`,
+                 @planStepId, @planRevision, @originJson, @stopCode, @endedAt)`,
             {
                 planStepId: source.planStep?.id ?? null,
                 planRevision: source.planStep?.planRevision ?? null,
-                status: rules.autoStart === true ? 'QUEUED' : 'CANDIDATE',
+                originJson: source.origin ? JSON.stringify(source.origin) : null,
+                stopCode,
+                endedAt: status && TERMINAL_STATUSES.includes(status) ? utcText() : null,
+                status: status || (rules.autoStart === true ? 'QUEUED' : 'CANDIDATE'),
                 rid: responsibility.id,
                 rrev: responsibility.revision,
                 owner: responsibility.ownerUserId,
@@ -218,14 +234,22 @@ class AssistantInitiativeService {
 
     /**
      * Compare one responsibility's linked sources with their cursors.
-     * @returns {Promise<{ baselined: number, proposed: number[] }>}
+     * @returns {Promise<{ baselined: number, proposed: number[], superseded: number, steered: string[] }>}
+     *   `steered` lists the references of the changes of direction applied.
      */
     async reconcileResponsibility(responsibilityId, { now = new Date() } = {}) {
-        const outcome = { baselined: 0, proposed: [] };
+        const outcome = { baselined: 0, proposed: [], superseded: 0, steered: [] };
         const responsibility = await db.get('SELECT * FROM assistant_responsibilities WHERE id = @id', { id: Number(responsibilityId) });
         if (!responsibility || !(await this._grantLive(responsibility, now))) return outcome;
         for (const [sourceKind, adapter] of Object.entries(SOURCES)) {
             if (adapter.feature && features.enforcedOff(adapter.feature)) continue;
+            if (typeof adapter.stale === 'function') {
+                outcome.superseded += await this._supersedeStale(await adapter.stale(responsibility));
+            }
+            if (adapter.stream) {
+                await this._reconcileStream(responsibility, sourceKind, adapter, outcome, now);
+                continue;
+            }
             const sources = await adapter.read(responsibility);
             for (const source of sources) {
                 await db.transaction(async () => {
@@ -264,6 +288,122 @@ class AssistantInitiativeService {
         return outcome;
     }
 
+    /**
+     * Withdraw proposed or queued attempts an adapter found stale. Each is
+     * a guarded write: an attempt that was claimed or settled meanwhile is
+     * left to its run.
+     * @param {{ id: number, code: string, supersededBy?: string|null }[]} stale
+     * @returns {Promise<number>} attempts superseded
+     */
+    async _supersedeStale(stale) {
+        let changed = 0;
+        const now = utcText();
+        for (const entry of stale || []) {
+            changed += (await db.run(
+                `UPDATE assistant_initiatives
+                 SET status = 'SUPERSEDED', stopCode = @code, supersededBy = @by, waitReason = NULL,
+                     leaseToken = NULL, leaseExpiresAt = NULL, recheckAfter = NULL,
+                     revision = revision + 1, endedAt = @now, updatedAt = @now
+                 WHERE id = @id AND status IN ('CANDIDATE', 'QUEUED', 'WAITING')`,
+                { id: Number(entry.id), code: String(entry.code), by: entry.supersededBy || null, now }
+            )).changes || 0;
+        }
+        return changed;
+    }
+
+    /**
+     * One pass over a stream source (ADR 0021). The cursor and everything
+     * the newly read messages cause (proposals, superseded work, the
+     * update that says so) commit together, so a crash re-reads the same
+     * messages and finds its own work instead of losing or doubling it.
+     */
+    async _reconcileStream(responsibility, sourceKind, adapter, outcome, now) {
+        const cursor = await db.get(
+            `SELECT * FROM assistant_source_cursors
+             WHERE responsibilityId = @rid AND sourceKind = @kind AND sourceId = @sourceId`,
+            { rid: responsibility.id, kind: sourceKind, sourceId: adapter.STREAM_ID }
+        );
+        const source = await adapter.read(responsibility, { cursor, now });
+        if (!source) return;
+        const steering = require('./assistant/steering');
+        const steered = [];
+        await db.transaction(async () => {
+            if (!cursor) {
+                // What was said before is history, not an order.
+                await db.run(
+                    `INSERT INTO assistant_source_cursors
+                        (responsibilityId, sourceKind, sourceId, sourceRevision, baselineRevision)
+                     VALUES (@rid, @kind, @sourceId, @revision, @authority)`,
+                    { rid: responsibility.id, kind: sourceKind, sourceId: source.sourceId, revision: source.revision, authority: responsibility.authorityRevision }
+                );
+                outcome.baselined += 1;
+                return;
+            }
+            for (const event of source.events) {
+                if (event.steer) {
+                    const applied = await steering.apply({ responsibility, event });
+                    if (applied) steered.push(applied.ref);
+                }
+                if (!event.request) continue;
+                const proposed = await this._proposeRequest(responsibility, event, sourceKind, adapter);
+                if (proposed?.created) outcome.proposed.push(Number(proposed.initiative.id));
+            }
+            if (source.revision !== cursor.sourceRevision) {
+                await db.run(
+                    `UPDATE assistant_source_cursors SET sourceRevision = @revision, updatedAt = @now
+                     WHERE id = @id AND sourceRevision = @previous`,
+                    { id: cursor.id, revision: source.revision, previous: cursor.sourceRevision, now: utcText() }
+                );
+            }
+        });
+        if (steered.length) {
+            outcome.steered.push(...steered);
+            // Filing an Inbox item can push: after the commit, never inside it.
+            await require('./assistantUpdateService').deliverPending({ userId: responsibility.ownerUserId });
+        }
+    }
+
+    /**
+     * Propose one request read from a conversation, unless it is already
+     * work: the same message under another responsibility of this person,
+     * or the same words while an attempt from that conversation is open.
+     * Past the open limit the request is recorded as not started, so it
+     * stays visible and can be tried again, and the log keeps moving.
+     */
+    async _proposeRequest(responsibility, event, sourceKind, adapter) {
+        const mine = await db.get(
+            `SELECT id FROM assistant_initiatives
+             WHERE responsibilityId = @rid AND dedupeKey = @key LIMIT 1`,
+            { rid: responsibility.id, key: `${sourceKind}:${event.sourceId}` }
+        );
+        if (mine) return null;
+        const elsewhere = await db.get(
+            `SELECT id FROM assistant_initiatives
+             WHERE ownerUserId = @owner AND sourceKind = @kind AND sourceId = @sourceId AND responsibilityId <> @rid LIMIT 1`,
+            { owner: responsibility.ownerUserId, kind: sourceKind, sourceId: event.sourceId, rid: responsibility.id }
+        );
+        if (elsewhere) return null;
+        const same = await db.get(
+            `SELECT id FROM assistant_initiatives
+             WHERE ownerUserId = @owner AND sourceKind = @kind AND sourceId LIKE @conversation AND sourceRevision = @revision
+               AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING', 'REVIEW') LIMIT 1`,
+            {
+                owner: responsibility.ownerUserId, kind: sourceKind,
+                conversation: `parlor:${Number(event.conversationId)}:%`, revision: event.revision
+            }
+        );
+        if (same) return null;
+        const open = await db.get(
+            `SELECT COUNT(*) AS n FROM assistant_initiatives
+             WHERE responsibilityId = @rid AND sourceKind = @kind AND status IN ('CANDIDATE', 'QUEUED', 'RUNNING', 'WAITING')`,
+            { rid: responsibility.id, kind: sourceKind }
+        );
+        if (Number(open?.n || 0) >= adapter.OPEN_LIMIT) {
+            return this._propose(responsibility, event, sourceKind, { status: 'CANCELLED', stopCode: 'OPEN_LIMIT' });
+        }
+        return this._propose(responsibility, event, sourceKind);
+    }
+
     /** A bounded pass over active grants (all, or one owner's). */
     async reconcile({ userId = null, limit = RECONCILE_BATCH, now = new Date() } = {}) {
         if (features.enforcedOff('assistant')) return { scanned: 0, baselined: 0, proposed: 0 };
@@ -277,12 +417,14 @@ class AssistantInitiativeService {
         );
         let baselined = 0;
         let proposed = 0;
+        let superseded = 0;
         for (const { id } of rows) {
             const result = await this.reconcileResponsibility(id, { now });
             baselined += result.baselined;
             proposed += result.proposed.length;
+            superseded += result.superseded;
         }
-        return { scanned: rows.length, baselined, proposed };
+        return { scanned: rows.length, baselined, proposed, superseded };
     }
 
     /**
@@ -375,9 +517,10 @@ class AssistantInitiativeService {
             }
             // retry: a new attempt of the same opportunity, under the current grant.
             // A plan-step attempt that lost its step (SUPERSEDED) may be tried
-            // again too: dispatch checks the plan and the step afresh.
+            // again too: dispatch checks the plan and the step afresh. So may
+            // a request a change of direction stopped: the person asks again.
             const retryable = ['FAILED', 'CANCELLED'].includes(row.status)
-                || (row.status === 'SUPERSEDED' && row.planStepId != null);
+                || (row.status === 'SUPERSEDED' && (row.planStepId != null || row.originJson != null));
             if (!retryable) {
                 throw new AssistantInitiativeError('INVALID_TRANSITION', `Cannot retry a ${row.status.toLowerCase()} initiative.`, 409, { status: row.status });
             }
@@ -402,13 +545,14 @@ class AssistantInitiativeService {
                 `INSERT INTO assistant_initiatives
                     (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, audience, projectId,
                      sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status, parentInitiativeId, depth,
-                     planStepId, planRevision)
+                     planStepId, planRevision, originJson)
                  VALUES (@rid, @rrev, @owner, @acting, @audience, @projectId,
                      @sourceKind, @sourceId, @revision, @dedupeKey, @attempt, @title, @reason, 'QUEUED', @parent, @depth,
-                     @planStepId, @planRevision)`,
+                     @planStepId, @planRevision, @originJson)`,
                 {
                     planStepId: row.planStepId ?? null,
                     planRevision: row.planRevision ?? null,
+                    originJson: row.originJson ?? null,
                     rid: row.responsibilityId,
                     rrev: responsibility.revision,
                     owner: row.ownerUserId,
@@ -569,6 +713,18 @@ class AssistantInitiativeService {
             })().catch(() => {});
         }, 2000);
         this._hintTimer.unref?.();
+    }
+
+    /**
+     * A person posted in a conversation. If the message addresses Goobster,
+     * look at their responsibilities soon instead of at the next pass.
+     * Called by parlorService; a missed call only delays the proposal.
+     * Like the bus hints, it does nothing in a process where the steward
+     * has not started listening: the periodic pass finds the message.
+     */
+    noteConversationMessage({ userId, text }) {
+        if (!userId || !this._unsubscribe || features.enforcedOff('assistant')) return;
+        if (require('./assistant/conversationRequests').addressed(text) !== null) this.hint(userId);
     }
 
     /** Subscribe to the domain bus for hints (idempotent). */

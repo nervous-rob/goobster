@@ -100,7 +100,12 @@ const PROCESS_KINDS = {
     followed_source: { table: SCHEDULED_WORK.followed_source.table, owner: 'userId', feature: null }
 };
 
-const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project'];
+/**
+ * `project_chat` and `parlor` (ADR 0021) let a responsibility take requests
+ * the person addresses to Goobster in the linked project's conversations
+ * and in their own Parlor discussions. `personal_chat` is reserved (DA-8).
+ */
+const SOURCE_SCOPES = ['personal_chat', 'knowledge', 'project', 'project_chat', 'parlor'];
 const AUDIENCES = ['private', 'project'];
 const BUDGET_KEYS = ['modelTokens', 'searches', 'computeSeconds', 'concurrentInitiatives', 'repairAttempts', 'externalOperations'];
 const INTERRUPTIONS = ['immediate', 'digest', 'home'];
@@ -513,7 +518,8 @@ class AssistantResponsibilityService {
             if (!plan || Number(plan.projectId) !== Number(record.projectId)) throw bad('planId is not a plan of that project.', 'INVALID_LINK');
         }
         const scopes = parseJson(record.scopesJson, {});
-        if ((scopes.audience === 'project' || (scopes.sources || []).includes('project')) && !record.projectId) {
+        const sources = scopes.sources || [];
+        if ((scopes.audience === 'project' || sources.includes('project') || sources.includes('project_chat')) && !record.projectId) {
             throw bad('A project source or audience needs projectId.', 'INVALID_LINK');
         }
     }

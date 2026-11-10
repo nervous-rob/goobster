@@ -874,6 +874,83 @@ async function main() {
             aiService.chat = original;
         }
     });
+    // Conversation requests and the project board (assistantConversation.spec.js,
+    // ADR 0021): a dedicated person with Attention on, their own project
+    // with its conversation, and a DRAFT plan waiting for their approval.
+    // Safe to call again for the same person: it starts them over.
+    app.post('/e2e/fixtures/assistant-conversation', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const missions = require('@goobster/core/services/projectMissionService');
+            const name = String(req.body?.name || 'Asker');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: name });
+            for (const [table, column] of [
+                ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'], ['assistant_initiatives', 'ownerUserId'],
+                ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
+                ['parlor_conversations', 'ownerId'], ['observatory_projects', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await policies.enroll({ userId, initiative: 'assist' });
+            const project = await observatory.createProject({ userId, name: String(req.body?.project || 'API choice') });
+            const conversation = await parlorService.ensureProjectConversation({
+                project: { id: project.id, ownerId: userId, name: project.name }, members: []
+            });
+            const mission = await missions.create({
+                userId, project: project.slug,
+                title: 'Choose a web framework',
+                objective: 'Decide between framework X and framework Y.',
+                successCriteria: ['A decision is written down'],
+                steps: [{ kind: 'human', title: 'Pick the framework' }]
+            });
+            res.json({ ok: true, projectId: project.id, slug: project.slug, conversationId: conversation.id, missionId: mission.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // The person says something in a conversation (stored exactly as the
+    // portal stores it; no persona answers), then the assistant takes its
+    // next look at their responsibilities.
+    app.post('/e2e/fixtures/assistant-conversation/say', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            const message = await parlorService.postMessage({
+                userId, userName: String(req.body?.name || 'Asker'), conversationId: Number(req.body?.conversationId),
+                content: String(req.body?.text || ''), notify: false
+            });
+            const seen = await require('@goobster/core/services/assistantInitiativeService').reconcile({ userId });
+            res.json({ ok: true, messageId: message.id, ...seen });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One runner pass with a scripted model that reports a finding. No provider.
+    app.post('/e2e/fixtures/assistant-conversation/run', express.json(), async (_req, res) => {
+        const aiService = require('@goobster/core/services/aiService');
+        const original = aiService.chat;
+        const rounds = [[{ id: 'c1', name: 'finish', arguments: JSON.stringify({
+            outcome: 'finding', title: 'Framework X and framework Y compared',
+            summary: 'X is smaller and starts faster; Y has more plugins. Neither was chosen.'
+        }) }]];
+        aiService.chat = async () => ({ content: '', toolCalls: rounds.shift() || [] });
+        try {
+            res.json(await require('@goobster/core/services/assistantRunnerService').tick({ wait: true }));
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        } finally {
+            aiService.chat = original;
+        }
+    });
+    // The pass that files a project's open requests in the person's Inbox.
+    app.post('/e2e/fixtures/assistant-conversation/adopt', express.json(), async (req, res) => {
+        try {
+            const gates = require('@goobster/core/services/assistantGateService');
+            res.json({ ok: true, ...(await gates.adoptProjectGates({ userId: String(req.body?.userId || '') })) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {

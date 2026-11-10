@@ -8,9 +8,13 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 # Planned: delegated assistant architecture
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
-are implemented as recorded in ADR 0016, 0017 and 0018, and the `agent` plan
-step of section 7 as recorded in ADR 0019; the rest, and all of section 13
-except "Deciding a request in place" (13.1), is planned.** Updated 2026-11-10.
+are implemented as recorded in ADR 0016, 0017 and 0018, the `agent` plan
+step of section 7 as recorded in ADR 0019, and the rest of section 7 for
+explicit requests (requests addressed to Goobster in a conversation,
+supersession when a person changes direction) together with the project
+board of section 9.2 as recorded in ADR 0021; the rest, and all of section
+13 except "Deciding a request in place" (13.1) and the explicit-request part
+of the `conversation_request` adapter (13.2), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -402,6 +406,16 @@ queued work based on outdated plan versions, signal active runs to stop at safe
 boundaries, and reassess dependent assumptions. A new note alone does not
 cancel executable work. The reason and remaining external effects stay visible.
 
+*Implemented (DA-4b, ADR 0021):* a steering message a person addresses to
+Goobster in a conversation supersedes that person's unfinished initiatives
+from the same conversation (`SUPERSEDED`, `STEERED`, `supersededBy`), a
+running one by clearing its lease so the run stops at its next tool call;
+one update names what was stopped, the changes already applied and left in
+place, child research, and earlier results worth another look. Plan-step
+initiatives are superseded on every reconcile once their plan revision, plan
+status or step no longer match. See
+[delegated_conversation_requests.md](delegated_conversation_requests.md).
+
 ## 8. Process catalog, repair, and retirement
 
 **Shipped in DA-1d:** the catalog read model, contracts and typed
@@ -533,7 +547,9 @@ action-required filtered view of those same Inbox items**, not a second store,
 queue, route hierarchy, or unread lifecycle. Proposed Inbox filters are All,
 Needs you, and Updates on `/activity/inbox`; Home's Needs you uses the same
 query. Existing Project Needs-you shows the project-filtered view of the same
-source gates. The domain service owns whether an approval/question/review gate
+source gates (implemented in DA-4b as `assistantGateService.projectBoard`,
+a read that attaches the viewer's canonical gate and decision card to the
+project's own list; ADR 0021). The domain service owns whether an approval/question/review gate
 is open, resolved, cancelled, or superseded; projections do not copy that state
 into independently mutable booleans.
 
@@ -863,6 +879,16 @@ reason }] }`:
 | `followed_source` | `followed_sources` entries the person keeps | A kept entry newer than the cursor | The followed source named as a `process` resource |
 | `job_failure` | `observatory_jobs` of the linked project | A new failure cause (error code and file), not each retry | `read` on the project |
 | `ci_verdict` | `project_ci_watches.lastState` | A settled verdict change on a watched branch | `read` on the repository |
+
+*Implemented (DA-4b, ADR 0021):* `conversation_request` exists for explicit
+requests only. It reads the person's own messages in the linked project's
+conversations (`scopes.sources` includes `project_chat`) and in their own
+discussions (`parlor`), recognizes a request or a change of direction by
+fixed text rules with no model, keeps one stream cursor per responsibility,
+stores a reference to the message and never its text, and caps open
+conversation attempts at 10 per responsibility. DA-8 adds `personal_chat`,
+model classification, `maxProposalsPerDay` and the other adapters; the
+explicit rule stays the floor.
 
 Rules:
 
