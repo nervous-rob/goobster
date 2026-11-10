@@ -29,6 +29,8 @@ const ACTIONS = new Set([
     'limits.change',
     'capability-gap.status', 'capability-gap.delete',
     'schedule.pause', 'schedule.resume', 'schedule.trigger', 'schedule.delete',
+    // Delegated work (documentation/delegated_operations.md)
+    'assistant.pause_all', 'assistant.resume_all', 'assistant.set_caps', 'assistant.pilot_decision',
     // Written by the manager's audit reconciliation (documentation/manager.md);
     // `target` is the manager operation id.
     'manager.claim', 'manager.adopt', 'manager.features.set', 'manager.recovery.unlock',

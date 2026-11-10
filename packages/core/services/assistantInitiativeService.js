@@ -577,11 +577,15 @@ class AssistantInitiativeService {
     /**
      * Take a QUEUED attempt for execution (the DA-3 runner's entry point).
      * Re-checks the grant now, enforces the grant's concurrentInitiatives
-     * budget, and returns a lease token every later write must present.
+     * budget and the host's stop-all flag and run caps, and returns a lease
+     * token every later write must present. Claims are serialized across
+     * processes, so two workers can never both take the last free slot.
      * @returns {Promise<{ ok: true, initiative, leaseToken } | { ok: false, code }>}
      */
     async claim({ id, now = new Date() }) {
+        const control = require('./assistantControlService');
         return db.transaction(async () => {
+            await control.lockClaims();
             const row = await this._row(id);
             if (!row) return { ok: false, code: 'NOT_FOUND' };
             if (row.status !== 'QUEUED') return { ok: false, code: 'NOT_QUEUED', status: row.status };
@@ -600,6 +604,8 @@ class AssistantInitiativeService {
                 );
                 if (Number(running?.n || 0) >= budgets.concurrentInitiatives) return { ok: false, code: 'BUDGET_LIMIT' };
             }
+            const admitted = await control.admit({ ownerUserId: row.ownerUserId, now });
+            if (!admitted.ok) return { ok: false, code: admitted.code };
             const leaseToken = crypto.randomBytes(16).toString('hex');
             const updated = await this._write(row, null, {
                 status: 'RUNNING',

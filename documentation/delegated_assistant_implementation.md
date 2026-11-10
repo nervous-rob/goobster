@@ -11,9 +11,10 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 canonical updates and process observations), the read-only DA-2 Home, the
 DA-3 runner, DA-4 (the assistant plan step, carried out under a
 responsibility and verified; requests made in conversation, changes of
-direction and project boards on the canonical gates) and DA-7a (deciding a
-request on Home and in the Inbox) are implemented; everything else in this
-document is still planned.** Updated 2026-11-10 (DA-4a and DA-4b recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
+direction and project boards on the canonical gates), DA-7a (deciding a
+request on Home and in the Inbox) and DA-12a (the host's controls) are
+implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-4a, DA-4b and DA-12a recorded; DA-7 through DA-12 were added as planned increments on 2026-11-09; DA-7a shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -84,17 +85,26 @@ increment done because its proposal exists.
 | DA-9: delivery and interruption | Planned | DA-2 | Live overview, the per-responsibility interruption rule, one daily digest, push and Discord echoes inside the Attention contact budget |
 | DA-10: feedback and learning | Planned | DA-2, DA-3 | Typed feedback that changes selection, timing and authority through separate, inspectable records |
 | DA-11: extended reach | In progress. DA-11c done: findings shared with a project's members under current membership, with the producer shown, only from the project's own sources, never from a run that read private notes, behind the owner-only pilot gate, with receipts deleted when a member leaves ([delegated_project_findings.md](delegated_project_findings.md)). Planned: repository work, saved-note edits, note connections and archiving, and typed outside connectors | DA-3; one sub-increment per capability | Repository work, saved-note edits, note connections and archiving, findings shared with a project, and typed outside connectors |
-| DA-12: operator controls and model evaluation | Planned | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
+| DA-12: operator controls and model evaluation | Done for the host's controls (DA-12a): the installation view, stop-all, the caps policy and the owner-only pilot gate; see [delegated_operations.md](delegated_operations.md). Still planned (DA-12b): the real-model evaluation set. The caps hold the DA-3 defaults until the owner records the pilot's numbers | DA-3 | An installation-wide view and caps for delegated work, recorded pilot numbers, and a real-model evaluation set |
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
 in mind; only the first part of DA-7 (DA-7a, deciding a request where it is
-shown) is implemented. Their contracts are in
+shown) and the host's controls of DA-12 (DA-12a) are implemented. Their
+contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
 DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4
 and DA-5. Nothing in DA-7 through DA-11 is enabled for anyone but the owner
-until the DA-6 pilot decision is recorded.
+until the DA-6 pilot decision is recorded. That rule is enforced per account
+by the pilot gate DA-12a added
+([delegated_operations.md](delegated_operations.md#the-pilot-gate)): each of
+those increments checks `assistantAccessService.allows(userId, capability)`
+with its own capability name (`conversation`, `sources`, `delivery`,
+`feedback`, `reach`), and the host records the decision in Host → Delegated
+work. DA-7a shipped before the gate and does not check it yet; whether
+answering a request in place should be owner-only is an open question for
+DA-7.
 
 DA-2 does not wait for every autonomous capability. It initially projects real
 existing state and explicit empty states. DA-5 observation adapters can be built
@@ -356,6 +366,8 @@ Record each pilot cycle using this template:
 | Human effort | Questions, approvals, corrections and orchestration still required |
 | Delivery | Home/component updates, actual interruptions, duplicates and relevance |
 | Resources | Tokens/search/compute/storage; missing or estimated accounting noted |
+| Model and prompt version | The provider and model id the runs used, and the commit of the run prompt (`assistantRunService._messages`), so a result can be compared across changes |
+| Caps in force | `installationRuns`, `runsPerAccount`, `defaultModelTokens`, `defaultSearches`, `defaultComputeSeconds` as shown in Host → Delegated work, and which of them the host set |
 | Reliability | Failures, revoked access, concurrent edits, retries, unwanted actions |
 | Decision | Keep policy, narrow/widen it explicitly, repair machinery, or stop |
 
@@ -518,15 +530,23 @@ optional evaluation set that runs fixed, fictional responsibilities against
 a real provider and measures refusals, unwanted writes, cost per useful
 result and prompt-injection resistance; it is never part of required CI.
 
+Status: the view, the caps, stop-all and the pilot gate are built (DA-12a,
+[delegated_operations.md](delegated_operations.md)). The evaluation set is
+still planned (DA-12b).
+
 Exit scenarios:
 
 - The host can stop all delegated work; running work halts at its next step.
+  (Built.)
 - The host view shows no private text, and every change writes one audit row.
-- Per-account and installation caps hold under concurrent claims.
-- An unset budget still means the conservative default.
+  (Built.)
+- Per-account and installation caps hold under concurrent claims. (Built.)
+- An unset budget still means the conservative default. (Built.)
 - A page or file that tells the run to exceed its grant changes nothing: the
-  call is refused by authorization, not by the prompt.
+  call is refused by authorization, not by the prompt. (Built for a scripted
+  model; measuring it against a real provider is DA-12b.)
 - Evaluation results are recorded with the model and prompt version used.
+  (Planned, DA-12b. The pilot cycle template above already has the row.)
 
 ## Validation and review requirements
 

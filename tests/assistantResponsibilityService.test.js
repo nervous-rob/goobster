@@ -20,6 +20,7 @@ const db = require('@goobster/core/db');
 const service = require('@goobster/core/services/assistantResponsibilityService');
 const policies = require('@goobster/core/services/attentionPolicyService');
 const privacyService = require('@goobster/core/services/privacyService');
+const identityService = require('@goobster/core/services/identityService');
 const { useState } = require('./helpers/featureFixtures');
 
 const A = '710000000000000001';
@@ -67,6 +68,16 @@ async function active(body = {}, userId = A) {
     await enroll(userId);
     const created = await draft(body, userId);
     return (await service.act({ userId, id: created.id, action: 'activate', expectedRevision: created.revision })).responsibility;
+}
+
+/**
+ * Repository and connector operations are the owner's alone until the pilot
+ * decision is recorded (tests/assistantControlService.test.js covers the
+ * refusal); these cases exercise the grant itself, as the owner.
+ */
+async function asOwner(userId = A) {
+    await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: 'owner' });
+    await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
 }
 
 async function revisionRows(id) {
@@ -248,6 +259,10 @@ describe('editing an active responsibility', () => {
 });
 
 describe('authorize', () => {
+    afterEach(async () => {
+        await db.run('DELETE FROM app_accounts WHERE principalId = @id', { id: A });
+    });
+
     test('allows exactly the granted operation on the granted resource', async () => {
         const grant = await active();
         expect(await check(grant)).toEqual({ ok: true, responsibilityId: grant.id, revision: 2, operation: 'kg.generated.add' });
@@ -257,6 +272,7 @@ describe('authorize', () => {
     });
 
     test('project paths and repository branches narrow the grant', async () => {
+        await asOwner();
         const pid = await project();
         await db.insert(
             `INSERT INTO project_repos (projectId, userId, name, repo, branch)
@@ -316,6 +332,7 @@ describe('authorize', () => {
     });
 
     test('a confirm boundary on an external write requires a human', async () => {
+        await asOwner();
         const grant = await active({ operations: [{ operation: 'external.write', resource: { kind: 'external', ids: ['calendar'] } }] });
         await policies.setInitiative(A, 'delegate');
         const write = () => check(grant, { operation: 'external.write', resource: { kind: 'external', id: 'calendar' } });

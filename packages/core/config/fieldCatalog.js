@@ -67,6 +67,7 @@ const SECTIONS = Object.freeze([
     { id: 'spitball', title: 'Spitball expeditions' },
     { id: 'manager', title: 'Installation manager' },
     { id: 'limits', title: 'Host usage limits (enforced policy)' },
+    { id: 'assistant', title: 'Delegated work caps (enforced policy)' },
     { id: 'defaults', title: 'Instance defaults (fallbacks, not policy)' },
     { id: 'general', title: 'General' }
 ]);
@@ -382,6 +383,42 @@ group({
         env: ['GOOBSTER_LIMITS_RETENTION_DAYS'], runtime: 'config/limitsConfig#retentionDays', default: 90, validate: { min: 1, max: 3650 },
         dbOverride: { store: 'instance_state', key: 'limits', field: 'retentionDays', wins: true },
         description: 'Days usage reservations are kept.'
+    }]
+]);
+
+// --- Delegated work caps: enforced policy, kept in instance_state --------------
+// Bounds repeat config/assistantConfig.js BOUNDS (this file stays pure).
+const ASSISTANT_DB = (field) => ({ store: 'instance_state', key: 'assistantCaps', field, wins: true });
+group({
+    section: 'assistant',
+    feature: 'assistant',
+    help: 'documentation/delegated_operations.md#caps',
+    apply: 'hot'
+}, [
+    ['assistant.installationRuns', 'integer', {
+        env: ['GOOBSTER_ASSISTANT_INSTALLATION_RUNS'], runtime: 'config/assistantConfig#installationRuns', default: 2,
+        validate: { min: 1, max: 20 }, dbOverride: ASSISTANT_DB('installationRuns'),
+        description: 'Delegated runs that may execute at once across the installation.'
+    }],
+    ['assistant.runsPerAccount', 'integer', {
+        env: ['GOOBSTER_ASSISTANT_RUNS_PER_ACCOUNT'], runtime: 'config/assistantConfig#runsPerAccount', default: 1,
+        validate: { min: 1, max: 10 }, dbOverride: ASSISTANT_DB('runsPerAccount'),
+        description: 'Delegated runs one account may have executing at once.'
+    }],
+    ['assistant.defaultModelTokens', 'integer', {
+        env: ['GOOBSTER_ASSISTANT_DEFAULT_MODEL_TOKENS'], runtime: 'config/assistantConfig#defaultModelTokens', default: 200000,
+        validate: { min: 1000, max: 100000000 }, dbOverride: ASSISTANT_DB('defaultModelTokens'),
+        description: 'Model tokens a responsibility may use per UTC day when it sets no budget, and the most its own budget can allow.'
+    }],
+    ['assistant.defaultSearches', 'integer', {
+        env: ['GOOBSTER_ASSISTANT_DEFAULT_SEARCHES'], runtime: 'config/assistantConfig#defaultSearches', default: 20,
+        validate: { min: 0, max: 1000 }, dbOverride: ASSISTANT_DB('defaultSearches'),
+        description: 'Web searches a responsibility may make per UTC day when it sets no budget, and the most its own budget can allow.'
+    }],
+    ['assistant.defaultComputeSeconds', 'integer', {
+        env: ['GOOBSTER_ASSISTANT_DEFAULT_COMPUTE_SECONDS'], runtime: 'config/assistantConfig#defaultComputeSeconds', default: 120,
+        validate: { min: 0, max: 86400 }, dbOverride: ASSISTANT_DB('defaultComputeSeconds'),
+        description: 'Sandbox seconds a responsibility may use per UTC day when it sets no budget, and the most its own budget can allow.'
     }]
 ]);
 

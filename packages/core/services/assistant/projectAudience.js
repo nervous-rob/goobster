@@ -28,6 +28,7 @@
  */
 
 const db = require('../../db');
+const pilotAccess = require('../assistantAccessService');
 
 /** The pilot capability this belongs to (assistantAccessService.CAPABILITIES). */
 const CAPABILITY = 'reach';
@@ -90,7 +91,7 @@ async function decide({ initiative, responsibility, project, privateRead = false
         return { requested: true, shared: false, code: 'NO_PROJECT' };
     }
     const owner = responsibility.ownerUserId;
-    if (!(await require('../assistantAccessService').allows(owner, CAPABILITY))) {
+    if (!(await pilotAccess.allows(owner, CAPABILITY))) {
         return { requested: true, shared: false, code: 'PILOT_ONLY' };
     }
     if (!(await reads(owner, project.id))) return { requested: true, shared: false, code: 'NOT_MEMBER' };
