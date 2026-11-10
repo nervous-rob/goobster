@@ -373,10 +373,15 @@ describe('a request becomes a proposal', () => {
     test('posting a message that addresses Goobster asks for an early look; any other message does not', async () => {
         const { conversationId } = await project();
         const hint = jest.spyOn(initiatives, 'hint').mockImplementation(() => {});
+        // Only where the steward is running: elsewhere the periodic pass finds it.
+        await say(A, conversationId, 'Goobster, please compare Fastify and Hono');
+        expect(hint).not.toHaveBeenCalled();
+        initiatives.listen();
         await say(A, conversationId, 'Lunch?');
         expect(hint).not.toHaveBeenCalled();
-        await say(A, conversationId, 'Goobster, please compare Fastify and Hono');
+        await say(A, conversationId, 'Goobster, please compare Koa and Hono');
         expect(hint).toHaveBeenCalledWith(A);
+        initiatives.stopListening();
     });
 });
 

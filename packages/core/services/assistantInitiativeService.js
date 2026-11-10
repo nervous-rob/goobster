@@ -719,9 +719,11 @@ class AssistantInitiativeService {
      * A person posted in a conversation. If the message addresses Goobster,
      * look at their responsibilities soon instead of at the next pass.
      * Called by parlorService; a missed call only delays the proposal.
+     * Like the bus hints, it does nothing in a process where the steward
+     * has not started listening: the periodic pass finds the message.
      */
     noteConversationMessage({ userId, text }) {
-        if (!userId || features.enforcedOff('assistant')) return;
+        if (!userId || !this._unsubscribe || features.enforcedOff('assistant')) return;
         if (require('./assistant/conversationRequests').addressed(text) !== null) this.hint(userId);
     }
 

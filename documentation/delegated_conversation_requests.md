@@ -204,8 +204,9 @@ progress is still stopped by the run's own checks (`PLAN_STEP_CLOSED`).
 ## Timing
 
 Posting a message that addresses Goobster makes your responsibilities look
-about two seconds later. A periodic pass every 5 minutes finds anything that
-missed. Both read the stored conversation, so a restart loses nothing.
+about two seconds later, in the process that runs the assistant's periodic
+pass. That pass, every 5 minutes, finds anything that missed, including a
+message posted through a separate web process in a split deployment. Both read the stored conversation, so a restart loses nothing.
 
 ## Privacy and what is stored
 
