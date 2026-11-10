@@ -13,14 +13,19 @@
  *                           work, run records and open requests.
  *   controlDelegatedWork    cancels one piece of work, or pauses one
  *                           responsibility. Narrowing only.
+ *   spokenBriefing          (DA-7c) says Home's overview aloud: its counts,
+ *                           what is waiting on the person, up to three
+ *                           findings. It acknowledges nothing.
  *
  * None of them activates, resumes, queues, edits or decides anything, and
  * the services refuse those inside any model tool call
  * (utils/modelCallScope.js), so this file could not do it by mistake.
  *
- * All three answer only in the speaker's own private conversation: not in
+ * All of them answer only in the speaker's own private conversation: not in
  * a guild channel, not in a shared table, not in an unattended turn, not in
- * incognito, and not for an account outside the pilot (DA-12a).
+ * incognito, and not for an account outside the pilot (DA-12a). The
+ * briefing also needs the turn to be a spoken one, in a voice session that
+ * is the person's alone: never a voice channel other people can hear.
  *
  * Spec: documentation/delegated_conversation.md
  */
@@ -28,6 +33,7 @@
 const crypto = require('node:crypto');
 const { features } = require('../../features/featureState');
 const { dmScopeId } = require('../dmScope');
+const logger = require('../logger');
 const { incognitoRefusal } = require('../toolPrivacy');
 
 const FEATURE_ID = 'assistant';
@@ -135,6 +141,50 @@ async function offered(context) {
     if (!userId || features.enforcedOff(FEATURE_ID)) return false;
     if (context?.isAutomation === true || context?.skipHistory === true) return false;
     return require('../../services/assistantAccessService').allows(userId, CAPABILITY);
+}
+
+/** A turn whose reply is spoken: the portal's voice chat, or a Discord voice session. */
+const isVoiceTurn = (context) => context?.spoken === true || context?.isVoiceInteraction === true;
+
+/**
+ * `entry` for the spoken briefing. The same checks, in the same order, and
+ * then: the turn is spoken. A Discord voice channel is a guild's, so it is
+ * refused as shared before anything is read, whoever is in it right now.
+ * @returns {Promise<{ userId: string } | { refusal: string, code: string }>}
+ */
+async function voiceEntry(context) {
+    const who = await entry(context);
+    if (who.code === 'NOT_PRIVATE') {
+        return {
+            code: who.code,
+            refusal: 'A briefing is private. It is never read out where other people can hear it, and this is a shared conversation. '
+                + 'Tell the person to ask in their own voice chat in the portal (the Voice chat button in their chat there), or to open Home in the portal. '
+                + 'Say nothing here about their delegated work, not even whether there is any.'
+        };
+    }
+    if (who.refusal) return who;
+    if (!isVoiceTurn(context)) {
+        return {
+            code: 'NOT_SPOKEN',
+            refusal: '❌ The briefing is for a voice conversation, and this turn is written. Answer from describeDelegatedWork instead (what: "overview" or "requests").'
+        };
+    }
+    return who;
+}
+
+/**
+ * The briefing is shown to the model only on a spoken turn of a person who
+ * could hear it. A check that cannot be made hides it: a voice turn goes on
+ * without the briefing rather than failing.
+ */
+async function offeredInVoice(context) {
+    if (!isVoiceTurn(context)) return false;
+    try {
+        return await offered(context);
+    } catch (error) {
+        logger.warn?.(`[assistant tools] spoken briefing not offered: ${error.message}`);
+        return false;
+    }
 }
 
 /** "read, research: the web" - the normalized grant in plain words, one line per resource. */
@@ -449,6 +499,31 @@ module.exports = {
                 return failure(error);
             }
         }
+    },
+
+    spokenBriefing: {
+        offered: offeredInVoice,
+        definition: {
+            name: 'spokenBriefing',
+            description: 'Brief the person aloud on their delegated work when they ask for it by voice ("brief me", "what needs me?", "what changed?", "catch me up"). It returns the briefing to say: the same counts their Home page shows, the titles of what is waiting on them, and up to three new findings. Say it as given, keeping every number and title, and add nothing of your own. Read-only: hearing it marks nothing as seen and decides nothing, and you cannot do either for them. It answers only in the person\'s own voice chat, never in a voice channel other people can hear.',
+            parameters: { type: 'object', properties: {}, required: [] }
+        },
+        execute: async ({ interactionContext } = {}) => {
+            const who = await voiceEntry(interactionContext);
+            if (who.refusal) return who.refusal;
+            try {
+                const briefing = await require('../../services/assistant/spokenBriefing').brief({ userId: who.userId });
+                return [
+                    'Say this briefing to the person now, in these words or close to them. It is the whole reply: keep every number and every title exactly, and add no item, count or guess of your own.',
+                    '',
+                    briefing.text,
+                    '',
+                    'Saying it marked nothing as seen and decided nothing. Everything stays on Home and in the Inbox until the person reviews or decides it there themselves; you cannot do that for them.'
+                ].join('\n');
+            } catch (error) {
+                return failure(error);
+            }
+        }
     }
 };
 
@@ -456,9 +531,10 @@ module.exports = {
 // module into its catalog, and only tools belong there.
 for (const [name, value] of Object.entries({
     entry,
+    voiceEntry,
     offered,
     describeOperations,
-    TOOL_NAMES: ['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork'],
+    TOOL_NAMES: ['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork', 'spokenBriefing'],
     MAX_PENDING_PROPOSALS
 })) {
     Object.defineProperty(module.exports, name, { value, enumerable: false });

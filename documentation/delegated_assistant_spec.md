@@ -677,10 +677,11 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; six items are available** (answering a request on Home
+**Status: planned; seven items are available** (answering a request on Home
 and in the Inbox; "Delegating and steering by conversation" in portal chat
 and DMs, apart from the items marked planned below, see
-[delegated_conversation.md](delegated_conversation.md); "Reaching you";
+[delegated_conversation.md](delegated_conversation.md); the spoken briefing
+in portal voice chat; "Reaching you";
 repository work; findings shared with a project; and "For the host" at the
 end of this section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
@@ -692,8 +693,9 @@ DA-12. The technical contracts are in
   **draft** shown back to you: what it would look after, exactly what it
   could do, until when, and whether it would start work by itself. Nothing
   is active until you confirm that card. **Available in chat**; the card
-  and its confirmation are in the portal (a Discord DM is pointed there),
-  and by voice is planned.
+  and its confirmation are in the portal (a Discord DM is pointed there).
+  In portal voice chat the same draft can be asked for aloud; confirming it
+  by voice is planned.
 - The assistant asks for the narrowest authority that covers the request
   and says what it left out ("I have not asked to edit files").
 - You can ask what it is working on, why it did something, what it changed,
@@ -708,7 +710,11 @@ DA-12. The technical contracts are in
   ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)),
   **and from a card in portal chat**; the notification is planned.
 - A spoken briefing tells you what needs you and what changed. Hearing it
-  does not mark anything reviewed.
+  does not mark anything reviewed. **Available in your own voice chat in
+  the portal**
+  ([delegated_conversation.md](delegated_conversation.md#hearing-a-briefing));
+  it is never spoken in a Discord voice channel, where others would hear
+  it.
 
 ### Noticing more
 
