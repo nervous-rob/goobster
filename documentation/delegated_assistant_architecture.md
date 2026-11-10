@@ -9,7 +9,8 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
 are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13 except "Deciding a request in place" (13.1), is planned.** Updated 2026-11-09.
+section 13 except "Deciding a request in place" (13.1) and delivery and
+interruption (13.3), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -739,8 +740,9 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with one part implemented: "Deciding a request in place"
-in 13.1 (DA-7a). Nothing else in this section is implemented.** These are the
+**Status: planned, with two parts implemented: "Deciding a request in place"
+in 13.1 (DA-7a) and 13.3, delivery and interruption (DA-9). Nothing else in
+this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names

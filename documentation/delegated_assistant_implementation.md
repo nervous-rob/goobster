@@ -9,9 +9,10 @@ tags: [planning, assistant, responsibilities, home, initiative, implementation, 
 
 **Status: in progress. DA-0 and DA-1 (responsibility grants, initiatives,
 canonical updates and process observations), the read-only DA-2 Home, the
-DA-3 runner and DA-7a (deciding a request on Home and in the Inbox) are
-implemented; everything else in this
-document is still planned.** Updated 2026-11-09 (DA-7 through DA-12 added as planned increments; DA-7a shipped).
+DA-3 runner, DA-7a (deciding a request on Home and in the Inbox) and DA-9
+(live Home, the interruption rule, the daily digest and the shared contact
+path) are implemented; everything else in this
+document is still planned.** Updated 2026-11-10 (DA-7 through DA-12 added as planned increments; DA-7a and DA-9 shipped).
 Code baseline: `c3b773ee835de82df8744eb33d274c94b2e9593c`.
 Revalidate the observations against the implementation checkout before each increment.
 
@@ -86,8 +87,8 @@ increment done because its proposal exists.
 
 DA-7 through DA-12 extend the same loop after the first six increments.
 They were added on 2026-11-09 so the earlier increments are built with them
-in mind; only the first part of DA-7 (DA-7a, deciding a request where it is
-shown) is implemented. Their contracts are in
+in mind; the first part of DA-7 (DA-7a, deciding a request where it is
+shown) and DA-9 (delivery and interruption) are implemented. Their contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot)
 and their behaviour in [product spec section 13](delegated_assistant_spec.md#13-planned-talking-to-it-and-hearing-from-it).
 DA-7, DA-9 and DA-12 need only what has shipped and can start before DA-4

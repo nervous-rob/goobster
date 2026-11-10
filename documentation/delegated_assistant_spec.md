@@ -640,8 +640,9 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; one item is available** (answering a request on Home and
-in the Inbox, marked below); nothing else here is. Increments DA-7 through
+**Status: planned; two items are available** (answering a request on Home
+and in the Inbox, and "Reaching you", both marked below); nothing else here
+is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
