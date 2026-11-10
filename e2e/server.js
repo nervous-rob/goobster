@@ -898,7 +898,10 @@ async function main() {
             if (step === 'pause') {
                 const responsibility = await newest();
                 const responsibilities = require('@goobster/core/services/assistantResponsibilityService');
-                await responsibilities.act({ userId, id: responsibility.id, action: 'pause', expectedRevision: responsibility.revision });
+                // A retried journey may ask twice.
+                if (responsibility.status !== 'PAUSED') {
+                    await responsibilities.act({ userId, id: responsibility.id, action: 'pause', expectedRevision: responsibility.revision });
+                }
                 return res.json({ ok: true });
             }
             if (step === 'sweep') {
