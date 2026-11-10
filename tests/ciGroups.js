@@ -393,6 +393,7 @@ const GROUPS = [
             'assistantGateDecisions',
             'assistantHomeService',
             'assistantInitiativeService',
+            'assistantProjectAudience',
             'assistantPlanStep',
             'assistantProcessService',
             'assistantProjectBoard',

@@ -41,7 +41,9 @@ shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
   next section. Anything not listed is unavailable.
 - **Scopes.** Which sources the work may read (`personal_chat`, `knowledge`,
   `project`, `project_chat`, `parlor`) and who sees its results (`private`
-  or `project`). A project source or audience needs `projectId`.
+  or `project`). A project source or audience needs `projectId`. The `project` audience shares what
+  the work finds with the project's members and is limited to the pilot
+  (`PILOT_ONLY`); see [delegated_project_findings.md](delegated_project_findings.md).
   `project_chat` and `parlor` say where it takes requests you address to
   Goobster ([delegated_conversation_requests.md](delegated_conversation_requests.md));
   `personal_chat` is reserved and not read yet. A purpose never grants access to a

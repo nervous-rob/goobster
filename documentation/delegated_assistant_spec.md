@@ -19,7 +19,9 @@ and, for section 7, [delegated_plan_steps.md](delegated_plan_steps.md) (plan
 steps) and
 [delegated_conversation_requests.md](delegated_conversation_requests.md)
 (requests made in conversation and changes of direction; journey B for
-explicit requests, and the project board of journey G).
+explicit requests, and the project board of journey G) and
+[delegated_project_findings.md](delegated_project_findings.md) (findings
+shared with a project's members).
 
 Updated: **2026-11-10**. Code baseline: `c3b773ee` (2026-10-27).
 Recheck implementation seams against current main before starting each increment.
@@ -656,9 +658,10 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; three items are available** (answering a request on Home
-and in the Inbox, repository work, and "For the host" at the end of this
-section, each marked below); nothing else here is. Increments DA-7 through
+**Status: planned; four items are available** (answering a request on Home
+and in the Inbox, repository work, findings shared with a project, and "For
+the host" at the end of this section, each marked below); nothing else here
+is. Increments DA-7 through
 DA-12. The technical contracts are in
 [architecture section 13](delegated_assistant_architecture.md#13-planned-extensions-beyond-the-first-pilot).
 
@@ -720,6 +723,8 @@ DA-12. The technical contracts are in
 - Suggested edits to notes you saved, shown as a diff you apply; connecting
   and archiving notes, both restorable.
 - Findings shared with a project's current members, with the author shown.
+  **Available (DA-11c)** to the installation's owner while it is in the
+  pilot ([delegated_project_findings.md](delegated_project_findings.md)).
 - Outside services one named resource at a time, each with a plain list of
   what it reads and writes. There is no "watch everything" option.
 

@@ -26,6 +26,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [planSteps, setPlanSteps] = useState(false);
     const [projectRequests, setProjectRequests] = useState(false);
     const [parlorRequests, setParlorRequests] = useState(false);
+    const [shareFindings, setShareFindings] = useState(false);
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
     const [deepResearch, setDeepResearch] = useState(false);
@@ -95,6 +96,9 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         return list;
     }
 
+    /** Findings are shared only for work that comes from the project's own conversations. */
+    const sharing = Boolean(projectId && projectRequests && shareFindings);
+
     async function save(event: React.FormEvent) {
         event.preventDefault();
         const granted = operations();
@@ -112,7 +116,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 ...(outcome.trim() ? { outcome: outcome.trim() } : {}),
                 operations: granted,
                 ...(projectId ? { projectId: Number(projectId) } : {}),
-                ...(sources().length ? { scopes: { sources: sources() } } : {}),
+                ...(sources().length ? { scopes: { sources: sources(), ...(sharing ? { audience: 'project' } : {}) } } : {}),
                 ...(reaches ? { budgets: { externalOperations: daily } } : {}),
                 ...(days ? { expiresAt: new Date(Date.now() + Number(days) * 86400_000).toISOString() } : {}),
                 ...(autoStart ? { rules: { autoStart: true } } : {})
@@ -184,6 +188,22 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                     onChange={(e) => setProjectRequests(e.target.checked)} />{' '}
                                 Take requests you address to {me.assistant.name} in this project&apos;s conversations
                             </label>
+                            {projectRequests && (
+                                <>
+                                    <label>
+                                        <input type="checkbox" checked={shareFindings} data-testid="responsibility-share-findings"
+                                            onChange={(e) => setShareFindings(e.target.checked)} />{' '}
+                                        Share what it finds with this project&apos;s members
+                                    </label>
+                                    {shareFindings && (
+                                        <div className="hint" data-testid="responsibility-share-hint">
+                                            Every member sees each finding, with your name on it, for as long as they are a member. Only what comes from the
+                                            project itself (its plan, or a request made in its conversation) is shared, and the work is not given your private
+                                            notes. A finding that does not qualify comes to you alone, with the reason.
+                                        </div>
+                                    )}
+                                </>
+                            )}
                             {clones.length > 0 && (
                                 <div className="field" data-testid="responsibility-repository">
                                     <label className="field">
@@ -237,7 +257,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                     <div className="hint">
                         Only a message you write yourself that calls {me.assistant.name} by name and asks for something, such as
                         &quot;{me.assistant.name}, compare library X and library Y&quot;. Each becomes proposed work here, within what this
-                        responsibility allows; the result comes to you, not into the conversation. &quot;{me.assistant.name}, stop&quot; or
+                        responsibility allows; the result comes to you{sharing ? ' (and, for a request made in the project, to its members)' : ''}, not into the conversation. &quot;{me.assistant.name}, stop&quot; or
                         &quot;{me.assistant.name}, actually ...&quot; withdraws what you asked for there before. Nobody else&apos;s messages are read.
                     </div>
                 )}

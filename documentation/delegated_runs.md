@@ -303,11 +303,20 @@ Design and reasons: [ADR 0018](adr/0018-delegated-runs.md); for plan steps,
 [ADR 0025](adr/0025-delegated-repository-work.md) and the amendment at the
 end of [ADR 0015](adr/0015-project-repositories.md).
 
+## Findings for a project's members
+
+A run for a responsibility that shares with its project (`scopes.audience:
+"project"`) publishes its finding to the project's members when the project's
+own plan or conversation prompted it, and the run read none of your private
+notes (those tools are not offered to it). Otherwise the finding comes to you
+alone and says why. See
+[delegated_project_findings.md](delegated_project_findings.md). The ledger
+code `SHARE_FAILED` records, with no text, that filing the shared copy failed.
+
 ## Not built yet
 
-Editing notes you saved, connecting or archiving notes (DA-11b), findings
-shared with a project's members (DA-11c), outside connectors (DA-11d),
-acting on processes, and work recognized by a model from what was said in a
+Editing notes you saved, connecting or archiving notes (DA-11b), outside
+connectors (DA-11d), acting on processes, and work recognized by a model from what was said in a
 conversation. Requests you address to Goobster in a conversation are built:
 see [delegated_conversation_requests.md](delegated_conversation_requests.md).
 Repository work is built and starts with the installation's owner only;

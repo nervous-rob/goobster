@@ -14,8 +14,9 @@ explicit requests (requests addressed to Goobster in a conversation,
 supersession when a person changes direction) together with the project
 board of section 9.2 as recorded in ADR 0021; the rest, and all of section
 13 except "Deciding a request in place" (13.1), the explicit-request part
-of the `conversation_request` adapter (13.2), repository work (13.5, ADR
-0025) and the host's controls (13.6), is planned.** Updated 2026-11-10.
+of the `conversation_request` adapter (13.2), repository work (ADR 0025)
+and findings for a project's members (both 13.5) and the host's controls
+(13.6), is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -768,9 +769,10 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, with three parts implemented: "Deciding a request in place"
-in 13.1 (DA-7a), repository work in 13.5 (DA-11a) and the host's controls
-in 13.6 (DA-12a). Nothing else in this section is implemented.** These are the
+**Status: planned, with four parts implemented: "Deciding a request in place"
+in 13.1 (DA-7a), repository work (DA-11a) and findings for a project's
+members (DA-11c) in 13.5, and the host's controls in 13.6 (DA-12a). Nothing
+else in this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -1043,6 +1045,21 @@ membership (`assistant_updates` visibility). Additional rules: the producer
 is shown; private sources are not quoted into a project finding unless the
 grant's `scopes.audience` is `project` and the source is the project's own;
 a member's receipt is deleted when they leave.
+
+*Implemented (DA-11c):* `services/assistant/projectAudience.js` decides, at
+publish time, whether a run's finding is shared: the grant asks
+(`scopes.audience: 'project'`), the pilot gate allows `reach`, the owner still
+reads the project, the initiative's source is the project's own
+(`project_plan`, `project_plan_step`, or a `conversation_request` whose origin
+is that project's conversation) and the run read no `source: 'private'` tool
+(which a sharing run is never offered). Otherwise the finding is private and
+the owner's notice says why. Visibility is the existing membership rule;
+`assistant_updates.producer_user_id` is shown through `present()` as
+`producer: { name, you }`, and `responsibilityId`/`initiativeId` are visible
+to the producer only. A receipt is deleted by `forgetMemberReceipts` when a
+member leaves or is removed, by `forgetProject` when the project is deleted,
+and by `sweepProjectReceipts` in the retention pass for anything missed.
+Behaviour: [delegated_project_findings.md](delegated_project_findings.md).
 
 **Outside connectors.** A connector is a typed adapter:
 
