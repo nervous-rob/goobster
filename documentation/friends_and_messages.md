@@ -110,7 +110,10 @@ the search still answers from the installation's members.
    never orphans a button. A failed DM is `dmSent: false`, never an error.
 
 Answering - `respond({ userId, requestId, accept })`,
-`POST /api/app/friends/requests/:id/accept|decline`, or the buttons -
+`POST /api/app/friends/requests/:id/accept|decline`, the Discord buttons,
+or the request's decision card on Home and in the Inbox (which calls the
+same `respond`; see
+[assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)) -
 requires the caller to be the **addressee** of a **pending** row
 (`NO_SUCH_REQUEST`, `REQUEST_SETTLED`). Accepting checks the friend cap
 (`TOO_MANY_FRIENDS`, 1000) and tells the requester in their Inbox (kind

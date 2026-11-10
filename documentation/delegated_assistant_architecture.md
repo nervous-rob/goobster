@@ -8,8 +8,10 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 # Planned: delegated assistant architecture
 
 **Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
-are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13 except the host's controls in 13.6, is planned.** Updated 2026-11-09.
+are implemented as recorded in ADR 0016, 0017 and 0018, and the `agent` plan
+step of section 7 as recorded in ADR 0019; the rest, and all of section 13
+except "Deciding a request in place" (13.1) and the host's controls (13.6),
+is planned.** Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -364,6 +366,17 @@ with active decisions/criteria and directly used claims, not a speculative
 dependency graph over every stored sentence.
 
 ## 7. Project continuity and plan authorization
+
+**Shipped in DA-4a:** the `agent` step kind, its link to a durable run
+through the `READY -> STARTING -> RUNNING` protocol, the delegation's own
+authorization kind and grant revision on the step, dispatch-time
+invalidation when the approved plan revision moved, deterministic
+verification, and the rule that keeps private context out of a shared
+project. See [delegated_plan_steps.md](delegated_plan_steps.md) and
+[ADR 0019](adr/0019-delegated-plan-steps.md). Source references from
+conversations, matching existing work before drafting, and supersession when
+the user changes direction (the first and last paragraphs below) are still
+planned.
 
 Preserve source conversation/message references from Study, ordinary Parlor,
 and project discussions. Match existing work before drafting more. A private
@@ -739,8 +752,9 @@ and the relevant portal journeys:
 
 ## 13. Planned extensions beyond the first pilot
 
-**Status: planned, except the host's controls in 13.6 (DA-12a), which are
-implemented; nothing else in this section is.** These are the
+**Status: planned, with two parts implemented: "Deciding a request in place"
+in 13.1 (DA-7a) and the host's controls in 13.6 (DA-12a). Nothing else in
+this section is implemented.** These are the
 contracts for increments DA-7 through DA-12 of the
 [implementation plan](delegated_assistant_implementation.md). They are
 written now so DA-3 through DA-6 do not close off the seams they need. Names
@@ -784,22 +798,49 @@ Rules:
 - Tools act only in the speaker's personal scope. In a guild channel they
   answer that delegation is managed privately and link to the portal.
 
-**Deciding a request in place.** Each gate kind registers a descriptor once:
+**Deciding a request in place.** *Implemented for Home and the Inbox
+(DA-7a); the chat card and the repair-proposal descriptor are planned.* The
+shipped behaviour and API are in
+[assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown).
+Each gate kind registers a descriptor once
+(`assistantGateService.gateDecisions`, descriptors in
+`services/assistantGateDescriptors.js`):
 
 ```text
 gateDecisions[kind] = {
-  describe(gate, viewer)  -> { title, detail, options: [{ id, label, danger }] }
-  decide(gate, viewer, optionId, { occurrence, revision }) -> domain result
+  describe(gate, viewer)  -> { state, title, detail, outcome, revision,
+                               options: [{ id, label, effect, danger }] } | null
+  decide(gate, viewer, optionId, { occurrence, revision, surface, gateway }) -> { message }
+  settle(gate, viewer)    -> optional; reconciles the canonical update
+  staleCodes              -> the domain's own "already settled" error codes
 }
 ```
 
-`POST /api/app/assistant/gates/:updateId/decide { option, occurrence,
-revision }` resolves the update's gate reference, checks the viewer may act
-on it, and calls the owning domain service (mission approval, friend
-request, access request, repair proposal). It never writes the outcome
-itself; the update's gate resolves through `resolveGate` as it does today.
-A stale occurrence or revision answers 409 with the current card. Home,
-the Inbox and the chat card render the same descriptor.
+`POST /api/app/assistant/gates/:ref/decide { option, occurrence, revision,
+surface }` resolves the gate reference, checks the viewer may act on it
+(`describe` returns `null` otherwise), and calls the owning domain service:
+mission approval and start, friend request, access request. It never writes
+the outcome itself; an update's gate resolves through `resolveGate` as it
+does today. A stale occurrence or revision, a settled request, or a domain
+"already settled" refusal answers 409 `STALE_GATE` with the current card in
+`error.details.current`, and nothing is decided. Home and the Inbox render
+the same card.
+
+As built, three things differ from the proposal above them:
+
+- `:ref` is an update id **or** `inbox-<item id>`. Friend and access
+  requests are Inbox items with their own needs-you predicate (section 4),
+  not canonical updates, so they have no update id.
+- `revision` is derived from the owning record (`plan:<planRevision>`, the
+  request's creation time), not the update's `materialRevision`. The
+  update's `occurrence` is still checked.
+- `surface` (`home`, `inbox`, `chat`) is required. `chat` is accepted so the
+  DA-7b confirmation card posts to the same route; `decide` is deliberately
+  not a model tool, and a test fails if a chat tool (`utils/tools/`) or a
+  run tool (`services/assistant/runTools/`) calls it.
+
+Mission approval still mints the mission's own human approval receipt
+(section 7) inside the descriptor, bound to the plan revision on the card.
 
 **Spoken briefing.** A voice intent reads `assistantHomeService.project`
 and speaks counts, the Needs-you titles and up to three findings. It calls
@@ -1005,6 +1046,8 @@ planned (DA-12b).**
   Until `instance_state.assistantPilot` records `everyone`, only an active
   operator account passes. The DA-11 grant operations already in the
   vocabulary are gated at activation and in `authorize()` (`PILOT_ONLY`).
+  "Deciding a request in place" (13.1) shipped before the gate and does not
+  call it yet.
 - **Evaluation set (planned).** `tests/live/assistant.live.test.js` (skipped
   without keys, never in required CI): fixed fictional responsibilities and
   seeded sources, run against a real provider. It records, per model and

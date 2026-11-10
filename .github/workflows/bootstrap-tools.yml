@@ -1,0 +1,210 @@
+name: Bootstrap tools
+
+# The third-party tools the installer builds download (appimagetool, the AppImage
+# runtime, WinSW) are pinned by SHA-256 in scripts/bootstrap-pins.json. This
+# workflow keeps Goobster's own copy of each one and keeps the pins current, so
+# that an upstream rebuild or a moved URL cannot break a build.
+#
+#   verify   (pull requests) every pinned file is obtainable and passes its
+#            hash, signature and commit checks. The verified files are kept as
+#            an artifact; nothing is published.
+#   mirror   (main: after a merge, daily, on demand) uploads the pinned files
+#            the `bootstrap-tools` release lacks, then proves the release holds
+#            every pinned file. It only ever publishes what main's pins name,
+#            which a person merged.
+#   refresh  (daily, on demand) asks upstream for a newer build of each tool,
+#            verifies it and opens a pull request that updates the pins. It
+#            never merges and never publishes.
+#
+# `scripts/bootstrap-tools.js` does the work; this file only runs it.
+# Documentation: documentation/bootstrap_tools.md.
+
+on:
+  workflow_dispatch:
+    inputs:
+      refresh:
+        description: 'Look for newer upstream builds and open a pull request when one verifies.'
+        type: boolean
+        default: true
+  schedule:
+    - cron: '23 5 * * *'
+  pull_request:
+    paths:
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/bootstrap-keys/**'
+      - 'scripts/bootstrap-tools.js'
+      - 'scripts/lib/bootstrapTools.js'
+      - 'scripts/lib/download.js'
+      - '.github/workflows/bootstrap-tools.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'scripts/bootstrap-pins.json'
+      - 'scripts/bootstrap-keys/**'
+      - 'scripts/bootstrap-tools.js'
+      - 'scripts/lib/bootstrapTools.js'
+      - 'scripts/lib/download.js'
+      - '.github/workflows/bootstrap-tools.yml'
+
+permissions:
+  contents: read
+
+# A publish is never cancelled half way; a later run waits for it.
+concurrency:
+  group: bootstrap-tools-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: verify the pins
+    if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Output location (outside the checkout)
+        shell: bash
+        run: echo "CANDIDATES=$RUNNER_TEMP/bootstrap-tool-candidates" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Every pinned file is obtainable and passes its checks
+        run: node scripts/bootstrap-tools.js verify --stage "$CANDIDATES"
+
+      - name: What a merge would publish (nothing is uploaded)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/bootstrap-tools.js publish --dry-run --staged "$CANDIDATES"
+
+      # Kept so the publish that follows a merge still has the verified bytes
+      # if upstream replaces its files in between. Not served to any build.
+      - name: Keep the verified files
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-tool-candidates
+          path: ${{ runner.temp }}/bootstrap-tool-candidates
+          if-no-files-found: error
+          retention-days: 90
+
+  mirror:
+    name: publish to the mirror and verify it
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      actions: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Output location (outside the checkout)
+        shell: bash
+        run: echo "STAGED=$RUNNER_TEMP/bootstrap-tool-staged" >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Upload the pinned files the mirror lacks
+        shell: bash
+        run: |
+          if node scripts/bootstrap-tools.js publish --target "$GITHUB_SHA"; then exit 0; fi
+          echo "::notice::Retrying with the files that verify and refresh runs kept; each is checked against its pin before it is used."
+          mkdir -p "$STAGED"
+          gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=bootstrap-tool-candidates&per_page=10" \
+            --jq '.artifacts[] | select(.expired == false) | .id' > "$RUNNER_TEMP/candidate-ids.txt"
+          while read -r id; do
+            if gh api "repos/$GITHUB_REPOSITORY/actions/artifacts/$id/zip" > "$RUNNER_TEMP/candidates-$id.zip"; then
+              unzip -q -n "$RUNNER_TEMP/candidates-$id.zip" -d "$STAGED/$id" || echo "::warning::kept artifact $id could not be unpacked"
+            else
+              echo "::warning::kept artifact $id could not be downloaded"
+            fi
+          done < "$RUNNER_TEMP/candidate-ids.txt"
+          node scripts/bootstrap-tools.js publish --staged "$STAGED" --target "$GITHUB_SHA"
+
+      - name: The mirror holds every pinned file
+        run: node scripts/bootstrap-tools.js verify --require-mirror
+
+  refresh:
+    name: look for newer upstream builds
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.refresh))
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: write
+    env:
+      # A pull request opened with the workflow's own token starts no
+      # pull-request workflows. An owner-supplied token (optional) does.
+      GH_TOKEN: ${{ secrets.BOOTSTRAP_TOOLS_PR_TOKEN || github.token }}
+      OWN_TOKEN: ${{ secrets.BOOTSTRAP_TOOLS_PR_TOKEN != '' }}
+    steps:
+      - name: Output locations (outside the checkout)
+        shell: bash
+        run: |
+          {
+            echo "CANDIDATES=$RUNNER_TEMP/bootstrap-tool-candidates"
+            echo "REPORT=$RUNNER_TEMP/bootstrap-tools-refresh.md"
+          } >> "$GITHUB_ENV"
+
+      - uses: actions/checkout@v5
+        with:
+          token: ${{ secrets.BOOTSTRAP_TOOLS_PR_TOKEN || github.token }}
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '22'
+
+      - name: Ask upstream for newer builds and verify them
+        id: refresh
+        run: node scripts/bootstrap-tools.js refresh --write --stage "$CANDIDATES" --report "$REPORT"
+
+      - name: Keep the verified files
+        if: steps.refresh.outputs.changed == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: bootstrap-tool-candidates
+          path: ${{ runner.temp }}/bootstrap-tool-candidates
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Open the pull request (never merged here)
+        if: steps.refresh.outputs.changed == 'true'
+        shell: bash
+        env:
+          SUMMARY: ${{ steps.refresh.outputs.summary }}
+        run: |
+          # One branch per proposal, named after the proposed pins. A proposal
+          # that already has a pull request, open or closed, is not made again,
+          # so closing one declines that build.
+          branch="bootstrap-tools/refresh-$(sha256sum scripts/bootstrap-pins.json | cut -c1-12)"
+          existing="$(gh pr list --head "$branch" --state all --json number --jq '.[0].number // empty')"
+          if [ -n "$existing" ]; then
+            echo "::notice::These builds were already proposed in #$existing."
+            exit 0
+          fi
+          if ! git ls-remote --exit-code --heads origin "$branch" > /dev/null; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git checkout -b "$branch"
+            git add scripts/bootstrap-pins.json
+            git commit -m "chore(packaging): take newer upstream builds of pinned bootstrap tools" -m "$SUMMARY"
+            git push origin "$branch"
+          fi
+          if [ "$OWN_TOKEN" != 'true' ]; then
+            printf '\n%s\n' 'This pull request was opened with the workflow token, so pull-request workflows did not start by themselves. The Linux and Windows bootstrap workflows were started on this branch and report on its head commit. Close and reopen the pull request to start the rest of CI.' >> "$REPORT"
+          fi
+          if ! gh pr create --base main --head "$branch" --title "chore(packaging): newer upstream builds of pinned bootstrap tools ($SUMMARY)" --body-file "$REPORT"; then
+            echo "::error::The branch $branch was pushed but the pull request could not be opened. Allow GitHub Actions to create pull requests (Settings > Actions > General), or open it by hand: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/compare/main...$branch"
+            exit 1
+          fi
+          if [ "$OWN_TOKEN" != 'true' ]; then
+            gh workflow run linux-bootstrap.yml --ref "$branch"
+            gh workflow run windows-bootstrap.yml --ref "$branch"
+          fi

@@ -68,6 +68,11 @@ const OPERATIONS = {
     'kg.archive': { kinds: ['knowledge'], action: 'compute', category: 'knowledge', features: ['knowledge'] },
     'file.edit': { kinds: ['project'], action: 'compute', category: 'observatory', features: [] },
     'sandbox.run': { kinds: ['project'], action: 'compute', category: 'observatory', features: ['sandbox'] },
+    // ADR 0019: dispatch and settle an `agent` step of a plan revision a
+    // person approved and started. It is not approving, starting or
+    // completing a plan (there is no operation for those), and the work
+    // inside the step still needs its own operations.
+    'plan.step.execute': { kinds: ['project'], action: 'compute', category: 'observatory', features: [] },
     'process.repair': { kinds: ['process'], action: 'compute', category: 'schedule', features: [] },
     'process.pause': { kinds: ['process'], action: 'compute', category: 'schedule', features: [] },
     'process.archive': { kinds: ['process'], action: 'compute', category: 'schedule', features: [] },
@@ -197,6 +202,8 @@ const BRANCH_PATTERN = /^(?!.*\.\.)[A-Za-z0-9._/-]+\*?$/;
 const REPO_PATTERN = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
 /** Repository writes that reach GitHub must name their branches. */
 const BRANCH_REQUIRED = new Set(['repo.push', 'pr.create']);
+/** Project operations that are about the project as a whole, never a path in it. */
+const PATHLESS_OPERATIONS = new Set(['plan.step.execute']);
 const PROCESS_REF = new RegExp(`^(${Object.keys(PROCESS_KINDS).join('|')}):(\\d+)$`);
 
 function normalizeResource(raw, operation, index) {
@@ -229,6 +236,10 @@ function normalizeResource(raw, operation, index) {
     }
     if (spec.fields.includes('paths')) {
         const paths = stringList(raw.paths, `${field}.paths`, LIMITS.paths, { pattern: PATH_PREFIX, code: 'INVALID_RESOURCE' });
+        // A plan step is not a file: narrow what the step may write with file.edit paths.
+        if (paths.length && PATHLESS_OPERATIONS.has(operation)) {
+            throw bad(`${field}.paths is not used for "${operation}".`, 'INVALID_RESOURCE');
+        }
         if (paths.length) resource.paths = paths;
     }
     if (spec.fields.includes('projectId')) {

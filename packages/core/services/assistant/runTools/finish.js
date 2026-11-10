@@ -8,6 +8,9 @@ const { clip, SUMMARY_CHARS } = require('./shared');
 module.exports = {
     finish: {
         effect: 'read',
+        final: true,
+        // A plan-step run reports with reportStepResult instead.
+        available: ({ planStep }) => !planStep,
         definition: {
             name: 'finish',
             description: 'Report the result and end the task. outcome "finding" = there is something the person should know; "no_change" = you checked and nothing needs their attention. Call this exactly once, last.',

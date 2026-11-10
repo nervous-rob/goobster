@@ -17,6 +17,7 @@ const responsibilities = require('../../services/assistantResponsibilityService'
 const initiatives = require('../../services/assistantInitiativeService');
 const updates = require('../../services/assistantUpdateService');
 const processes = require('../../services/assistantProcessService');
+const gates = require('../../services/assistantGateService');
 const control = require('../../services/assistantControlService');
 const access = require('../../services/assistantAccessService');
 
@@ -129,6 +130,24 @@ function mountAssistant(app, ctx, h) {
     // { until } - hide an open gate from Needs you; it stays open.
     app.post('/api/app/assistant/updates/:id/snooze', requireAuth, route(async (req) => ({
         snoozed: await updates.snooze({ userId: req.webUser.userId, id: req.params.id, until: req.body?.until })
+    })));
+
+    // --- Deciding a request where it is shown -------------------------------
+    // { option, occurrence, revision, surface: home | inbox | chat }
+    // `:ref` is an update id, or `inbox-<item id>` for a request that lives
+    // on its own Inbox item (a friend request, a request to join). The card
+    // on Home, in the Inbox and in chat all post here; the owning domain
+    // service decides. A settled, reopened or changed request answers 409
+    // STALE_GATE with the current card in `details.current`.
+    app.post('/api/app/assistant/gates/:ref/decide', requireAuth, route(async (req) => gates.decide({
+        userId: req.webUser.userId,
+        userName: req.webUser.userName || null,
+        ref: req.params.ref,
+        option: req.body?.option,
+        occurrence: req.body?.occurrence,
+        revision: req.body?.revision,
+        surface: req.body?.surface,
+        gateway: ctx.gateway
     })));
 
     // --- Process catalog (read model + contracts) ---------------------------

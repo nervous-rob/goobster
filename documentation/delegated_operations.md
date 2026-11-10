@@ -121,7 +121,10 @@ records the pilot decision, only the owner has them.**
 - **The owner** is any active account with the operator role. An
   installation with two operators has two owners; a disabled or demoted
   operator is not one.
-- **What is gated today.** None of DA-7 through DA-11 has shipped. The
+- **What is gated today.** Of DA-7 through DA-11 only deciding a request
+  where it is shown (DA-7a, [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown))
+  has shipped. It shipped before this gate existed and does not check it:
+  every person can answer their own requests on Home and in the Inbox. The
   grant vocabulary already contains the `reach` operations (`repo.commit`,
   `repo.push`, `pr.create`, `kg.saved.amend`, `kg.edge`, `kg.archive`,
   `external.write`), so those are gated now: for anyone but the owner,

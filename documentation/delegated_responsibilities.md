@@ -1,7 +1,7 @@
 ---
 title: Delegated responsibilities
 kind: reference
-summary: What a responsibility is, how it is created, activated, paused and revoked, the operation vocabulary it grants, how authority is checked at dispatch, the initiatives derived from its linked sources, canonical updates and their read receipts, the process catalog with typed observations, retention, and the portal API. Nothing runs under a responsibility yet.
+summary: What a responsibility is, how it is created, activated, paused and revoked, the operation vocabulary it grants, how authority is checked at dispatch, the initiatives derived from its linked sources, canonical updates and their read receipts, the process catalog with typed observations, retention, and the portal API. How queued work is carried out is in delegated_runs.md and delegated_plan_steps.md.
 tags: [assistant, responsibilities, delegation, attention, authority, privacy, initiatives, updates, processes]
 feature: assistant
 ---
@@ -19,14 +19,15 @@ setting. It does nothing until its owner activates it.
 grant record, its lifecycle and the authority check (DA-1a), the
 [initiatives](#initiatives) derived from a grant's linked sources (DA-1b),
 [canonical updates](#updates) with per-person read receipts (DA-1c), and the
-[process catalog](#processes) with typed observations (DA-1d). **No background
-work runs under a responsibility yet.** Initiatives wait to be queued and
-claimed by the runner that DA-3 adds. Durable runs, knowledge change sets,
-process repair and the assistant-first Home are still planned (see the
+[process catalog](#processes) with typed observations (DA-1d). Queued
+initiatives are carried out by the runner DA-3 added
+([delegated_runs.md](delegated_runs.md)), which also enforces the token,
+search and compute budgets; DA-4a added the assistant steps of a project plan
+([delegated_plan_steps.md](delegated_plan_steps.md)). Process repair and work
+proposed from conversations are still planned (see the
 [product spec](delegated_assistant_spec.md) and the
-[architecture](delegated_assistant_architecture.md)). Budgets are recorded, and
-only `concurrentInitiatives` is enforced so far. The decisions behind the shape
-are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
+[architecture](delegated_assistant_architecture.md)). The decisions behind the
+shape are in [ADR 0016](adr/0016-delegated-responsibilities.md) and
 [ADR 0017](adr/0017-initiatives-updates-processes.md).
 
 ## What a responsibility holds
@@ -76,6 +77,7 @@ permission and no wildcard resource.
 | `kg.archive` | Archive (not delete) notes | `knowledge` |
 | `file.edit` | Edit project files | `project` |
 | `sandbox.run` | Run code in the project sandbox | `project` |
+| `plan.step.execute` | Carry out the assistant steps of the project's plan, only in a plan revision a person approved and started. Never approves, starts or completes a plan. Takes no `paths` | `project` |
 | `process.repair` | Repair a recurring process | `process` |
 | `process.pause` | Pause a process | `process` |
 | `process.archive` | Archive a process | `process` |
@@ -216,6 +218,12 @@ material revision he saw.
   owner's Attention policy is off.
 - An initiative's title names the kind of change ("Linked goal changed"). It
   never copies the goal's text.
+- One source is **standing** instead: the ready assistant steps of the linked
+  project's plan (`project_plan_step`, for a grant with `plan.step.execute`).
+  A step that is ready is waiting work, not history, so it is proposed on the
+  first look too, once per approved plan revision and retry. Its title is
+  "Plan step ready: " and the step's title, which the project's people wrote
+  for the plan. See [delegated_plan_steps.md](delegated_plan_steps.md).
 
 **Statuses.** `CANDIDATE`, `QUEUED`, `RUNNING`, `WAITING`, `REVIEW`, then one
 of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
@@ -226,8 +234,9 @@ of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
 
 - `queue` approves a candidate or waiting attempt under the grant as it is now.
 - `cancel` stops an open attempt.
-- `retry` opens a new attempt of a failed or cancelled one, unless another
-  attempt at it is already open (`ALREADY_OPEN`).
+- `retry` opens a new attempt of a failed or cancelled one (or a superseded
+  plan-step attempt), unless another attempt at it is already open
+  (`ALREADY_OPEN`).
 - `accept` and `reject` close an attempt that is in `REVIEW`.
 
 Every action is a compare-and-swap on `revision`.
@@ -366,6 +375,7 @@ All routes act as the signed-in person. Another person's responsibility answers
 | `GET /api/app/assistant/updates` | Updates you can see, newest first (`?component=`, `?responsibilityId=`, `?limit=` up to 50, `?cursor=`). The first page also returns `counts` (`unseen`, `needsAction`, `complete`) and per-component counts. A cursor belongs to the person it was issued to. |
 | `POST /api/app/assistant/updates/acknowledge` | `{ items: [{ id, revision }] }`, up to 100 items. Each result is `acknowledged`, `older_revision` or `not_found`. |
 | `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
+| `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface }`: decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
 | `GET /api/app/assistant/processes` | Your recurring processes and whether each has a contract. |
 | `GET /api/app/assistant/processes/:kind/:id` | One process: its description, contract, recent observations and existing delivery history. |
 | `PUT /api/app/assistant/processes/:kind/:id/contract` | Create or replace its contract (`expectedRevision` to replace). |

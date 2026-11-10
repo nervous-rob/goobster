@@ -15,7 +15,8 @@ Each file belongs to exactly one CI group in `tests/ciGroups.js`:
 
 | Group | Scope |
 | --- | --- |
-| Core infrastructure | Database, migrations, gateways, locks, configuration |
+| Core infrastructure (`core`) | Database, migrations, gateways, locks, configuration, feature gating |
+| Installer and lifecycle (`install`) | Manager, installer, payloads, service adapters, managed Postgres, releases, updates |
 | Chat and AI | Providers, prompts, tools, conversations, message queues |
 | Portal and collaboration | Web APIs, sessions, applets, Parlor, sharing |
 | Knowledge and memory | Spitball, graphs, memory, research expeditions |
@@ -205,18 +206,66 @@ expect(mockService.method).toHaveBeenCalledWith(args);
 
 `.github/workflows/ci.yml`:
 
-1. `test (sqlite)` — lint, smoke, typecheck, web build, then named Jest groups
-2. `test (postgres)` — the same groups against pgvector
-3. `sandbox isolation` — bubblewrap canary
-4. `test (playwright)` — portal journeys
-5. `both engines` — fails unless sqlite, postgres, and isolation succeeded
-6. `test (live integrations)` — main pushes and `workflow_dispatch` only
+1. `static checks` — lint, smoke, typecheck, web build, group inventory
+2. `test (sqlite, <shard>)` — the named Jest groups on SQLite, in two
+   parallel shards
+3. `test (postgres, <shard>)` — the same groups against pgvector, in four
+   parallel shards
+4. `sandbox isolation` — bubblewrap canary
+5. `both engines` — fails unless static checks, every SQLite shard, every
+   Postgres shard and isolation succeeded. This is the check to require.
+6. `test (playwright, <n>/5)` — portal journeys in five parallel shards,
+   and `test (playwright)`, which reports them as one check
+7. `test (docker postgres)` — the Docker-managed Postgres specs against a
+   real daemon
+8. `test (live integrations)` — main pushes and `workflow_dispatch` only
+
+A shard is one matrix entry of an engine job and runs the groups in its
+`groups` list. Every group runs exactly once per engine; the inventory
+(`npm run test:groups:check`, also `tests/ciGroups.test.js`) fails if a
+group is in no shard of an engine or in two, and if the manifest drifts
+from Jest's discovered files. Which groups share a shard is a timing
+decision and lives in the workflow; the two engines are split differently
+because Postgres is slower.
 
 Group steps are ordinary named steps in each engine job (not a composite
-action) so the Actions step list shows names, statuses, and timings.
-They use `continue-on-error` so a later group still runs after an
-earlier failure. The job fails at the end. An inventory step fails if the
-manifest drifts from Jest's discovered files.
+action) so the Actions step list shows names, statuses, and timings; a
+group that belongs to another shard shows as skipped. They use
+`continue-on-error` so a later group still runs after an earlier failure.
+The shard fails at the end unless every one of its groups wrote a passing
+result (`scripts/require-test-groups.js`).
+
+The journeys are split by `scripts/e2e-shard.js`, which balances the spec
+files by the seconds recorded in `e2e/shard-durations.json`. A new
+`e2e/*.spec.js` is picked up without being registered anywhere. Each shard
+starts its own server and throwaway database, so a spec must not depend on
+what a spec in another file left behind. To see the split or run one shard:
+
+```bash
+node scripts/e2e-shard.js --plan 5      # every shard, its files and weight
+node scripts/e2e-shard.js 2 5           # run shard 2 of 5
+```
+
+A shard runs about four minutes of journeys and its job limit is 15
+minutes. Keep it that way as journeys are added: `tests/ciGroups.test.js`
+fails when the longest planned shard passes half of the limit, and the fix
+is to add the next number to the `shard` list of `test-e2e` in `ci.yml`
+(nothing else changes; the plan is recomputed for the new count). To
+refresh the recorded seconds, run
+`npx playwright test --reporter=json > report.json` and then
+`node scripts/e2e-shard.js --record report.json`. A failed or cancelled
+shard uploads its Playwright traces as the artifact
+`playwright-shard-<n>`.
+
+Every journey of a shard talks to one `e2e/server.js` process. A fixture
+route there has to be safe to call twice, because CI retries a failed
+journey once and the retry seeds again, and it must not be able to end
+the process: `e2e/harness.spec.js` holds both. A long run of journeys
+failing in about 100 ms each means that server has exited; look for the
+first failure before the run, not at the run.
+
+A new push to a pull request cancels the run for the previous push. Runs
+on `main` are never cancelled.
 
 The job summary lists group, engine, passed/failed/skipped counts, duration,
 and skip reasons (live credentials: names and status only).

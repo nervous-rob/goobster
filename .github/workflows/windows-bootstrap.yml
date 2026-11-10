@@ -24,6 +24,10 @@ name: Windows bootstrap
 
 on:
   workflow_dispatch:
+  # Weekly on main, so a pinned tool that no longer resolves (documentation/bootstrap_tools.md)
+  # fails here and not on an unrelated pull request.
+  schedule:
+    - cron: '11 7 * * 1'
   pull_request:
     paths:
       - 'bootstrap/windows/**'
@@ -33,6 +37,8 @@ on:
       - 'scripts/windows-bootstrap-proof.ps1'
       - 'scripts/native-service-recovery-proof.js'
       - 'scripts/lib/bootstrapStage.js'
+      - 'scripts/lib/bootstrapTools.js'
+      - 'scripts/lib/download.js'
       - 'scripts/lib/payload*'
       - 'documentation/windows_install.md'
       - '.github/workflows/windows-bootstrap.yml'
@@ -46,6 +52,8 @@ on:
       - 'bootstrap/windows/**'
       - 'scripts/package-bootstrap-win32.js'
       - 'scripts/bootstrap-pins.json'
+      - 'scripts/lib/bootstrapTools.js'
+      - 'scripts/lib/download.js'
       - 'scripts/windows-bootstrap-proof.ps1'
       - 'scripts/native-service-recovery-proof.js'
       - 'apps/manager/privileged/**'

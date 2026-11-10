@@ -17,6 +17,19 @@ const STOP_TEXT: Record<string, string> = {
     OPERATION_UNCERTAIN: 'A step may or may not have happened. Check before trying again.',
     REPLAN_REQUIRED: 'The responsibility changed since this was proposed.',
     LEASE_EXPIRED: 'It was interrupted and will pick up where it left off.',
+    VERIFICATION_FAILED: 'The step\'s result did not pass the check: a file it had to produce is missing, empty or was not written by this run. The plan step is marked failed. Retry it from the plan.',
+    STEP_BLOCKED: 'It reported that it could not finish the plan step. The plan step is marked failed. Retry it from the plan.',
+    NO_STEP_REPORT: 'It ended without reporting a result for the plan step. The plan step is marked failed. Retry it from the plan.',
+    STEP_FAILED: 'The plan step failed. Retry it from the plan.',
+    EVIDENCE_LIMIT: 'The plan already holds as much evidence as it can. The plan step is marked failed.',
+    PLAN_NOT_ACTIVE: 'The plan is no longer running, so this step was not started.',
+    PLAN_REVISION_STALE: 'The plan changed since this was proposed. It is proposed again once the new plan is approved and started.',
+    STEP_NOT_ELIGIBLE: 'The plan step was already taken, finished or skipped.',
+    PLAN_STEP_CLOSED: 'Someone closed the plan step, so this work was stopped.',
+    PLAN_BUDGET: 'The plan has used up the assistant runs it allows.',
+    PLAN_BLOCKED: 'The plan is blocked. It tries again once the plan is running.',
+    RESOURCE_UNAVAILABLE: 'You no longer have access to the project, so this was stopped.',
+    PRIVATE_CONTEXT: 'It read your private knowledge, so it was not allowed to write into a shared project.',
     INTERRUPTED_BY_RESTORE: 'It was working when this installation was restored from a backup, so it was stopped. A step may or may not have happened. Check before trying again.',
     ASSISTANT_PAUSED: 'The host has stopped all delegated work for now. It continues when they resume it.'
 };
@@ -29,7 +42,9 @@ export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[];
                 const run = item.run;
                 const note = item.status === 'WAITING' || item.status === 'FAILED' || item.status === 'REVIEW'
                     ? (STOP_TEXT[item.stopCode || ''] || (item.waitReason === 'responsibility' ? 'Waiting for the responsibility to be active again.' : null))
-                    : null;
+                    : (item.status === 'SUPERSEDED' || item.status === 'CANCELLED') && item.planStep
+                        ? (STOP_TEXT[item.stopCode || ''] || null)
+                        : null;
                 return (
                     <li key={item.id} className="assistant-work-item" data-testid="initiative-row">
                         <div className="assistant-row-main">
@@ -57,7 +72,7 @@ export function WorkList({ items, busy, onAct }: { items: AssistantInitiative[];
                             {['QUEUED', 'RUNNING', 'WAITING'].includes(item.status) && (
                                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'cancel')}>Cancel</button>
                             )}
-                            {['FAILED', 'CANCELLED'].includes(item.status) && (
+                            {(['FAILED', 'CANCELLED'].includes(item.status) || (item.status === 'SUPERSEDED' && item.planStep)) && (
                                 <button type="button" className="btn subtle" disabled={busy} onClick={() => onAct(item, 'retry')}>Try again</button>
                             )}
                         </div>

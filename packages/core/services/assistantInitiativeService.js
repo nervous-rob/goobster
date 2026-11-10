@@ -10,7 +10,9 @@
  *  - `reconcile()` reads each linked source's current material state and
  *    compares it with `assistant_source_cursors`. The first scan after
  *    activation records a baseline and proposes nothing (history is
- *    evidence, not new orders). A later change proposes one candidate and
+ *    evidence, not new orders), except for a standing source (a READY
+ *    agent step of an approved plan, ADR 0019), which is waiting work and
+ *    is proposed on first sight. A later change proposes one candidate and
  *    advances the cursor in the same transaction, so a crash between the
  *    two re-proposes (deduplicated) instead of losing the change.
  *  - domain events are hints that schedule an early reconcile for the
@@ -107,6 +109,11 @@ class AssistantInitiativeService {
             parentInitiativeId: row.parentInitiativeId == null ? null : Number(row.parentInitiativeId),
             depth: Number(row.depth || 0),
             recheckAfter: row.recheckAfter || null,
+            // The agent plan step this attempt carries out (ADR 0019), if any.
+            planStep: row.planStepId == null ? null : {
+                id: Number(row.planStepId),
+                planRevision: row.planRevision == null ? null : Number(row.planRevision)
+            },
             createdAt: row.createdAt,
             updatedAt: row.updatedAt,
             endedAt: row.endedAt || null
@@ -183,10 +190,14 @@ class AssistantInitiativeService {
         const id = await db.insert(
             `INSERT INTO assistant_initiatives
                 (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, audience, projectId,
-                 sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status)
+                 sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status,
+                 planStepId, planRevision)
              VALUES (@rid, @rrev, @owner, @acting, @audience, @projectId,
-                 @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason, @status)`,
+                 @sourceKind, @sourceId, @revision, @dedupeKey, 1, @title, @reason, @status,
+                 @planStepId, @planRevision)`,
             {
+                planStepId: source.planStep?.id ?? null,
+                planRevision: source.planStep?.planRevision ?? null,
                 status: rules.autoStart === true ? 'QUEUED' : 'CANDIDATE',
                 rid: responsibility.id,
                 rrev: responsibility.revision,
@@ -230,7 +241,13 @@ class AssistantInitiativeService {
                              VALUES (@rid, @kind, @sourceId, @revision, @authority)`,
                             { rid: responsibility.id, kind: sourceKind, sourceId: source.sourceId, revision: source.revision, authority: responsibility.authorityRevision }
                         );
-                        outcome.baselined += 1;
+                        if (!adapter.standing) {
+                            outcome.baselined += 1;
+                            return;
+                        }
+                        // Waiting work, not history: proposed on first sight.
+                        const first = await this._propose(responsibility, source, sourceKind);
+                        if (first.created) outcome.proposed.push(Number(first.initiative.id));
                         return;
                     }
                     if (cursor.sourceRevision === source.revision) return;
@@ -357,7 +374,11 @@ class AssistantInitiativeService {
                     { status: 'CANCELLED', stopCode: 'REJECTED_BY_OWNER', endedAt: now }, { allowFrom: ['REVIEW'] })) };
             }
             // retry: a new attempt of the same opportunity, under the current grant.
-            if (!['FAILED', 'CANCELLED'].includes(row.status)) {
+            // A plan-step attempt that lost its step (SUPERSEDED) may be tried
+            // again too: dispatch checks the plan and the step afresh.
+            const retryable = ['FAILED', 'CANCELLED'].includes(row.status)
+                || (row.status === 'SUPERSEDED' && row.planStepId != null);
+            if (!retryable) {
                 throw new AssistantInitiativeError('INVALID_TRANSITION', `Cannot retry a ${row.status.toLowerCase()} initiative.`, 409, { status: row.status });
             }
             if (expectedRevision !== undefined && expectedRevision !== null && Number(expectedRevision) !== Number(row.revision)) {
@@ -380,10 +401,14 @@ class AssistantInitiativeService {
             const newId = await db.insert(
                 `INSERT INTO assistant_initiatives
                     (responsibilityId, responsibilityRevision, ownerUserId, actingUserId, audience, projectId,
-                     sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status, parentInitiativeId, depth)
+                     sourceKind, sourceId, sourceRevision, dedupeKey, attempt, title, reason, status, parentInitiativeId, depth,
+                     planStepId, planRevision)
                  VALUES (@rid, @rrev, @owner, @acting, @audience, @projectId,
-                     @sourceKind, @sourceId, @revision, @dedupeKey, @attempt, @title, @reason, 'QUEUED', @parent, @depth)`,
+                     @sourceKind, @sourceId, @revision, @dedupeKey, @attempt, @title, @reason, 'QUEUED', @parent, @depth,
+                     @planStepId, @planRevision)`,
                 {
+                    planStepId: row.planStepId ?? null,
+                    planRevision: row.planRevision ?? null,
                     rid: row.responsibilityId,
                     rrev: responsibility.revision,
                     owner: row.ownerUserId,
@@ -452,11 +477,13 @@ class AssistantInitiativeService {
     /**
      * Settle a claimed attempt. A worker whose lease was reaped or whose
      * attempt was cancelled holds a stale token and is refused (fencing).
-     * @param {{ id, leaseToken, status: 'WAITING'|'REVIEW'|'COMPLETED'|'FAILED', outcome?, waitReason?, stopCode?, recheckAfter? }} params
+     * SUPERSEDED is for an attempt whose opportunity is gone before any
+     * work was done (its plan step was taken, closed, or its plan moved on).
+     * @param {{ id, leaseToken, status: 'WAITING'|'REVIEW'|'COMPLETED'|'FAILED'|'SUPERSEDED', outcome?, waitReason?, stopCode?, recheckAfter? }} params
      */
     async settle({ id, leaseToken, status, outcome = null, waitReason = null, stopCode = null, recheckAfter = null }) {
-        if (!['WAITING', 'REVIEW', 'COMPLETED', 'FAILED'].includes(status)) {
-            throw new AssistantInitiativeError('INVALID_TRANSITION', 'A claimed initiative settles as WAITING, REVIEW, COMPLETED or FAILED.');
+        if (!['WAITING', 'REVIEW', 'COMPLETED', 'FAILED', 'SUPERSEDED'].includes(status)) {
+            throw new AssistantInitiativeError('INVALID_TRANSITION', 'A claimed initiative settles as WAITING, REVIEW, COMPLETED, FAILED or SUPERSEDED.');
         }
         if (status === 'COMPLETED' && outcome && !OUTCOMES.includes(outcome)) {
             throw new AssistantInitiativeError('INVALID_OUTCOME', `outcome must be one of ${OUTCOMES.join(', ')}.`);
@@ -556,6 +583,15 @@ class AssistantInitiativeService {
         const bus = require('./domainEventBus');
         this._unsubscribe = bus.subscribe(['attention.*', 'mission.*'], (event) => {
             if (event?.payload?.userId) this.hint(event.payload.userId);
+            // A plan event concerns everyone whose responsibility is linked to
+            // that project, not only the person who caused it (ADR 0019).
+            const projectId = Number(event?.payload?.projectId);
+            if (String(event?.topic || '').startsWith('mission.') && Number.isSafeInteger(projectId) && projectId > 0) {
+                db.all(
+                    "SELECT DISTINCT ownerUserId FROM assistant_responsibilities WHERE projectId = @projectId AND status = 'ACTIVE'",
+                    { projectId }
+                ).then(rows => rows.forEach(row => this.hint(row.ownerUserId))).catch(() => {});
+            }
         });
         // An expedition a run was waiting on has ended: wake the run now
         // instead of at its recheck time.

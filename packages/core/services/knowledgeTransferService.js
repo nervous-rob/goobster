@@ -178,6 +178,27 @@ class KnowledgeTransferService {
         };
     }
 
+    /**
+     * May work that has read a person's private knowledge write into this
+     * project? Only when nobody else can read what it writes: the person
+     * owns the project and it has no members and no share link (the same
+     * precondition as reference mode, ADR 0010 §3). Delegated runs ask this
+     * before publishing into a project (ADR 0019).
+     * @param {{ userId: string, project: { id: number, ownerId: string } | null }} params
+     * @returns {Promise<boolean>}
+     */
+    async privateContextAllowed({ userId, project } = {}) {
+        if (!project || !userId || String(project.ownerId) !== String(userId)) return false;
+        const other = await db.get(
+            `SELECT 1 AS found FROM project_members WHERE projectId = @projectId
+             UNION ALL
+             SELECT 1 AS found FROM observatory_share_links WHERE projectId = @projectId
+             LIMIT 1`,
+            { projectId: project.id }
+        );
+        return !other;
+    }
+
     /** Who reads a discussion: its owner and every accepted member. */
     async discussionAudience(conversation) {
         const members = await db.all(
