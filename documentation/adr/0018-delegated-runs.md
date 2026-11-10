@@ -175,7 +175,7 @@ Two observations shaped the design:
 ## Amendment (DA-11a): the tool contract grew for effects that leave
 
 [ADR 0025](0025-delegated-repository-work.md) adds repository work and, for
-it, four things to the tool contract in decision 1: `needs` may be async, an
+it, four things to the tool contract of decisions 1 and 5: `needs` may be async, an
 optional `guard(args, ctx)` runs after `authorize()` and before the call is
 journaled as dispatched, `publishes: 'external'` is refused after any
 private read, and `budget: 'externalOperations'` is a daily cap counted from

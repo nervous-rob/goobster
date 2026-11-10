@@ -99,7 +99,7 @@ The tool contract of ADR 0018 gained four things for this.
    is prepared locally that could not leave.
 
 7. **After a crash the outside is asked before anything is tried again**
-   (ADR 0018 decision 2), by tool:
+   (ADR 0018 decision 3), by tool:
 
 | Tool | Asked | Done | Absent | Unknown (review) |
 | --- | --- | --- | --- | --- |
