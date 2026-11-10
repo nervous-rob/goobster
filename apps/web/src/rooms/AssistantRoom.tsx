@@ -9,7 +9,7 @@ import { useToast } from '../hooks/useToast';
 import { useConfirm } from '../hooks/useConfirm';
 import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
-import type { AssistantInitiative, Responsibility } from '../lib/types';
+import type { AssistantInitiative, AssistantLearnedRate, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
 import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './assistant/grants';
 import { ConnectorList } from './assistant/ConnectorList';
@@ -132,6 +132,24 @@ export function AssistantRoom() {
         }
     }
 
+    async function resetRate(rate: AssistantLearnedRate) {
+        if (!await confirm('Forget what your feedback taught about this source? It proposes at its usual rate again. The feedback you gave stays on record.')) return;
+        setBusy(rate.responsibilityId);
+        try {
+            await api.resetLearnedRate(rate.responsibilityId, rate.adapter);
+            toast('Reset. This source proposes at its usual rate again.');
+        } catch (error) {
+            toast((error as Error).message, true);
+        } finally {
+            await refresh();
+            setBusy(null);
+        }
+    }
+
+    const learnedByResponsibility = new Map<number, AssistantLearnedRate[]>();
+    for (const rate of list.data?.learned || []) {
+        learnedByResponsibility.set(rate.responsibilityId, [...(learnedByResponsibility.get(rate.responsibilityId) || []), rate]);
+    }
     const all = list.data?.responsibilities || [];
     const shown = all.filter((item) => showArchived || item.status !== 'ARCHIVED');
     return (
@@ -163,9 +181,11 @@ export function AssistantRoom() {
                             <div className="list-card">
                                 {shown.map((item) => (
                                     <ResponsibilityRow key={item.id} item={item} projects={projectById}
-                                        work={workByResponsibility.get(item.id) || []} busy={busy === item.id}
+                                        work={workByResponsibility.get(item.id) || []} learned={learnedByResponsibility.get(item.id) || []}
+                                        busy={busy === item.id}
                                         onAct={(target, action, question) => void act(target, action, question)}
-                                        onActOnWork={(work, action) => void actOnWork(work, action)} />
+                                        onActOnWork={(work, action) => void actOnWork(work, action)}
+                                        onResetRate={(rate) => void resetRate(rate)} />
                                 ))}
                             </div>
                         )}

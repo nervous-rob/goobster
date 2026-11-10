@@ -169,7 +169,8 @@ class AssistantInitiativeService {
             `SELECT * FROM assistant_initiatives WHERE ${filters.join(' AND ')} ORDER BY id DESC LIMIT @limit`,
             params
         );
-        return { initiatives: rows.map(row => this.present(row)) };
+        // `rows` are the stored rows, for services that read more than the presentation.
+        return { initiatives: rows.map(row => this.present(row)), rows };
     }
 
     /** Is this grant one we may derive work for right now? */
@@ -246,6 +247,15 @@ class AssistantInitiativeService {
     }
 
     /**
+     * The proposals this source may still take today (null = uncapped): the
+     * adapter's own daily cap, lowered by what its owner's feedback taught
+     * (./assistant/sourceWeights.js, ADR 0031). Feedback can only lower it.
+     */
+    async _capFor(responsibility, sourceKind, adapter, source) {
+        return require('./assistant/sourceWeights').capFor({ responsibilityId: responsibility.id, sourceKind, adapter, source });
+    }
+
+    /**
      * Compare one responsibility's linked sources with their cursors.
      * @returns {Promise<{ baselined: number, proposed: number[], superseded: number, steered: string[], capped: number }>}
      *   `steered` lists the references of the changes of direction applied;
@@ -302,7 +312,7 @@ class AssistantInitiativeService {
                             return;
                         }
                         // Waiting work, not history: proposed on first sight.
-                        const first = await this._propose(responsibility, source, sourceKind, { cap: adapter.dailyCap?.(source) ?? null, now });
+                        const first = await this._propose(responsibility, source, sourceKind, { cap: await this._capFor(responsibility, sourceKind, adapter, source), now });
                         if (first.created) outcome.proposed.push(Number(first.initiative.id));
                         if (first.capped) outcome.capped += 1;
                         return;
@@ -310,7 +320,7 @@ class AssistantInitiativeService {
                     if (cursor.sourceRevision === remembered) return;
                     const { initiative, created, capped } = source.observe
                         ? { initiative: null, created: false, capped: false }
-                        : await this._propose(responsibility, source, sourceKind, { cap: adapter.dailyCap?.(source) ?? null, now });
+                        : await this._propose(responsibility, source, sourceKind, { cap: await this._capFor(responsibility, sourceKind, adapter, source), now });
                     await db.run(
                         `UPDATE assistant_source_cursors SET sourceRevision = @revision, updatedAt = @now
                          WHERE id = @id AND sourceRevision = @previous`,
@@ -441,7 +451,7 @@ class AssistantInitiativeService {
         if (Number(open?.n || 0) >= adapter.OPEN_LIMIT) {
             return this._propose(responsibility, event, sourceKind, { status: 'CANCELLED', stopCode: 'OPEN_LIMIT' });
         }
-        return this._propose(responsibility, event, sourceKind, { cap: adapter.dailyCap?.(event) ?? null, now });
+        return this._propose(responsibility, event, sourceKind, { cap: await this._capFor(responsibility, sourceKind, adapter, event), now });
     }
 
     /**
@@ -460,6 +470,7 @@ class AssistantInitiativeService {
         if (!responsibility) throw notFound();
         const wanted = (() => { try { return JSON.parse(responsibility.scopesJson || '{}').sources || []; } catch { return []; } })();
         const open = await require('./assistantAccessService').allows(userId, 'sources');
+        const sourceWeights = require('./assistant/sourceWeights');
         const rows = [];
         for (const [sourceKind, adapter] of Object.entries(SOURCES)) {
             const scopes = adapter.SCOPES || [adapter.SCOPE || sourceKind];
@@ -469,11 +480,17 @@ class AssistantInitiativeService {
             const found = locked ? { sources: 0, ignored: 0, examples: [] } : await adapter.lookback(responsibility, { now });
             rows.push({ sourceKind, scopes: named, locked, ...found });
         }
+        // Each count against the cap as it is now, which feedback may have lowered.
+        const today = [];
+        for (const entry of await require('./assistant/proposalCaps').today({ responsibilityId: responsibility.id, now })) {
+            const learned = await sourceWeights.get(responsibility.id, entry.sourceKind);
+            today.push(learned ? { ...entry, cap: sourceWeights.describe(learned).cap ?? entry.cap } : entry);
+        }
         return {
             cutoff: utcText(now),
             locked: rows.some(row => row.locked),
             sources: rows,
-            today: await require('./assistant/proposalCaps').today({ responsibilityId: responsibility.id, now })
+            today
         };
     }
 
@@ -575,28 +592,34 @@ class AssistantInitiativeService {
             const row = await this._row(id);
             if (!row || row.ownerUserId !== String(userId)) throw notFound();
             const now = utcText();
+            // What the person does with a proposal or a result is weak feedback
+            // on the source it came from (documentation/delegated_feedback.md).
+            const decided = async (result) => {
+                await require('./assistantFeedbackService').noteDecision(row, action);
+                return result;
+            };
             if (action === 'queue') {
                 const responsibility = await db.get('SELECT * FROM assistant_responsibilities WHERE id = @id', { id: row.responsibilityId });
                 if (!responsibility || !(await this._grantLive(responsibility))) {
                     throw new AssistantInitiativeError('RESPONSIBILITY_INACTIVE', 'Its responsibility is not active, or Attention is off.', 409);
                 }
                 // Queuing is the owner re-approving the attempt under the grant as it is now.
-                return { initiative: this.present(await this._write(row, expectedRevision,
+                return decided({ initiative: this.present(await this._write(row, expectedRevision,
                     { status: 'QUEUED', waitReason: null, stopCode: null, responsibilityRevision: responsibility.revision },
-                    { allowFrom: ['CANDIDATE', 'WAITING'] })) };
+                    { allowFrom: ['CANDIDATE', 'WAITING'] })) });
             }
             if (action === 'cancel') {
-                return { initiative: this.present(await this._write(row, expectedRevision,
+                return decided({ initiative: this.present(await this._write(row, expectedRevision,
                     { status: 'CANCELLED', stopCode: 'CANCELLED_BY_OWNER', leaseToken: null, leaseExpiresAt: null, endedAt: now },
-                    { allowFrom: OPEN_STATUSES })) };
+                    { allowFrom: OPEN_STATUSES })) });
             }
             if (action === 'accept') {
-                return { initiative: this.present(await this._write(row, expectedRevision,
-                    { status: 'COMPLETED', outcome: row.outcome || 'DONE', endedAt: now }, { allowFrom: ['REVIEW'] })) };
+                return decided({ initiative: this.present(await this._write(row, expectedRevision,
+                    { status: 'COMPLETED', outcome: row.outcome || 'DONE', endedAt: now }, { allowFrom: ['REVIEW'] })) });
             }
             if (action === 'reject') {
-                return { initiative: this.present(await this._write(row, expectedRevision,
-                    { status: 'CANCELLED', stopCode: 'REJECTED_BY_OWNER', endedAt: now }, { allowFrom: ['REVIEW'] })) };
+                return decided({ initiative: this.present(await this._write(row, expectedRevision,
+                    { status: 'CANCELLED', stopCode: 'REJECTED_BY_OWNER', endedAt: now }, { allowFrom: ['REVIEW'] })) });
             }
             // retry: a new attempt of the same opportunity, under the current grant.
             // A plan-step attempt that lost its step (SUPERSEDED) may be tried

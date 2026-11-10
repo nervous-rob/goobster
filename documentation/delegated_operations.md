@@ -120,7 +120,7 @@ records the pilot decision, only the owner has them.**
 | `conversation` | DA-7 | Delegating, inspecting and stopping work by talking |
 | `sources` | DA-8 | Work proposed from more kinds of source: the scopes `personal_chat`, `followed_source`, `job_failure`, `ci_verdict` ([delegated_opportunity_sources.md](delegated_opportunity_sources.md)) |
 | `delivery` | DA-9 | Live overview, the interruption rule, the digest, push and Discord echoes |
-| `feedback` | DA-10 | Feedback that changes selection, timing and authority |
+| `feedback` | DA-10 | Typed feedback on findings and proposed work, and what is learned from it ([delegated_feedback.md](delegated_feedback.md)) |
 | `reach` | DA-11 | Repository work, editing saved notes, connecting and archiving notes, outside connectors |
 | `repair` | DA-5c | Repairing a process that keeps failing: the offer to run it once more, repair work under a `process.repair` grant, and applying a repair ([process_stewardship.md](process_stewardship.md#repairing-a-process)) |
 
@@ -202,6 +202,12 @@ records the pilot decision, only the owner has them.**
   nothing is sent out for one that is already active, the digest time is
   not offered in Settings, and the portal is not told of changes while it
   is open.
+  Feedback (DA-10, [delegated_feedback.md](delegated_feedback.md)) is gated
+  too: for anyone but the owner the Feedback control is not shown, giving
+  an answer is refused with `PILOT_ONLY` (403), and starting, dismissing or
+  ignoring work is not counted. Seeing and resetting what was already
+  learned, and removing an hour marked as a wrong time, are never gated:
+  what was learned only narrows, keeps applying, and stays reversible.
   Everything else delegated runs can do today (reading, generated notes,
   project files, sandbox runs, research) is not gated.
 - **Recording the decision.** It comes at the end of the personal pilot

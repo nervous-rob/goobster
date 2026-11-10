@@ -84,6 +84,8 @@ const INVENTORY = [
     ['assistant_confirmation_receipts', 'userId = @userId',
         'id, userId, subjectKind, subjectId, action, revision, grantHash, surface, createdAt, expiresAt, consumedAt', 'id'],
     ['assistant_digests', 'userId = @userId', '*', 'id'],
+    ['assistant_feedback', 'userId = @userId', '*', 'id'],
+    ['assistant_source_weights', 'ownerUserId = @userId', '*', 'responsibilityId, adapter'],
     ['assistant_process_contracts', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_observations', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_incidents', 'ownerUserId = @userId', '*', 'id'],

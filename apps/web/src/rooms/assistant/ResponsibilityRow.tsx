@@ -1,8 +1,8 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
 import { useMe } from '../../hooks/useSession';
-import type { AssistantInitiative, Responsibility } from '../../lib/types';
+import type { AssistantInitiative, AssistantLearnedRate, Responsibility } from '../../lib/types';
 import { describeGrants, describeInterruption, describeListening, describeNoticing, describeSharing, externalOperationsPerDay, reachesGitHub, writesOutside, type Project } from './grants';
-import { SourcesPreview } from './SourcesPreview';
+import { SOURCE_TEXT, SourcesPreview } from './SourcesPreview';
 import { WorkList } from './WorkList';
 
 /** One responsibility: what it grants, its work, and its lifecycle buttons. */
@@ -42,13 +42,29 @@ const PROPOSED_DRAFT = [
     { action: 'discard', label: 'Discard', danger: true, confirm: 'Discard this draft? It was proposed in a conversation and never ran. It is deleted.' }
 ];
 
-export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWork }: {
+const perDay = (cap: number | null) => (cap === null ? 'no daily limit' : cap === 0 ? 'nothing' : `up to ${cap} a day`);
+
+/** What feedback taught about one source: the rate now, the usual one, and why. */
+function learnedText(rate: AssistantLearnedRate): string {
+    const changed = rate.cap !== rate.usual;
+    const reasons = [
+        rate.lowered ? `you said "less of this" ${rate.lowered === 1 ? 'once' : `${rate.lowered} times`}` : '',
+        rate.dismissals ? `${rate.dismissals} dismissed, ignored or already known` : '',
+        rate.acceptances ? `${rate.acceptances} started, accepted or useful` : ''
+    ].filter(Boolean).join(' · ');
+    const now = rate.stopped ? 'proposes nothing now' : changed ? `may propose ${perDay(rate.cap)} now` : `proposes at its usual rate (${perDay(rate.usual)})`;
+    return `${now}${changed ? ` (usually ${perDay(rate.usual)})` : ''}${reasons ? ` · ${reasons}` : ''}`;
+}
+
+export function ResponsibilityRow({ item, projects, work, learned, busy, onAct, onActOnWork, onResetRate }: {
     item: Responsibility;
     projects: Map<string, Project>;
     work: AssistantInitiative[];
+    learned: AssistantLearnedRate[];
     busy: boolean;
     onAct: (item: Responsibility, action: string, question?: string) => void;
     onActOnWork: (work: AssistantInitiative, action: string) => void;
+    onResetRate: (rate: AssistantLearnedRate) => void;
 }) {
     const whenLabel = useDateLabel();
     const me = useMe();
@@ -86,6 +102,22 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 {writesOutside(item.operations) && (
                     <div className="row-meta" data-testid="responsibility-connector-reach">
                         Writes to outside services are made as you and cannot be undone from here · at most {externalOperationsPerDay(item.budgets)} outside operations a day
+                    </div>
+                )}
+                {learned.length > 0 && (
+                    <div className="assistant-learned" data-testid="responsibility-learned">
+                        <div className="row-meta">Learned from your feedback. It changes only how often a source may propose work, never what this responsibility may do.</div>
+                        <ul>
+                            {learned.map((rate) => (
+                                <li key={rate.adapter} data-testid="responsibility-learned-row">
+                                    <strong>{SOURCE_TEXT[rate.adapter] || rate.adapter}</strong>: {learnedText(rate)}
+                                    <button type="button" className="btn small subtle" style={{ marginLeft: 8 }} disabled={busy}
+                                        onClick={() => onResetRate(rate)} data-testid="responsibility-learned-reset">
+                                        Reset
+                                    </button>
+                                </li>
+                            ))}
+                        </ul>
                     </div>
                 )}
                 <WorkList items={work} busy={busy} onAct={onActOnWork} />

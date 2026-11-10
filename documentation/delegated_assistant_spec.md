@@ -677,11 +677,11 @@ boundaries.
 
 ## 13. Planned: talking to it and hearing from it
 
-**Status: planned; seven items are available** (answering a request on Home
+**Status: planned; eight items are available** (answering a request on Home
 and in the Inbox; "Delegating and steering by conversation" in portal chat
 and DMs, apart from the items marked planned below, see
 [delegated_conversation.md](delegated_conversation.md); the spoken briefing
-in portal voice chat; "Reaching you";
+in portal voice chat; "Reaching you"; "Learning from you";
 repository work; findings shared with a project; and "For the host" at the
 end of this section, each marked below); nothing else here is. Increments DA-7 through
 DA-12. The technical contracts are in
@@ -742,12 +742,20 @@ records the pilot decision
 
 ### Learning from you
 
+**Available** to the installation's owner, and to everyone once the host
+records the pilot decision
+([delegated_feedback.md](delegated_feedback.md)).
+
 - Each finding offers: useful, already knew this, wrong, less of this,
   wrong time, keep this wording, stop this responsibility.
 - Each means one thing and changes one thing; "wrong time" never teaches
   the assistant that the topic is unimportant.
 - What it has learned is shown per responsibility and can be reset. It
   changes how often work is proposed, never what the assistant may do.
+- An answer is offered only where it would change something, and a piece of
+  proposed work offers "less of this" and "stop this responsibility".
+- Dismissing or ignoring work slows its source a little and can never
+  silence it; only "less of this", said three times, does.
 
 ### Doing more
 

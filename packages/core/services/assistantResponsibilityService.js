@@ -947,11 +947,14 @@ class AssistantResponsibilityService {
      * receipt that is supplied is always checked and spent, whoever drafted
      * the row. The portal's action route asks for one on every activation
      * and resume. Pause, revoke, complete and archive only narrow.
+     *
+     * `deferDelivery`: the caller is inside its own transaction and files
+     * the owed Inbox envelopes after it commits.
      */
-    async act({ userId, id, action, expectedRevision, receipt = null }) {
+    async act({ userId, id, action, expectedRevision, receipt = null, deferDelivery = false }) {
         if (!HUMAN_ACTIONS.includes(action)) throw bad(`action must be one of ${HUMAN_ACTIONS.join(', ')}.`, 'INVALID_ACTION');
         if (CONFIRMED_ACTIONS.has(action) && modelCallScope.active()) throw humanOnly();
-        return this._act({ id, action, expectedRevision, owner: String(userId), changedBy: userId, receipt });
+        return this._act({ id, action, expectedRevision, owner: String(userId), changedBy: userId, receipt, deferDelivery });
     }
 
     /** Whether a human confirmation receipt is required to take `action` on this row. */
@@ -1074,14 +1077,14 @@ class AssistantResponsibilityService {
         return this._act({ id, action: 'request_review', expectedRevision, owner: null, changedBy });
     }
 
-    async _act({ id, action, expectedRevision, owner, changedBy, receipt = null }) {
+    async _act({ id, action, expectedRevision, owner, changedBy, receipt = null, deferDelivery = false }) {
         const result = await db.transaction(async () => {
             const row = await this._row(id);
             if (!row || (owner !== null && row.ownerUserId !== owner)) throw notFound();
             const updated = await this._transition(row, action, expectedRevision, changedBy, { confirm: owner !== null, receipt });
             return { responsibility: this.present(updated) };
         });
-        await this._deliverOwed(result.responsibility.ownerUserId);
+        if (!deferDelivery) await this._deliverOwed(result.responsibility.ownerUserId);
         return result;
     }
 

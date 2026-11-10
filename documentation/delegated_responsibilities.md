@@ -303,6 +303,16 @@ of the terminal statuses `COMPLETED`, `FAILED`, `CANCELLED` or `SUPERSEDED`.
 
 Every action is a compare-and-swap on `revision`.
 
+**What it learns from you.** Each source of a responsibility that notices
+things by itself has a learned rate: "less of this" lowers how many pieces
+of work that source may propose in a day (three steps, down to nothing),
+and starting, dismissing or ignoring its work moves it slowly, never below
+one a day. The row on the Assistant page shows each source that learned
+something, with what it may propose now, what it usually may, and **Reset**.
+A learned rate changes only how often work is proposed: it is never read
+when authority is checked, a budget is reserved or a run's tools are chosen.
+See [delegated_feedback.md](delegated_feedback.md).
+
 **What the grant does to its initiatives:**
 
 - Revoking, completing, archiving or expiring the responsibility cancels its
@@ -456,6 +466,8 @@ The assistant's periodic pass applies these windows:
 | Updates and their receipts | 180 days after their last change, unless they still have an open gate |
 | Source cursors | As long as their responsibility |
 | A draft proposed in a conversation that was never kept, edited or activated | 7 days |
+| Feedback ([delegated_feedback.md](delegated_feedback.md)) | 180 days after both the update and the work it answered are gone |
+| What a source learned from feedback | Until reset; 180 days after its responsibility ended; removed with the responsibility |
 | Confirmation receipts | 30 days after they expire |
 
 ## Portal API
@@ -465,20 +477,22 @@ All routes act as the signed-in person. Another person's responsibility answers
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/app/assistant/responsibilities` | Your responsibilities (`?status=` to filter) plus the vocabulary. |
+| `GET /api/app/assistant/responsibilities` | Your responsibilities (`?status=` to filter) plus the vocabulary, and `learned`: what feedback taught each source of each responsibility. |
 | `POST /api/app/assistant/responsibilities` | Create a draft. It is always a draft: `activate: true` is refused (`HUMAN_CONFIRMATION_REQUIRED`). An `Idempotency-Key` header (or `idempotencyKey` in the body) makes a retried create return the first one. |
 | `GET /api/app/assistant/responsibilities/:id` | One responsibility and its revision history. |
 | `PATCH /api/app/assistant/responsibilities/:id` | Edit. Requires `expectedRevision`. |
 | `POST /api/app/assistant/responsibilities/:id/actions` | `{ action, expectedRevision, receipt? }`, where `action` is `activate`, `pause`, `resume`, `complete`, `revoke` or `archive`. `activate` and `resume` require `receipt`. |
 | `POST /api/app/assistant/responsibilities/:id/proposal` | `{ action: 'keep' \| 'discard', expectedRevision }` for a draft proposed in a conversation. |
 | `POST /api/app/assistant/confirmations` | Issue the single-use receipt for what you are confirming. See [delegated_conversation.md](delegated_conversation.md#api). |
+| `POST /api/app/assistant/responsibilities/:id/sources/:adapter/reset` | Forget what feedback taught one source of this responsibility, so it proposes at its usual rate again. See [delegated_feedback.md](delegated_feedback.md). |
 
-| `GET /api/app/assistant/initiatives` | Your initiatives (`?responsibilityId=`, `?status=`, `?limit=` up to 100). |
+| `GET /api/app/assistant/initiatives` | Your initiatives (`?responsibilityId=`, `?status=`, `?limit=` up to 100), each with `feedback`: the answers you may give about it and the ones you gave. |
 | `GET /api/app/assistant/initiatives/:id` | One initiative. |
 | `POST /api/app/assistant/initiatives/:id/actions` | `{ action, expectedRevision }`, where `action` is `queue`, `cancel`, `retry`, `accept` or `reject`. |
 | `GET /api/app/assistant/updates` | Updates you can see, newest first (`?component=`, `?responsibilityId=`, `?limit=` up to 50, `?cursor=`). The first page also returns `counts` (`unseen`, `needsAction`, `complete`) and per-component counts. A cursor belongs to the person it was issued to. |
 | `POST /api/app/assistant/updates/acknowledge` | `{ items: [{ id, revision }] }`, up to 100 items. Each result is `acknowledged`, `older_revision` or `not_found`. |
 | `POST /api/app/assistant/updates/:id/snooze` | `{ until }`: hide an open gate from Needs you until then. |
+| `POST /api/app/assistant/updates/:id/feedback`, `POST /api/app/assistant/initiatives/:id/feedback` | `{ kind, stop?, expectedRevision? }`: one typed answer about a finding or a piece of work of your own. An account outside the pilot gate answers 403 `PILOT_ONLY`. See [delegated_feedback.md](delegated_feedback.md). |
 | `GET /api/app/assistant/gates/:ref` | One request's decision card. |
 | `POST /api/app/assistant/gates/:ref/decide` | `{ option, occurrence, revision, surface, receipt? }` (`receipt` is required when `surface` is `chat`): decide the request a decision card describes, through the service that owns it. A card that changed answers 409 `STALE_GATE` with the current card; an account outside the pilot gate answers 403 `PILOT_ONLY`. See [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown). |
 | `GET /api/app/assistant/processes` | Your recurring processes, each with whether it has a contract, its assessment, the incident it is part of, its retirement stage (`lifecycle`) and the actions you may take (`controls`); counts per state; and the incidents still open. |
@@ -495,9 +509,10 @@ revision. An action that the current status does not allow answers 409
 ## Privacy
 
 Responsibilities, their revision history, source cursors, initiatives,
-personal updates, update receipts, confirmation receipts, process contracts,
-process observations, process incidents, process retirement records and
-cleanup previews are personal data:
+personal updates, update receipts, confirmation receipts, feedback and what
+each source learned from it, process contracts, process observations,
+process incidents, process retirement records and cleanup previews are
+personal data:
 
 - The transparency report (`/what-do-you-know-about-me`, Settings → Privacy)
   counts them.

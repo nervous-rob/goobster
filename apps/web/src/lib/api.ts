@@ -6,7 +6,7 @@ import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, Respons
 import type { AdminAssistantView, AssistantCapField } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 import type { ConfirmationReceipt, ConfirmationSurface, GateDecisionCard, GateDecisionResult, GateSurface } from './types';
-import type { AssistantAccess, AssistantConnectors, ResponsibilitySources } from './types';
+import type { AssistantAccess, AssistantConnectors, ResponsibilitySources, AssistantFeedbackKind, AssistantFeedbackResult, AssistantLearnedRate } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -433,7 +433,7 @@ export const api = {
     inboxItem: (id: number) => request<InboxItem>(`/api/app/inbox/${id}`),
     // Delegated assistant (documentation/delegated_responsibilities.md). Every
     // call acts as the signed-in person; edits and actions carry the revision.
-    responsibilities: () => request<{ responsibilities: Responsibility[]; vocabulary: ResponsibilityVocabulary }>('/api/app/assistant/responsibilities'),
+    responsibilities: () => request<{ responsibilities: Responsibility[]; vocabulary: ResponsibilityVocabulary; learned?: AssistantLearnedRate[] }>('/api/app/assistant/responsibilities'),
     createResponsibility: (body: Record<string, unknown>) =>
         request<{ responsibility: Responsibility }>('/api/app/assistant/responsibilities', { method: 'POST', body }),
     responsibility: (id: number) => request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}`),
@@ -467,6 +467,22 @@ export const api = {
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),
     initiativeAction: (id: number, action: string, expectedRevision: number) =>
         request<{ initiative: AssistantInitiative }>(`/api/app/assistant/initiatives/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
+    /**
+     * Feedback on a finding (`update`) or a piece of proposed work (`initiative`). Each kind changes one
+     * thing; `stop` and `expectedRevision` go with `stop_responsibility`, after the person confirmed it.
+     */
+    assistantFeedback: (
+        target: { updateId: number } | { initiativeId: number }, kind: AssistantFeedbackKind,
+        stop?: { action: 'pause' | 'revoke'; expectedRevision: number }
+    ) => request<AssistantFeedbackResult>(
+        'updateId' in target ? `/api/app/assistant/updates/${target.updateId}/feedback` : `/api/app/assistant/initiatives/${target.initiativeId}/feedback`,
+        { method: 'POST', body: { kind, ...(stop ? { stop: stop.action, expectedRevision: stop.expectedRevision } : {}) } }
+    ),
+    /** Forget what feedback taught about one source of a responsibility: it proposes at its usual rate again. */
+    resetLearnedRate: (responsibilityId: number, adapter: string) =>
+        request<{ reset: boolean; learned: AssistantLearnedRate[] }>(
+            `/api/app/assistant/responsibilities/${responsibilityId}/sources/${encodeURIComponent(adapter)}/reset`, { method: 'POST', body: {} }
+        ),
     /** A person's recurring processes, how each is doing, and the incidents still open. A read. */
     assistantKnowledge: () => request<KnowledgeOverview>('/api/app/assistant/knowledge'),
     revertKnowledgeChange: (id: number) =>

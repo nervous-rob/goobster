@@ -2403,6 +2403,10 @@ CREATE TABLE IF NOT EXISTS attention_policies (
     -- When the day's digest of delegated work may go out, in minutes from
     -- midnight on the same clock as the quiet hours (NULL = 09:00).
     digestMinute INTEGER,
+    -- Hours of the day (0-23, same clock as the quiet hours) the person said
+    -- were a wrong time, as a JSON list. Outbound contact waits them out like
+    -- quiet hours; nothing about what is noticed changes (DA-10, ADR 0031).
+    avoidHours TEXT,
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -4176,7 +4180,8 @@ CREATE TABLE IF NOT EXISTS kg_change_sets (
     evidenceJson TEXT,
     -- A source review: the source and the notes and assumptions that rested on it
     impactJson TEXT,
-    -- PROPOSAL | DIRECT_GRANT | SOURCE_RETRACTED, then how it was decided:
+    -- PROPOSAL | DIRECT_GRANT | SOURCE_RETRACTED | FEEDBACK_WRONG | FEEDBACK_KEEP
+    -- (the last two: the person's own answer to a finding), then how it was decided:
     -- APPLIED | REJECTED | REVISION_CONFLICT | NOTE_GONE | EXPIRED | REVERTED
     policyCode TEXT,
     decisionCode TEXT,
@@ -4191,3 +4196,52 @@ CREATE TABLE IF NOT EXISTS kg_change_sets (
 CREATE INDEX IF NOT EXISTS idx_kg_change_sets_user ON kg_change_sets(userId, status, createdAt);
 CREATE INDEX IF NOT EXISTS idx_kg_change_sets_run ON kg_change_sets(runId);
 CREATE INDEX IF NOT EXISTS idx_kg_change_sets_node ON kg_change_sets(nodeId);
+
+-- Typed feedback on a finding or a proposal (DA-10, ADR 0031;
+-- documentation/delegated_feedback.md). One row is one thing a person said
+-- about one item, and the one effect it had. Codes, ids and numbers only: no
+-- text, and nothing here is ever given to a model. `kind` is one of the seven
+-- a person can give, or `ignored`, which the steward records once for an item
+-- nobody looked at. A kind is given at most once per item.
+CREATE TABLE IF NOT EXISTS assistant_feedback (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    updateId INTEGER,
+    initiativeId INTEGER,
+    responsibilityId INTEGER,
+    -- The source adapter the item came from (assistant_initiatives.sourceKind)
+    adapter TEXT,
+    kind TEXT NOT NULL CHECK (kind IN ('useful', 'already_knew', 'wrong', 'less_of_this', 'wrong_time',
+        'keep_wording', 'stop_responsibility', 'ignored')),
+    -- What it changed: COUNTED | RATE_LOWERED | CORRECTION_OPENED | NOTE_SAVED |
+    -- HOUR_AVOIDED | PAUSED | REVOKED | NO_CHANGE
+    effectCode TEXT,
+    -- Ids and numbers describing the effect ({ hour }, { from, to }, { changeSetIds })
+    effectJson TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_feedback_update
+    ON assistant_feedback(userId, updateId, kind) WHERE updateId IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_assistant_feedback_initiative
+    ON assistant_feedback(userId, initiativeId, kind) WHERE updateId IS NULL AND initiativeId IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_assistant_feedback_user ON assistant_feedback(userId, createdAt);
+
+-- What feedback taught about one source adapter of one responsibility. `weight`
+-- (1, 0.5, 0.25 or 0) is lowered only by an explicit "less of this" and scales
+-- the adapter's daily proposal cap; `dismissals` and `acceptances` are the weak
+-- signals, which can lower the cap to one a day and no further. Deleting the
+-- row is the reset. It never widens a grant, a budget or a tool list.
+CREATE TABLE IF NOT EXISTS assistant_source_weights (
+    responsibilityId INTEGER NOT NULL,
+    ownerUserId TEXT NOT NULL,
+    adapter TEXT NOT NULL,
+    weight REAL NOT NULL DEFAULT 1 CHECK (weight >= 0 AND weight <= 1),
+    dismissals INTEGER NOT NULL DEFAULT 0,
+    acceptances INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (responsibilityId, adapter)
+);
+
+CREATE INDEX IF NOT EXISTS idx_assistant_source_weights_owner ON assistant_source_weights(ownerUserId);
