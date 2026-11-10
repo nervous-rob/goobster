@@ -54,8 +54,11 @@ restore and cleanup).
   when it is over; these are informational. One message when Goobster paused
   or archived a process for you.
 - **Needs you.** When a process may no longer be needed and Goobster may not
-  pause it, it asks you, once. The question is answered by pausing the
-  process or by choosing *Keep it running*.
+  pause it, it asks you, once. The request has two buttons on Home and in the
+  Inbox, *Pause it* and *Keep it running*
+  ([assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown)).
+  The same two actions are on the Processes list, and either place answers
+  it.
 - **Attention.** An open incident, a process that outlived its purpose and
   a review date you set can each be raised once, inside your Attention
   settings and contact budget ([attention.md](attention.md)).
@@ -397,10 +400,12 @@ whose purpose is over while it is still switched on (a
 `retirement_candidate`). What it does depends on what you have granted.
 
 **With no grant, it asks and changes nothing.** You get one request under
-Needs you: "*Name* may no longer be needed". It is answered when you pause the
-process, or when you choose *Keep it running*. *Keep it running* is
+Needs you: "*Name* may no longer be needed", with *Pause it* and *Keep it
+running*. It is answered when you pause the process, there or on the
+Processes list, or when you choose *Keep it running*. *Keep it running* is
 remembered for that purpose and that reason, so you are not asked again
-unless the contract changes.
+unless the contract changes. A request you answer in one tab is refused as
+changed (`STALE_GATE`) if you press it again in another.
 
 **It pauses the process itself only when all of these hold:**
 
@@ -506,9 +511,6 @@ Retirement has its own, in
 - **Repair** (planned as DA-5c). An incident is reported, not fixed.
 - **Cleanup by Goobster.** The `cleanup.exact` operation can be granted and
   is not used: only you can clean up a process.
-- **Answering the request from Home or the Inbox.** The "may no longer be
-  needed" request opens the process; the Pause and Keep it running buttons
-  are on the Processes list, not on the request itself.
 - **Files and knowledge a process produced.** A process does not declare
   which files or notes it owns, so cleanup never touches a project workspace
   or your knowledge.
@@ -533,9 +535,11 @@ Retirement has its own, in
 
 The four process tables each gained an `archivedAt` column (`automations`,
 `project_triggers`, `followed_sources`, `attention_watches`), and
-`attention_watches` a `pausedAt` column. They are what the processes' own
-schedulers check, so an archived or paused process cannot run even if the
-stewardship tables were lost.
+`attention_watches` a `pausedAt` column. Whether a process can run is decided
+by its own row: a paused or archived process is switched off there, and
+every write that would switch it back on refuses an archived row. So an
+archived or paused process cannot run even if the stewardship tables were
+lost.
 
 The assessment itself is not stored. It is computed from these records each
 time it is read, so it is never out of date and there is no state to repair.

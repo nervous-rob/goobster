@@ -3818,7 +3818,7 @@ CREATE TABLE IF NOT EXISTS assistant_process_incident_members (
 
 CREATE INDEX IF NOT EXISTS idx_assistant_process_incident_members_owner ON assistant_process_incident_members(ownerUserId);
 
--- Process lifecycle (DA-5b, ADR 0020): one row per process that has ever
+-- Process lifecycle (DA-5b, ADR 0021): one row per process that has ever
 -- been paused, archived, cleaned or deliberately kept through stewardship.
 -- The definition stays in its own table; this row is the restore metadata:
 -- who acted and why, what was already running at the pause, the final

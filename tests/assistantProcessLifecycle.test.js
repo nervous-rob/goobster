@@ -652,6 +652,67 @@ describe('the assistant, when a purpose is over', () => {
         await expect(act(await automation('still useful'), 'keep')).rejects.toMatchObject({ code: 'NOT_A_CANDIDATE' });
     });
 
+    test('the question is answered where it is shown: pause it, or keep it, through the same act as the Processes list', async () => {
+        const gates = require('@goobster/core/services/assistantGateService');
+        const inbox = require('@goobster/core/services/inboxService');
+        const task = await automation('release watch');
+        const other = await automation('weekly digest');
+        await finishedPurpose(task);
+        await finishedPurpose(other);
+        await pass();
+
+        // The Inbox's Needs-you view carries one decision card per request.
+        const page = await inbox.list({ userId: A, view: 'needs_you', limit: 10 });
+        const cards = page.items.map(item => item.decision).filter(Boolean);
+        expect(cards).toHaveLength(2);
+        const card = await gates.card({ userId: A, ref: (await updateFor(task)).id });
+        expect(card).toMatchObject({
+            kind: 'process_retirement', state: 'open', title: '"release watch" may no longer be needed',
+            detail: 'The goal it was set up for is resolved. It is still switched on.',
+            occurrence: 1, revision: 'c1:GOAL_RESOLVED:l0'
+        });
+        expect(card.options.map(option => option.id)).toEqual(['pause', 'keep']);
+        // Not theirs: it does not exist for anyone else.
+        expect(await gates.card({ userId: B, ref: card.ref })).toBeNull();
+        await expect(gates.decide({
+            userId: B, ref: card.ref, option: 'pause', occurrence: 1, revision: card.revision, surface: 'home'
+        })).rejects.toMatchObject({ status: 404, code: 'NOT_FOUND' });
+
+        const paused = await gates.decide({
+            userId: A, ref: card.ref, option: 'pause', occurrence: card.occurrence, revision: card.revision, surface: 'home'
+        });
+        expect(paused.decided).toMatchObject({ kind: 'process_retirement', option: 'pause', message: 'Paused "release watch". Nothing new will start.' });
+        expect(paused.current).toMatchObject({ state: 'resolved', outcome: '"release watch" is paused.', options: [] });
+        expect((await db.get('SELECT isEnabled FROM automations WHERE id = @id', { id: task.id })).isEnabled).toBe(0);
+        expect(await stage(task)).toMatchObject({ stage: 'PAUSED', actorKind: 'person', reasonCode: 'PERSON' });
+        expect((await updateFor(task)).gateResolvedAt).toBeTruthy();
+        // The same card pressed again, in another tab, decides nothing.
+        await expect(gates.decide({
+            userId: A, ref: card.ref, option: 'keep', occurrence: card.occurrence, revision: card.revision, surface: 'inbox'
+        })).rejects.toMatchObject({ status: 409, code: 'STALE_GATE' });
+        expect((await stage(task)).keptRevision).toBeNull();
+
+        // Keep, for the other one. A card shown before the process changed is refused.
+        const second = await gates.card({ userId: A, ref: (await updateFor(other)).id });
+        await act(other, 'pause');
+        await act(other, 'resume');
+        await db.run('UPDATE assistant_process_lifecycle SET keptRevision = NULL, keptReason = NULL, keptAt = NULL WHERE processId = @id', { id: String(other.id) });
+        await pass();
+        await expect(gates.decide({
+            userId: A, ref: second.ref, option: 'keep', occurrence: second.occurrence, revision: second.revision, surface: 'home'
+        })).rejects.toMatchObject({ status: 409, code: 'STALE_GATE' });
+        const again = await gates.card({ userId: A, ref: second.ref });
+        expect(again).toMatchObject({ state: 'open', occurrence: 2 });
+        const kept = await gates.decide({
+            userId: A, ref: again.ref, option: 'keep', occurrence: again.occurrence, revision: again.revision, surface: 'inbox'
+        });
+        expect(kept.decided.message).toBe('"weekly digest" stays on.');
+        expect(kept.current).toMatchObject({ state: 'resolved', outcome: 'You chose to keep "weekly digest" running.' });
+        expect((await db.get('SELECT isEnabled FROM automations WHERE id = @id', { id: other.id })).isEnabled).toBe(1);
+        expect(await pass()).toMatchObject({ relevance: 0, paused: 0 });
+        expect((await inbox.list({ userId: A, view: 'needs_you', limit: 10 })).needsYou).toBe(0);
+    });
+
     test('a grant that names the process is not enough while Attention does not let it act on schedules', async () => {
         const task = await automation('release watch');
         await finishedPurpose(task);

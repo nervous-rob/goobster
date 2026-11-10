@@ -268,6 +268,9 @@ test.describe('assistant-first Home', () => {
         await expect(asks).toHaveCount(1);
         await expect(asks).toContainText('Still needed?');
         await expect(asks).toContainText('"Release watch" may no longer be needed');
+        // It can be answered right there, and says what each answer does.
+        await expect(asks.getByTestId('gate-decision').getByRole('button')).toHaveText(['Pause it', 'Keep it running']);
+        await expect(asks.getByTestId('gate-decision')).toContainText('The goal it was set up for is resolved. It is still switched on.');
 
         // Reviewing the update does not make the process healthy.
         await brief.getByRole('button', { name: 'Mark reviewed' }).click();
@@ -406,26 +409,33 @@ test.describe('assistant-first Home', () => {
         expect(await processOf('Release watch')).toMatchObject({ enabled: true, lifecycle: { stage: 'active' } });
     });
 
-    test('saying a process should keep running answers the question and is not asked again', async ({ page }) => {
+    test('the question is answered on Home: keep it running, and it is not asked again', async ({ page }) => {
         await seed(page, { seed: false });
         const made = await page.request.post('/e2e/fixtures/assistant-home/processes', { data: { userId: USER } });
         expect(made.ok(), await made.text()).toBe(true);
         await login(page, { userId: USER, name: NAME });
-        await page.goto('/app/assistant#processes');
+        const overview = page.getByTestId('assistant-overview');
+        const ask = overview.getByTestId('assistant-needs-you-item');
+        await expect(ask).toHaveCount(1);
+        await ask.getByRole('button', { name: 'Keep it running' }).click();
+        await expect(page.locator('#toast')).toHaveText('"Release watch" stays on.');
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
+        await expect(overview.getByTestId('assistant-component-processes')).not.toContainText('needs you');
+
+        // The Processes list shows the answer, and no longer offers the question.
+        await overview.getByTestId('assistant-component-processes').click();
         const report = page.getByTestId('assistant-processes');
         const row = report.getByTestId('process-row').filter({ hasText: 'Release watch' });
-        await row.getByRole('button', { name: 'Keep it running' }).click();
-        await expect(report.getByTestId('process-notice')).toHaveText(
-            '"Release watch" stays on. You will not be asked again unless its purpose changes.'
-        );
         await expect(row.getByRole('button')).toHaveText(['Pause']);
         await expect(row.getByTestId('process-lifecycle')).toContainText('You chose to keep it running');
         // Still judged a candidate from the evidence; the person's answer is what changed.
         await expect(row.getByTestId('process-relevance')).toContainText('May no longer be needed');
         const pass = await page.request.post('/e2e/fixtures/assistant-home/processes/pass', { data: { userId: USER } });
         expect(await pass.json()).toMatchObject({ pass: { relevance: 0, paused: 0 } });
+        const listed = await (await page.request.get('/api/app/assistant/processes')).json();
+        expect(listed.processes.find((entry) => entry.name === 'Release watch')).toMatchObject({ enabled: true, controls: ['pause'] });
         await page.goto('/app/');
-        await expect(page.getByTestId('assistant-overview').getByTestId('assistant-needs-you-empty')).toBeVisible();
+        await expect(overview.getByTestId('assistant-needs-you-empty')).toBeVisible();
     });
 
     test('with Attention off the page says why nothing runs', async ({ page }) => {

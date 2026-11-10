@@ -404,8 +404,24 @@ grouping with hysteresis and cooldown, the `process_health` and
 `process_relevance` generators and the Home Processes card reading the
 assessment. See [process_stewardship.md](process_stewardship.md) and
 [ADR 0019](adr/0019-process-assessment-and-incidents.md). It observes and
-reports only. Repair and retirement (pause, archive, restore, cleanup) are
-still planned.
+reports only.
+
+**Shipped in DA-5b:** retirement as `PAUSED -> ARCHIVED -> CLEANED` with
+restore and a separate, rechecked resume
+(`assistantProcessLifecycleService`, tables `assistant_process_lifecycle` and
+`assistant_process_cleanups`). Each owning service gained its own pause,
+resume, archive and restore, fenced in its own launch claim; an `archivedAt`
+column on each process table makes an archived definition unstartable from
+any path. The person acts through `POST /api/app/assistant/processes/:kind/:id/actions`;
+the assistant pauses and archives only under `process.pause` /
+`process.archive` on the exact process, checked by `authorize()` at the
+moment of the change, and otherwise files a `process_retirement` request that
+is decided in place. Cleanup is the person's only, from a frozen manifest of
+exact row ids. See
+[process_stewardship.md](process_stewardship.md#retiring-a-process) and
+[ADR 0021](adr/0021-process-retirement.md). Still planned: repair, cleanup
+under `cleanup.exact`, declared owned artifacts beyond a process's own
+records, and permanent deletion (which no grant reaches today).
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,
