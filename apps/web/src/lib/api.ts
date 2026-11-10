@@ -6,7 +6,7 @@ import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, Respons
 import type { AdminAssistantView, AssistantCapField } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 import type { GateDecisionCard, GateDecisionResult, GateSurface } from './types';
-import type { AssistantAccess, ResponsibilitySources } from './types';
+import type { AssistantAccess, AssistantConnectors, ResponsibilitySources } from './types';
 
 export class ApiError extends Error {
     status: number;
@@ -440,6 +440,10 @@ export const api = {
         request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
     /** What the host's policy means for this person: pilot capabilities and budget defaults. */
     assistantAccess: () => request<AssistantAccess>('/api/app/assistant/access'),
+    /** The installed outside connectors, their manifests and whether this person has connected each. */
+    assistantConnectors: () => request<AssistantConnectors>('/api/app/assistant/connectors'),
+    revokeConnector: (id: string) =>
+        request<{ revoked: boolean; responsibilities: number[] }>(`/api/app/assistant/connectors/${encodeURIComponent(id)}/revoke`, { method: 'POST', body: {} }),
     responsibilitySources: (id: number) => request<ResponsibilitySources>(`/api/app/assistant/responsibilities/${id}/sources`),
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),
     initiativeAction: (id: number, action: string, expectedRevision: number) =>

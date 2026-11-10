@@ -38,6 +38,7 @@ function describeResource(entry: ResponsibilityOperation, projects: Map<string, 
         case 'repository':
             return `${(resource.ids || []).join(', ')}${resource.branches?.length ? ` on ${resource.branches.join(', ')}` : ''}`;
         case 'process': return (resource.ids || []).join(', ');
+        case 'external': return (resource.ids || []).map((id) => `${id.slice(id.indexOf(':') + 1)} in ${id.slice(0, id.indexOf(':'))}`).join(', ');
         default: return (resource.ids || []).join(', ') || resource.kind;
     }
 }
@@ -49,6 +50,11 @@ export const MAX_EXTERNAL_OPERATIONS = 20;
 /** True when the grant lets work leave this installation (a push, a pull request). */
 export function reachesGitHub(operations: ResponsibilityOperation[]): boolean {
     return operations.some((entry) => entry.operation === 'repo.push' || entry.operation === 'pr.create');
+}
+
+/** True when the grant lets work write to an outside service through a connector (DA-11d). */
+export function writesOutside(operations: ResponsibilityOperation[]): boolean {
+    return operations.some((entry) => entry.operation === 'external.write');
 }
 
 /** How many pushes and pull requests a day the responsibility allows. */

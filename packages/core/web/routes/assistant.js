@@ -25,6 +25,7 @@ const knowledgeChanges = require('../../services/knowledgeChangeSetService');
 const knowledgeImpact = require('../../services/knowledgeImpactService');
 const knowledgeGraph = require('../../services/knowledgeGraphService');
 const { dmScopeId } = require('../../utils/dmScope');
+const connectors = require('../../services/assistantConnectorService');
 
 function mountAssistant(app, ctx, h) {
     const { requireAuth, assistantRoute: route } = h;
@@ -89,6 +90,20 @@ function mountAssistant(app, ctx, h) {
         hostPaused: await control.isPaused(),
         budgetDefaults: await control.budgetDefaults(),
         ...(await access.describe(req.webUser.userId))
+    })));
+
+    // --- Outside connectors (DA-11d, ADR 0028) ------------------------------
+    // The installed connectors as this person sees them: the manifest (what
+    // each reads and writes, the owner's recorded decision) and whether their
+    // own credential is connected. Empty unless the pilot gives them `reach`.
+    // No token is ever returned.
+    app.get('/api/app/assistant/connectors', requireAuth, route(async (req) => connectors.list(req.webUser.userId)));
+
+    // Take a connector back: deletes this person's credential for it, so work
+    // holding a grant on it is refused at its next call. Anyone may revoke
+    // their own; it never needs the pilot.
+    app.post('/api/app/assistant/connectors/:id/revoke', requireAuth, route(async (req) => connectors.revoke({
+        userId: req.webUser.userId, connectorId: String(req.params.id)
     })));
 
     // --- Initiatives (attempts derived from linked sources) ----------------

@@ -66,6 +66,16 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const branchPatterns = branches.split(',').map((part) => part.trim()).filter(Boolean);
     const reaches = Boolean(clone) && (pushRepo || openPulls);
 
+    // Outside connectors are still in the pilot, like repositories: offered only when the server lists them for this person.
+    const connectorsQ = useQuery({ queryKey: keys.assistantConnectors, queryFn: () => api.assistantConnectors(), retry: false, staleTime: 30_000 });
+    const connectors = (connectorsQ.data?.allowed ? connectorsQ.data.connectors : []).filter((entry) => entry.connected && entry.featureOn);
+    const [picks, setPicks] = useState<Record<string, { resource: string; read: boolean; write: boolean }>>({});
+    const pick = (id: string) => picks[id] || { resource: '', read: false, write: false };
+    const setPick = (id: string, patch: Partial<{ resource: string; read: boolean; write: boolean }>) =>
+        setPicks((current) => ({ ...current, [id]: { ...(current[id] || { resource: '', read: false, write: false }), ...patch } }));
+    const chosen = connectors.filter((entry) => pick(entry.id).read || pick(entry.id).write);
+    const writesOut = connectors.some((entry) => pick(entry.id).write);
+
     function operations(): ResponsibilityOperation[] {
         const list: ResponsibilityOperation[] = [];
         if (web) list.push({ operation: 'read', resource: { kind: 'web' } });
@@ -101,6 +111,12 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             }
         }
         list.push(...widerOperations(wider, (project || undefined)));
+        for (const connector of connectors) {
+            const choice = pick(connector.id);
+            const resource = { kind: 'external', ids: [`${connector.id}:${choice.resource.trim()}`] };
+            if (choice.read && connector.reads.length) list.push({ operation: 'read', resource });
+            if (choice.write && connector.writes.length) list.push({ operation: 'external.write', resource });
+        }
         return list;
     }
 
@@ -122,8 +138,10 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
         if (!title.trim()) return toast('Give it a title.', true);
         if (!granted.length) return toast('Choose at least one thing it may do.', true);
         if (clone && (commitRepo || reaches) && !branchPatterns.length) return toast('Name the branches it may work on, for example goobster/*.', true);
+        const unnamed = chosen.find((entry) => !pick(entry.id).resource.trim());
+        if (unnamed) return toast(`Name the resource it may use in ${unnamed.name}: ${unnamed.resource}.`, true);
         const daily = Number(perDay);
-        if (reaches && (!Number.isInteger(daily) || daily < 0 || daily > MAX_EXTERNAL_OPERATIONS)) {
+        if ((reaches || writesOut) && (!Number.isInteger(daily) || daily < 0 || daily > MAX_EXTERNAL_OPERATIONS)) {
             return toast(`Pushes and pull requests a day is a whole number from 0 to ${MAX_EXTERNAL_OPERATIONS}.`, true);
         }
         setSaving(true);
@@ -134,7 +152,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 operations: granted,
                 ...(projectId ? { projectId: Number(projectId) } : {}),
                 ...(sources().length ? { scopes: { sources: sources(), ...(sharing ? { audience: 'project' } : {}) } } : {}),
-                ...(reaches ? { budgets: { externalOperations: daily } } : {}),
+                ...(reaches || writesOut ? { budgets: { externalOperations: daily } } : {}),
                 ...(days ? { expiresAt: new Date(Date.now() + Number(days) * 86400_000).toISOString() } : {}),
                 ...(autoStart ? { rules: { autoStart: true } } : {})
             });
@@ -251,19 +269,6 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                                             <label><input type="checkbox" checked={commitRepo} onChange={(e) => setCommitRepo(e.target.checked)} data-testid="responsibility-repo-commit" /> Commit its changes there (stays in this project until pushed)</label>
                                             <label><input type="checkbox" checked={pushRepo} onChange={(e) => setPushRepo(e.target.checked)} data-testid="responsibility-repo-push" /> Push those branches to GitHub as you (never forced)</label>
                                             <label><input type="checkbox" checked={openPulls} onChange={(e) => setOpenPulls(e.target.checked)} data-testid="responsibility-repo-pr" /> Open pull requests for them as you (drafts unless it decides otherwise)</label>
-                                            {reaches && (
-                                                <>
-                                                    <label className="field">
-                                                        <span>At most this many pushes and pull requests a day</span>
-                                                        <input type="number" min={0} max={MAX_EXTERNAL_OPERATIONS} step={1} value={perDay}
-                                                            onChange={(e) => setPerDay(e.target.value)} data-testid="responsibility-external-budget" />
-                                                    </label>
-                                                    <div className="hint" role="note" data-testid="responsibility-reach-note">
-                                                        A push or a pull request goes to GitHub and cannot be undone from here. They also need Attention set to
-                                                        Delegate with GitHub writes allowed (Settings), and they are refused once a piece of work has read your private knowledge.
-                                                    </div>
-                                                </>
-                                            )}
                                         </>
                                     )}
                                 </div>
@@ -271,6 +276,59 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                         </>
                     )}
                 </fieldset>
+            )}
+            {connectors.length > 0 && (
+                <fieldset className="field" data-testid="responsibility-connectors">
+                    <legend>Outside services (optional)</legend>
+                    {connectors.map((connector) => (
+                        <div key={connector.id} className="field">
+                            <strong>{connector.name}</strong>
+                            <div className="hint">{connector.description}</div>
+                            <label className="field">
+                                <span>Which resource it may use ({connector.resource})</span>
+                                <input type="text" value={pick(connector.id).resource} maxLength={150}
+                                    onChange={(e) => setPick(connector.id, { resource: e.target.value })}
+                                    data-testid={`responsibility-connector-resource-${connector.id}`} />
+                            </label>
+                            {connector.reads.length > 0 && (
+                                <label>
+                                    <input type="checkbox" checked={pick(connector.id).read} onChange={(e) => setPick(connector.id, { read: e.target.checked })}
+                                        data-testid={`responsibility-connector-read-${connector.id}`} /> Read from it ({connector.reads.map((entry) => entry.operation).join(', ')})
+                                </label>
+                            )}
+                            {connector.writes.length > 0 && (
+                                <label>
+                                    <input type="checkbox" checked={pick(connector.id).write} onChange={(e) => setPick(connector.id, { write: e.target.checked })}
+                                        data-testid={`responsibility-connector-write-${connector.id}`} /> Write to it as you ({connector.writes.map((entry) => entry.operation).join(', ')})
+                                </label>
+                            )}
+                        </div>
+                    ))}
+                    {chosen.some((entry) => pick(entry.id).read) && (
+                        <div className="hint" role="note" data-testid="responsibility-connector-read-note">
+                            What it reads there is your own data: once a piece of work has read from an outside service it cannot write outside this installation.
+                        </div>
+                    )}
+                </fieldset>
+            )}
+            {(reaches || writesOut) && (
+                <>
+                    <label className="field">
+                        <span>At most this many {reaches && writesOut ? 'pushes, pull requests and outside writes' : writesOut ? 'outside writes' : 'pushes and pull requests'} a day</span>
+                        <input type="number" min={0} max={MAX_EXTERNAL_OPERATIONS} step={1} value={perDay}
+                            onChange={(e) => setPerDay(e.target.value)} data-testid="responsibility-external-budget" />
+                    </label>
+                    <div className="hint" role="note" data-testid="responsibility-reach-note">
+                        {reaches && (
+                            <>A push or a pull request goes to GitHub and cannot be undone from here. They also need Attention set to
+                            Delegate with GitHub writes allowed (Settings), and they are refused once a piece of work has read your private knowledge. </>
+                        )}
+                        {writesOut && (
+                            <>A write to an outside service is made as you and cannot be undone from here. It needs Attention set to Delegate with
+                            general external writes allowed (Settings), and it is refused once a piece of work has read your private knowledge or anything from an outside service. </>
+                        )}
+                    </div>
+                </>
             )}
             <fieldset className="field">
                 <legend>Requests in conversation (optional)</legend>

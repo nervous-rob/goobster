@@ -479,6 +479,17 @@ export type AssistantAccess = {
     hostPaused: boolean; budgetDefaults: Record<string, number>;
     pilot: string; capabilities: Record<string, boolean>; gatedOperations: string[];
 };
+/** An installed outside connector as this person sees it (`GET /api/app/assistant/connectors`, delegated_connectors.md). */
+export type AssistantConnector = {
+    id: string; name: string; description: string; feature: string | null; provider: string; providerName: string;
+    decision: { recordedBy: string; recordedAt: string; reference: string } | null;
+    /** What a named resource is, in words (a calendar, a notebook). */
+    resource: string;
+    reads: Array<{ operation: string; describe: string }>;
+    writes: Array<{ operation: string; describe: string; reconcilable: boolean }>;
+    connected: boolean; account: string | null; featureOn: boolean;
+};
+export type AssistantConnectors = { allowed: boolean; connectors: AssistantConnector[] };
 export type ResponsibilityOperation = { operation: string; resource: { kind: string; ids?: string[]; paths?: string[]; projectId?: string; branches?: string[] } };
 export type Responsibility = {
     id: number; revision: number; authorityRevision: number; status: string; title: string; outcome: string | null;
