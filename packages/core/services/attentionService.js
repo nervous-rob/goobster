@@ -42,12 +42,18 @@ const domainEventBus = require('./domainEventBus');
 const config = require('../config/attentionConfig');
 const score = require('../utils/attentionScore');
 const { dmScopeId } = require('../utils/dmScope');
+const { toGateway } = require('../gateway');
 const logger = require('../utils/logger');
 
 const { CANDIDATES, HEARTBEAT, MAX_TITLE_LENGTH, MAX_DETAIL_LENGTH } = config;
 
 /** Statuses a notice can still be reacted to in. */
 const OPEN_STATUSES = ['surfaced', 'delivered', 'opened', 'snoozed'];
+
+/** Who may ask requestContact() to reach a person. */
+const CONTACT_REASONS = ['attention', 'assistant'];
+/** How long a row of the contact ledger (attention_contacts) is kept. */
+const CONTACT_RETENTION_DAYS = 30;
 
 /** Feedback signals a user (or the system) can record against a notice. */
 const FEEDBACK_SIGNALS = ['surfaced', 'opened', 'dismissed', 'acted_on', 'snoozed', 'useful', 'annoying'];
@@ -601,17 +607,14 @@ class AttentionService {
         const contactable = summary.notices.filter(
             notice => notice.disposition === 'dm' || notice.disposition === 'urgent'
         );
-        let outboundOk = true;
-        try {
-            const userSettingsService = require('./userSettingsService');
-            outboundOk = await userSettingsService.getPreference(userId, 'notifyOutbound') !== false;
-        } catch { /* default on */ }
-        if (deliver && outboundOk && contactable.length > 0 && !pressure.blocked) {
+        if (deliver && contactable.length > 0 && !pressure.blocked) {
             const message = triage?.message || this._composeFallback(contactable);
-            summary.contacted = await this._contact({
-                userId, gateway, notices: contactable, message,
-                urgent: contactable.some(notice => notice.disposition === 'urgent')
+            const outcome = await this.requestContact({
+                userId, reason: 'attention', gateway, notices: contactable, message,
+                urgent: contactable.some(notice => notice.disposition === 'urgent'),
+                now: ctx.now
             });
+            summary.contacted = outcome.contacted;
         }
         return summary;
     }
@@ -977,11 +980,11 @@ Respond with ONLY JSON:
     }
 
     /** Mark notices delivered (used by both DM contact and chat mentions). */
-    async _markDelivered(ids) {
+    async _markDelivered(ids, handle = db) {
         if (ids.length === 0) return;
         const params = {};
         ids.forEach((id, i) => { params[`id${i}`] = Number(id); });
-        await db.run(
+        await handle.run(
             `UPDATE attention_notices
              SET status = 'delivered', deliveredAt = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP
              WHERE id IN (${ids.map((_, i) => `@id${i}`).join(', ')}) AND status = 'surfaced'`,
@@ -1046,20 +1049,30 @@ Respond with ONLY JSON:
      * already been told today, whether the cooldown is running, and whether
      * they are inside their quiet hours.
      */
-    async _measurePressure(userId, policy, now) {
+    async _measurePressure(userId, policy, now, handle = db) {
         const dayAgo = toUtcText(new Date(now - 86_400_000));
-        const recent = await db.get(
+        const recent = await handle.get(
             `SELECT COUNT(*) AS c FROM attention_notices
              WHERE userId = @userId AND createdAt >= @since`,
             { userId, since: dayAgo }
         );
-        const contacts = await db.get(
+        const noticed = await handle.get(
             `SELECT COUNT(*) AS c, MAX(deliveredAt) AS last FROM attention_notices
              WHERE userId = @userId AND disposition IN ('dm', 'urgent')
                AND deliveredAt IS NOT NULL AND deliveredAt >= @since`,
             { userId, since: dayAgo }
         );
-        const lastContact = utcMs(contacts?.last);
+        // Contacts other subsystems made through requestContact() spend the
+        // same budget: one cap and one cooldown per person, whoever asked.
+        const requested = await handle.get(
+            `SELECT COUNT(*) AS c, MAX(createdAt) AS last FROM attention_contacts
+             WHERE userId = @userId AND createdAt >= @since`,
+            { userId, since: dayAgo }
+        );
+        const contacts = { c: Number(noticed?.c || 0) + Number(requested?.c || 0) };
+        const lastContact = [utcMs(noticed?.last), utcMs(requested?.last)]
+            .filter(ms => ms !== null)
+            .reduce((latest, ms) => (latest === null || ms > latest ? ms : latest), null);
         const cooldownMs = (policy.contactCooldownMinutes || HEARTBEAT.contactCooldownMinutes) * 60_000;
         const withinCooldown = lastContact !== null && now - lastContact < cooldownMs;
         let quietOpts = {};
@@ -1072,12 +1085,14 @@ Respond with ONLY JSON:
             if (mode === 'local' && timeZone) quietOpts = { mode: 'local', timeZone };
         } catch { /* keep UTC evaluation for legacy rows */ }
         const quietHours = attentionPolicyService.inQuietHours(policy, new Date(now), quietOpts);
+        const capped = contacts.c >= (policy.maxContactsPerDay ?? HEARTBEAT.maxContactsPerDay);
         return {
             recentNotices: recent?.c || 0,
             withinCooldown,
             quietHours,
+            capped,
             // Hard stops, as opposed to the soft cost the score absorbs.
-            blocked: quietHours || (contacts?.c || 0) >= (policy.maxContactsPerDay ?? HEARTBEAT.maxContactsPerDay)
+            blocked: quietHours || capped
         };
     }
 
@@ -1159,6 +1174,179 @@ Respond with ONLY JSON:
     }
 
     /**
+     * Whether anything may contact this person right now, and if not, why.
+     * Read fresh on every call, so turning Attention off (or outbound
+     * notifications off) stops contact at once, whatever was already queued.
+     *
+     * Attention's own notices treat the cooldown as a cost the score absorbs
+     * (documentation/attention.md). Every other reason has no score, so for
+     * it the cooldown is a hard stop.
+     * @returns {Promise<{ allowed: boolean, code: string|null, policy?: Object }>}
+     */
+    async contactAllowed({ userId, reason = 'attention', now = Date.now(), handle = db } = {}) {
+        if (!userId) return { allowed: false, code: 'BAD_USER' };
+        const policy = await attentionPolicyService.get(userId);
+        if (!policy?.enabled) return { allowed: false, code: 'ATTENTION_OFF' };
+        let outboundOk = true;
+        try {
+            const userSettingsService = require('./userSettingsService');
+            outboundOk = await userSettingsService.getPreference(userId, 'notifyOutbound') !== false;
+        } catch { /* default on */ }
+        if (!outboundOk) return { allowed: false, code: 'OUTBOUND_OFF' };
+        const pressure = await this._measurePressure(userId, policy, now, handle);
+        if (pressure.quietHours) return { allowed: false, code: 'QUIET_HOURS' };
+        if (pressure.capped) return { allowed: false, code: 'CONTACT_CAP' };
+        if (reason !== 'attention' && pressure.withinCooldown) return { allowed: false, code: 'COOLDOWN' };
+        return { allowed: true, code: null, policy };
+    }
+
+    /** Which outbound channels could carry a contact to this person at all. */
+    async contactChannels({ userId, gateway = null } = {}) {
+        const channels = { push: false, discord: false };
+        try {
+            const pushService = require('./pushService');
+            channels.push = pushService.enabled && await pushService.countForUser(userId) > 0;
+        } catch { /* no push on this installation */ }
+        try {
+            const resolved = toGateway(gateway);
+            if (resolved && resolved.kind !== 'disabled') {
+                channels.discord = Boolean(await require('./inboxService')._discordSubject(userId));
+            }
+        } catch { /* no Discord identity */ }
+        return channels;
+    }
+
+    /**
+     * The one way anything contacts a person outside the portal: a browser
+     * push and the Discord echo, behind the person's Attention policy.
+     * Quiet hours, the daily cap and the cooldown are checked here and the
+     * contact is recorded here, so there is one budget whoever asks.
+     *
+     * `reason: 'attention'` is Attention's own batch of notices (the ledger
+     * is the notices themselves). Any other reason passes either an
+     * `inboxItemId` (echo a result that is already in the Inbox) or an
+     * `item` (file a new one, `inboxService.deliver()` shape), and is
+     * recorded in `attention_contacts` by code and id only.
+     *
+     * Never throws. A refusal is `{ contacted: false, attempted: false,
+     * code }` with code ATTENTION_OFF | OUTBOUND_OFF | QUIET_HOURS |
+     * CONTACT_CAP | COOLDOWN | NO_CHANNEL; nothing left the portal and
+     * nothing was spent. `attempted: true` means the budget was spent,
+     * whether or not a channel accepted the message.
+     *
+     * @param {Object} params
+     * @param {string} params.userId
+     * @param {'attention'|'assistant'} [params.reason]
+     * @param {string|number} [params.updateId] - what an 'assistant' contact is about
+     * @param {string} [params.refId] - ledger reference when it is not an update
+     * @param {boolean} [params.urgent]
+     * @param {Object} [params.gateway] - Discord gateway (or client); none = push only
+     * @param {Object[]} [params.notices] - reason 'attention'
+     * @param {string} [params.message] - reason 'attention'
+     * @param {number} [params.inboxItemId]
+     * @param {Object} [params.item]
+     * @param {number} [params.now]
+     */
+    async requestContact({
+        userId, reason = 'attention', updateId = null, refId = null, urgent = false, gateway = null,
+        notices = [], message = null, inboxItemId = null, item = null, now = Date.now()
+    } = {}) {
+        const refused = code => ({ contacted: false, attempted: false, code, inboxItemId: null });
+        if (!CONTACT_REASONS.includes(reason)) return refused('BAD_REASON');
+        const own = reason === 'attention';
+        try {
+            const first = await this.contactAllowed({ userId, reason, now });
+            if (!first.allowed) return refused(first.code);
+            if (!own) {
+                if (!inboxItemId && !item) return refused('BAD_REQUEST');
+                const channels = await this.contactChannels({ userId, gateway });
+                if (!channels.push && !channels.discord) return refused('NO_CHANNEL');
+            }
+
+            // Reserve before sending. The person's attention_state row is
+            // the lock: two requests for the same person are checked one
+            // after the other, so together they cannot pass the cap.
+            const noticeIds = notices.map(notice => Number(notice.id));
+            const reference = refId != null ? String(refId) : (updateId != null ? String(updateId) : null);
+            let ledgerId = null;
+            const held = await db.transaction(async (tx) => {
+                await tx.run(
+                    `INSERT INTO attention_state (userId, updatedAt) VALUES (@userId, CURRENT_TIMESTAMP)
+                     ON CONFLICT(userId) DO UPDATE SET updatedAt = CURRENT_TIMESTAMP`,
+                    { userId }
+                );
+                const again = await this.contactAllowed({ userId, reason, now, handle: tx });
+                if (!again.allowed) return again.code;
+                if (own) {
+                    await this._markDelivered(noticeIds, tx);
+                } else {
+                    ledgerId = await tx.insert(
+                        `INSERT INTO attention_contacts (userId, reason, refId, urgent, inboxItemId, createdAt)
+                         VALUES (@userId, @reason, @refId, @urgent, @inboxItemId, @createdAt)`,
+                        {
+                            userId, reason, refId: reference, urgent: urgent ? 1 : 0,
+                            inboxItemId: inboxItemId != null ? Number(inboxItemId) : null,
+                            createdAt: toUtcText(new Date(now))
+                        }
+                    );
+                }
+                return null;
+            });
+            if (held) return refused(held);
+
+            if (own) {
+                const landed = await this._contact({ userId, gateway, notices, message, urgent });
+                if (!landed) await this._unmarkDelivered(noticeIds);
+                return { contacted: landed, attempted: landed, code: landed ? null : 'DELIVERY_FAILED', inboxItemId: null };
+            }
+
+            const inboxService = require('./inboxService');
+            let outcome;
+            try {
+                outcome = inboxItemId != null
+                    ? await inboxService.echo({ userId, itemId: inboxItemId, discord: gateway ? { gateway } : false })
+                    : await inboxService.deliver({ ...item, userId, discord: gateway ? { gateway } : false });
+            } catch (error) {
+                await db.run('DELETE FROM attention_contacts WHERE id = @id', { id: ledgerId });
+                logger.warn?.(`[attention] Could not carry a ${reason} contact for ${userId}: ${error.message}`);
+                return refused('DELIVERY_FAILED');
+            }
+            const filedId = outcome?.item?.id ?? inboxItemId ?? null;
+            const discordStatus = outcome?.discord?.status || 'skipped';
+            const pushSent = Number(outcome?.push?.sent || 0);
+            await db.run(
+                `UPDATE attention_contacts SET inboxItemId = @inboxItemId, discordStatus = @discordStatus, pushSent = @pushSent
+                 WHERE id = @id`,
+                { id: ledgerId, inboxItemId: filedId, discordStatus, pushSent }
+            );
+            await db.run(
+                `INSERT INTO attention_state (userId, lastContactAt, updatedAt)
+                 VALUES (@userId, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                 ON CONFLICT(userId) DO UPDATE SET lastContactAt = CURRENT_TIMESTAMP, updatedAt = CURRENT_TIMESTAMP`,
+                { userId }
+            );
+            const contacted = discordStatus === 'sent' || pushSent > 0;
+            return { contacted, attempted: true, code: contacted ? null : 'DELIVERY_FAILED', inboxItemId: filedId };
+        } catch (error) {
+            logger.warn?.(`[attention] requestContact failed for ${userId}: ${error.message}`);
+            return refused('ERROR');
+        }
+    }
+
+    /** Give back notices a contact reserved and then could not deliver. */
+    async _unmarkDelivered(ids) {
+        if (ids.length === 0) return;
+        const params = {};
+        ids.forEach((id, i) => { params[`id${i}`] = Number(id); });
+        await db.run(
+            `UPDATE attention_notices
+             SET status = 'surfaced', deliveredAt = NULL, updatedAt = CURRENT_TIMESTAMP
+             WHERE id IN (${ids.map((_, i) => `@id${i}`).join(', ')}) AND status = 'delivered'`,
+            params
+        );
+    }
+
+    /**
      * Reach out. The message is filed in the person's inbox first (durable,
      * visible in the portal with or without Discord), then echoed to their
      * Discord DM through the gateway seam when they can receive one. This
@@ -1233,6 +1421,9 @@ Respond with ONLY JSON:
     async onEvent(event) {
         const userId = event?.payload?.userId;
         if (!userId) return;
+        // A display signal for open portals, published many times a minute
+        // while a run works: it is not evidence that anything needs a sweep.
+        if (event.topic === domainEventBus.TOPICS.ASSISTANT_CHANGED) return;
         const policy = await attentionPolicyService.get(userId);
         if (!policy?.enabled) return;
         await this.markDirty(userId);
@@ -1269,7 +1460,17 @@ Respond with ONLY JSON:
         deleted += (await handle.run('DELETE FROM attention_feedback WHERE userId = @userId', { userId })).changes;
         deleted += (await handle.run('DELETE FROM attention_notices WHERE userId = @userId', { userId })).changes;
         deleted += (await handle.run('DELETE FROM attention_state WHERE userId = @userId', { userId })).changes;
+        deleted += (await handle.run('DELETE FROM attention_contacts WHERE userId = @userId', { userId })).changes;
         return deleted;
+    }
+
+    /** Drop contact-ledger rows past their 30-day retention. */
+    async pruneContacts({ now = Date.now() } = {}) {
+        const result = await db.run(
+            'DELETE FROM attention_contacts WHERE createdAt < @cutoff',
+            { cutoff: toUtcText(new Date(now - CONTACT_RETENTION_DAYS * 86_400_000)) }
+        );
+        return result.changes || 0;
     }
 }
 
@@ -1279,5 +1480,7 @@ module.exports = new AttentionService();
 module.exports.AttentionService = AttentionService;
 module.exports.OPEN_STATUSES = OPEN_STATUSES;
 module.exports.FEEDBACK_SIGNALS = FEEDBACK_SIGNALS;
+module.exports.CONTACT_REASONS = CONTACT_REASONS;
+module.exports.CONTACT_RETENTION_DAYS = CONTACT_RETENTION_DAYS;
 module.exports.utcMs = utcMs;
 module.exports.weekBucket = weekBucket;

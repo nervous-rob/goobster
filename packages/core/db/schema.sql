@@ -2391,6 +2391,9 @@ CREATE TABLE IF NOT EXISTS attention_policies (
     quietEndMinute INTEGER,
     maxContactsPerDay INTEGER NOT NULL DEFAULT 3,
     contactCooldownMinutes INTEGER NOT NULL DEFAULT 180,
+    -- When the day's digest of delegated work may go out, in minutes from
+    -- midnight on the same clock as the quiet hours (NULL = 09:00).
+    digestMinute INTEGER,
     enabled INTEGER NOT NULL DEFAULT 1 CHECK (enabled IN (0, 1)),
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now'))
@@ -3612,6 +3615,13 @@ CREATE TABLE IF NOT EXISTS assistant_updates (
     inboxItemId INTEGER,
     envelopeRequested INTEGER NOT NULL DEFAULT 0 CHECK (envelopeRequested IN (0, 1)),
     envelopeRevision INTEGER NOT NULL DEFAULT 0,
+    -- Delivery (DA-9): the one time a material revision, or a gate
+    -- occurrence, left the portal - as a 'digest' entry or as a 'contact',
+    -- never both. Leaving the portal is delivery; it acknowledges nothing.
+    outboundKind TEXT,
+    outboundRevision INTEGER NOT NULL DEFAULT 0,
+    outboundOccurrence INTEGER NOT NULL DEFAULT 0,
+    outboundAt TEXT,
     happenedAt TEXT NOT NULL,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
@@ -3757,3 +3767,46 @@ CREATE TABLE IF NOT EXISTS assistant_run_operations (
 );
 
 CREATE INDEX IF NOT EXISTS idx_assistant_run_operations_owner ON assistant_run_operations(ownerUserId, createdAt);
+
+-- ---------------------------------------------------------------------------
+-- Delivery of delegated work (DA-9). Spec: documentation/delegated_delivery.md
+-- ---------------------------------------------------------------------------
+
+-- The contact ledger for everything that is not one of Attention's own
+-- notices: one row per outbound contact (a browser push or a Discord DM)
+-- that another subsystem asked attentionService.requestContact() for. The
+-- daily cap and the cooldown count these rows together with the notices
+-- Attention delivered itself, so there is one contact budget per person.
+-- Codes and ids only: never a title or a body. Kept 30 days.
+CREATE TABLE IF NOT EXISTS attention_contacts (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    -- Who asked: 'assistant' (delegated work)
+    reason TEXT NOT NULL,
+    -- What it was about: an update id, or 'digest:<day>'
+    refId TEXT,
+    urgent INTEGER NOT NULL DEFAULT 0 CHECK (urgent IN (0, 1)),
+    inboxItemId INTEGER,
+    -- skipped | sent | failed, as inbox_items.discordStatus
+    discordStatus TEXT,
+    pushSent INTEGER NOT NULL DEFAULT 0,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_attention_contacts_user ON attention_contacts(userId, createdAt);
+
+-- One digest per person and day. `day` is the person's own calendar day
+-- (their timezone when quiet hours are evaluated locally, otherwise UTC).
+-- The unique key is what makes a second digest impossible. sentAt is NULL
+-- for a digest that was reserved and never confirmed (a crash mid-send):
+-- that day is spent and its updates go into the next day's digest.
+CREATE TABLE IF NOT EXISTS assistant_digests (
+    id INTEGER PRIMARY KEY,
+    userId TEXT NOT NULL,
+    day TEXT NOT NULL,
+    updateIdsJson TEXT NOT NULL DEFAULT '[]',
+    inboxItemId INTEGER,
+    sentAt TEXT,
+    createdAt TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (userId, day)
+);

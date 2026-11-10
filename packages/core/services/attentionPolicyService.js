@@ -80,6 +80,7 @@ class AttentionPolicyService {
             quietEndMinute: row.quietEndMinute ?? null,
             maxContactsPerDay: row.maxContactsPerDay,
             contactCooldownMinutes: row.contactCooldownMinutes,
+            digestMinute: row.digestMinute ?? null,
             enabled: Boolean(row.enabled),
             createdAt: row.createdAt,
             updatedAt: row.updatedAt
@@ -263,6 +264,26 @@ class AttentionPolicyService {
              SET quietStartMinute = @start, quietEndMinute = @end, updatedAt = CURRENT_TIMESTAMP
              WHERE userId = @userId`,
             { userId, start, end }
+        );
+        return await this.get(userId);
+    }
+
+    /**
+     * Set (or clear, with null) when the day's digest of delegated work may
+     * go out: minutes from midnight on the same clock as the quiet hours.
+     * Null means the default (documentation/delegated_delivery.md).
+     * @param {Object} params - { userId, minute }
+     * @returns {Promise<Object>}
+     */
+    async setDigestTime({ userId, minute = null } = {}) {
+        const clean = normalizeMinute(minute);
+        if (clean === null && minute !== null && minute !== undefined && minute !== '') {
+            throw new AttentionPolicyError('BAD_DIGEST_TIME', 'The digest time is a minute of the day, 0 to 1439.');
+        }
+        await this._ensurePolicy({ userId, defaultEnabled: false });
+        await db.run(
+            'UPDATE attention_policies SET digestMinute = @minute, updatedAt = CURRENT_TIMESTAMP WHERE userId = @userId',
+            { userId, minute: clean }
         );
         return await this.get(userId);
     }

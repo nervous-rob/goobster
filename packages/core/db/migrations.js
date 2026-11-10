@@ -200,6 +200,14 @@ const COLUMN_MIGRATIONS = [
     ['web_sessions', 'sessionVersion', 'sessionVersion INTEGER'],
     // Parlor / project-table replies keep their "Thinking" timeline.
     ['parlor_messages', 'stepsJson', 'stepsJson TEXT'],
+    // Delivery of delegated work (DA-9): the one time a revision or a gate
+    // occurrence left the portal, as a digest entry or a contact.
+    ['assistant_updates', 'outboundKind', 'outboundKind TEXT'],
+    ['assistant_updates', 'outboundRevision', 'outboundRevision INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_updates', 'outboundOccurrence', 'outboundOccurrence INTEGER NOT NULL DEFAULT 0'],
+    ['assistant_updates', 'outboundAt', 'outboundAt TEXT'],
+    // When the day's digest may go out (minutes from midnight; NULL = 09:00).
+    ['attention_policies', 'digestMinute', 'digestMinute INTEGER']
 ];
 
 module.exports = { COLUMN_MIGRATIONS };

@@ -1,6 +1,24 @@
-import type { ResponsibilityOperation } from '../../lib/types';
+import type { Interruption, ResponsibilityOperation } from '../../lib/types';
 
 /** Plain words for what a responsibility grants. */
+
+/** The interruption rule as a choice in the draft form. */
+export const INTERRUPTION_CHOICE: Record<Interruption, string> = {
+    home: 'Keep them on Home and in my Inbox',
+    digest: 'Also send me one digest a day',
+    immediate: 'Tell me when it needs my decision; the rest goes in the daily digest'
+};
+
+/** The interruption rule as a fact about a saved responsibility. */
+const INTERRUPTION_TEXT: Record<Interruption, string> = {
+    home: 'Updates stay on Home',
+    digest: 'Updates go in your daily digest',
+    immediate: 'Contacts you when it needs a decision; other updates go in your daily digest'
+};
+
+export function describeInterruption(rule: string | undefined): string {
+    return INTERRUPTION_TEXT[(rule as Interruption) || 'home'] || INTERRUPTION_TEXT.home;
+}
 
 export type Project = { id: number; slug: string; name: string; ownerId: string };
 

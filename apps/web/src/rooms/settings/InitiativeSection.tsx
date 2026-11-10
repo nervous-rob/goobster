@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
 import type { UserSettingsResponse } from '../../lib/types';
@@ -9,6 +9,8 @@ import { useConfirm } from '../../hooks/useConfirm';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
 import { PushSettings } from '../../components/PushSettings';
+import { featureActive } from '../../lib/rooms';
+import { useMe } from '../../hooks/useSession';
 
 type Values = UserSettingsResponse['sections']['initiative']['values'];
 type Boundary = { proactiveRead?: boolean; proactiveCompute?: boolean; externalWrite?: string | boolean };
@@ -18,6 +20,7 @@ type Draft = {
     contactCooldownMinutes: string;
     quietStart: string;
     quietEnd: string;
+    digestTime: string;
     boundaries: Record<string, Boundary>;
     quietHoursTzMode: 'utc' | 'local';
     notifyInApp: boolean;
@@ -43,7 +46,7 @@ const CATEGORY_LABEL: Record<string, string> = {
 const LABELS: Record<string, string> = {
     enabled: 'Paying attention', initiative: 'Initiative level', maxContactsPerDay: 'DMs per day',
     contactCooldownMinutes: 'Minutes between DMs', quietStartMinute: 'Quiet hours start',
-    quietEndMinute: 'Quiet hours end', boundaries: 'Boundaries',
+    quietEndMinute: 'Quiet hours end', digestMinute: 'Daily digest time', boundaries: 'Boundaries',
     quietHoursTzMode: 'Quiet hours timezone', notifyInApp: 'In-app notices',
     notifyMentionBanners: 'Mention banners', notifyOutbound: 'Outbound contact',
     notifySounds: 'Notification sounds', presenceVisible: 'Show me as online',
@@ -64,6 +67,7 @@ const toDraft = (v: Values): Draft => ({
     contactCooldownMinutes: String(v.contactCooldownMinutes ?? 120),
     quietStart: minuteToTime(v.quietStartMinute),
     quietEnd: minuteToTime(v.quietEndMinute),
+    digestTime: minuteToTime(v.digestMinute ?? null),
     boundaries: v.boundaries || {},
     quietHoursTzMode: v.quietHoursTzMode || 'utc',
     notifyInApp: v.notifyInApp !== false,
@@ -96,6 +100,7 @@ export function InitiativeSection({ section, onDirty }: {
             out.quietStartMinute = timeToMinute(draft.quietStart);
             out.quietEndMinute = timeToMinute(draft.quietEnd);
         }
+        if ('digestTime' in diff) out.digestMinute = timeToMinute(draft.digestTime);
         if ('boundaries' in diff) out.boundaries = draft.boundaries;
         if ('quietHoursTzMode' in diff) out.quietHoursTzMode = draft.quietHoursTzMode;
         if ('notifyInApp' in diff) out.notifyInApp = draft.notifyInApp;
@@ -110,6 +115,15 @@ export function InitiativeSection({ section, onDirty }: {
     useReportDirty(onDirty, d.dirty);
 
     const enabled = Boolean(section.values.enabled);
+    // The daily digest of delegated work is a pilot capability: its time is
+    // offered only where that feature is on and this account has it.
+    const me = useMe();
+    const assistantOn = featureActive(me, 'assistant');
+    const access = useQuery({
+        queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(), enabled: assistantOn, retry: false
+    });
+    const canDigest = assistantOn && access.data?.capabilities?.delivery === true;
+    const defaultDigest = minuteToTime(section.digestDefaultMinute ?? 540);
     const [toggling, setToggling] = useState(false);
     async function toggleEnabled() {
         if (enabled) {
@@ -207,6 +221,22 @@ export function InitiativeSection({ section, onDirty }: {
                     )}
                 </div>
             </Field>
+
+            {canDigest && (
+                <Field id="digest-time" label={d.draft.quietHoursTzMode === 'local' ? 'Daily digest (local)' : 'Daily digest (UTC)'}
+                    hint={`At most one digest a day of what your responsibilities found, for the ones you set to send a digest. It goes out at this time, or as soon after it as your quiet hours and contact budget allow, and counts as one contact. A day with nothing new sends none. Clear it to use ${defaultDigest}.`}>
+                    <div className="settings-inline-row">
+                        <label className="settings-mini">
+                            <span>Send at</span>
+                            <input id="digest-time-input" className="input" type="time" value={d.draft.digestTime}
+                                data-testid="digest-time" onChange={(e) => d.set({ digestTime: e.target.value })} />
+                        </label>
+                        {d.draft.digestTime && (
+                            <button type="button" className="btn subtle small" onClick={() => d.set({ digestTime: '' })}>Use {defaultDigest}</button>
+                        )}
+                    </div>
+                </Field>
+            )}
 
             <Field id="quiet-hours-tz" label="Evaluate quiet hours in my timezone" inline scope="Your account"
                 hint="Requires a timezone on Profile. This is an explicit conversion — adding a timezone does not silently reinterpret UTC hours. DST is applied at delivery time.">

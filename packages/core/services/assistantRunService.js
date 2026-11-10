@@ -32,6 +32,9 @@ const workFailureService = require('./workFailureService');
 const requireOptional = require('../utils/optionalModule').forModule(module);
 const { clip, RESULT_CHARS, SUMMARY_CHARS } = require('./assistant/runTools/shared');
 
+/** Tells open portals that someone's run started, moved or stopped (kinds only). */
+const live = () => require('./assistantLiveService');
+
 /** Used when the responsibility sets no budget of its own (per UTC day). */
 const DEFAULT_BUDGETS = { modelTokens: 200_000, searches: 20, computeSeconds: 120 };
 const MAX_ROUNDS = 8;
@@ -190,6 +193,7 @@ class AssistantRunService {
                  WHERE id = @id`,
                 { id: existing.id, revision: initiative.responsibilityRevision, now }
             );
+            live().changed(existing.ownerUserId, 'run');
             return db.get('SELECT * FROM assistant_runs WHERE id = @id', { id: existing.id });
         }
         const id = await db.insert(
@@ -206,6 +210,7 @@ class AssistantRunService {
                 now
             }
         );
+        live().changed(responsibility.ownerUserId, 'run');
         return db.get('SELECT * FROM assistant_runs WHERE id = @id', { id });
     }
 
@@ -404,7 +409,11 @@ class AssistantRunService {
                 if (shouldStop()) { ctx.halt('RUNNER_STOPPING'); return false; }
                 const alive = await initiatives.renewLease({ id: initiative.id, leaseToken });
                 if (!alive) ctx.halt('LEASE_LOST');
-                else await db.run('UPDATE assistant_runs SET heartbeatAt = @now WHERE id = @id', { id: run.id, now: utcText() });
+                else {
+                    await db.run('UPDATE assistant_runs SET heartbeatAt = @now WHERE id = @id', { id: run.id, now: utcText() });
+                    // Progress for open portals, at most once in five seconds per run.
+                    live().progress(run.ownerUserId, run.id);
+                }
                 return alive;
             },
             account: async () => {
@@ -413,17 +422,22 @@ class AssistantRunService {
             }
         };
 
-        const finishRun = async (fields) => db.run(
-            `UPDATE assistant_runs SET status = @status, stopCode = @stopCode, outcome = @outcome, rounds = @rounds,
-                tokensUsed = @tokens, searches = @searches, computeSeconds = @compute, resultTitle = @title, resultSummary = @summary,
-                updateId = @updateId, endedAt = @endedAt, updatedAt = @now
-             WHERE id = @id`,
-            {
-                id: run.id, stopCode: null, outcome: null, title: null, summary: null, updateId: null,
-                rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute,
-                endedAt: ['RUNNING', 'WAITING'].includes(fields.status) ? null : utcText(), now: utcText(), ...fields
-            }
-        );
+        const finishRun = async (fields) => {
+            const written = await db.run(
+                `UPDATE assistant_runs SET status = @status, stopCode = @stopCode, outcome = @outcome, rounds = @rounds,
+                    tokensUsed = @tokens, searches = @searches, computeSeconds = @compute, resultTitle = @title, resultSummary = @summary,
+                    updateId = @updateId, endedAt = @endedAt, updatedAt = @now
+                 WHERE id = @id`,
+                {
+                    id: run.id, stopCode: null, outcome: null, title: null, summary: null, updateId: null,
+                    rounds: ctx.rounds || 0, tokens: ctx.tokens, searches: ctx.searches, compute: ctx.compute,
+                    endedAt: ['RUNNING', 'WAITING'].includes(fields.status) ? null : utcText(), now: utcText(), ...fields
+                }
+            );
+            live().forgetRun(run.id);
+            live().changed(run.ownerUserId, 'run');
+            return written;
+        };
         const park = async (waitReason, stopCode, recheckAfter) => {
             const settled = await initiatives.settle({ id: initiative.id, leaseToken, status: 'WAITING', waitReason, stopCode, recheckAfter });
             await finishRun({ status: settled.ok ? 'WAITING' : 'CANCELLED', stopCode: settled.ok ? stopCode : 'LEASE_LOST' });

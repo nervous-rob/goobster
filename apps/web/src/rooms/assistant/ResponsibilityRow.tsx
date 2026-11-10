@@ -1,6 +1,6 @@
 import { useDateLabel } from '../../hooks/useDateLabel';
 import type { AssistantInitiative, Responsibility } from '../../lib/types';
-import { describeGrants, type Project } from './grants';
+import { describeGrants, describeInterruption, type Project } from './grants';
 import { WorkList } from './WorkList';
 
 /** One responsibility: what it grants, its work, and its lifecycle buttons. */
@@ -55,6 +55,7 @@ export function ResponsibilityRow({ item, projects, work, busy, onAct, onActOnWo
                 <div className="row-meta">
                     {item.rules?.autoStart ? 'Starts proposed work automatically · ' : 'Each piece of work waits for Start · '}
                     {item.expiresAt ? `Ends ${whenLabel(item.expiresAt)}` : 'No end date'}
+                    {' · '}<span data-testid="responsibility-interruption-rule">{describeInterruption(item.rules?.interruption)}</span>
                     {' · '}revision {item.revision}
                 </div>
                 <WorkList items={work} busy={busy} onAct={onActOnWork} />

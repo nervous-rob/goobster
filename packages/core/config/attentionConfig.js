@@ -160,6 +160,11 @@ const HEARTBEAT = {
     contactCooldownMinutes: 180,
     /** Default outbound contacts allowed per rolling day. */
     maxContactsPerDay: 3,
+    /**
+     * Default time the day's digest of delegated work may go out, in minutes
+     * from midnight on the quiet-hours clock (09:00; overridable per policy).
+     */
+    digestMinute: 9 * 60,
     /** Undelivered inbox notices retained per person before the oldest expire. */
     maxOpenNotices: 40,
     /** Surfaced-but-unopened notices older than this expire quietly. */

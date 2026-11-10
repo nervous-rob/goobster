@@ -442,11 +442,14 @@ async function startCoreRuntime({
             onPause(() => ledgerRetention.stop?.());
         });
         await step('assistantSteward', () => {
-            // Delegated responsibilities: expiry, source reconciliation and
-            // retention (documentation/delegated_responsibilities.md).
+            // Delegated responsibilities: expiry, source reconciliation,
+            // delivery beyond the portal and retention
+            // (documentation/delegated_responsibilities.md).
             const steward = load('assistantStewardService', () => requireOptional('../services/assistantStewardService', { feature: 'assistant' }));
             if (!steward) return ABSENT;
-            steward.start();
+            // The gateway is what the Discord echo of a contact or a digest
+            // goes through (documentation/delegated_delivery.md).
+            steward.start({ gateway: resolvedGateway });
             stoppers.push(async () => steward.stop?.());
             let stewardStopped = null;
             onPause(() => { stewardStopped = Promise.resolve(steward.stop?.()).catch(() => {}); });

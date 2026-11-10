@@ -65,7 +65,7 @@ const INVENTORY = [
     ['followed_sources', 'userId = @userId'],
     ['followed_source_entries', 'sourceId IN (SELECT id FROM followed_sources WHERE userId = @userId)'],
     ...['followups', 'automations', 'attention_items', 'attention_notices', 'attention_feedback', 'attention_watches',
-        'attention_policies', 'inbox_items', 'web_applets'].map(t => [t, 'userId = @userId']),
+        'attention_policies', 'attention_contacts', 'inbox_items', 'web_applets'].map(t => [t, 'userId = @userId']),
     ...['tutorial_progress', 'tutorial_preferences', 'tutorial_feedback'].map(t => [t, 'accountId = @userId']),
     ['attention_provenance', 'itemId IN (SELECT id FROM attention_items WHERE userId = @userId)'],
     ['assistant_responsibilities', 'ownerUserId = @userId', '*', 'id'],
@@ -76,6 +76,7 @@ const INVENTORY = [
     ['assistant_run_operations', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_updates', "audienceKind = 'user' AND audienceUserId = @userId", '*', 'sequence'],
     ['assistant_update_receipts', 'userId = @userId', '*', 'updateId'],
+    ['assistant_digests', 'userId = @userId', '*', 'id'],
     ['assistant_process_contracts', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_process_observations', 'ownerUserId = @userId', '*', 'id'],
     // The secret hash stays out of the archive. The label and prefix are

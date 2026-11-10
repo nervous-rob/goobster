@@ -11,7 +11,7 @@ import { useDateLabel } from '../hooks/useDateLabel';
 import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
-import { describeGrants, type Project } from './assistant/grants';
+import { describeGrants, describeInterruption, type Project } from './assistant/grants';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
 /**
@@ -40,7 +40,9 @@ export function AssistantRoom() {
         queryKey: keys.observatory, queryFn: () => api.observatoryProjects() as Promise<{ projects: Project[] }>,
         enabled: enabled && featureActive(me, 'projects')
     });
-    // Work in progress changes without the person doing anything: poll gently.
+    // Work in progress changes without the person doing anything. The portal
+    // event stream says when (documentation/delegated_delivery.md); the gentle
+    // poll covers an account or a moment the stream does not reach.
     const workQ = useQuery({ queryKey: keys.assistantInitiatives, queryFn: () => api.assistantInitiatives(), enabled, refetchInterval: 15_000 });
     const workByResponsibility = new Map<number, AssistantInitiative[]>();
     for (const item of workQ.data?.initiatives || []) {
@@ -62,7 +64,7 @@ export function AssistantRoom() {
     async function act(item: Responsibility, action: string, question?: string) {
         const grants = describeGrants(item.operations, projectById);
         const ask = action === 'activate'
-            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} You can pause or revoke it at any time.`
+            ? `Activate "${item.title}"? ${me.assistant.name} may then, as you: ${grants.join('; ')}.${item.rules?.autoStart ? ' It will start proposed work by itself, within its daily budgets.' : ' Each piece of work will wait for you to press Start.'}${item.expiresAt ? ` It ends ${whenLabel(item.expiresAt)}.` : ''} ${describeInterruption(item.rules?.interruption)}. You can pause or revoke it at any time.`
             : question;
         if (ask && !await confirm(ask)) return;
         setBusy(item.id);

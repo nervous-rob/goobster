@@ -2,7 +2,7 @@ import type { McpOverview, McpTokenCreated, McpTokenInput, PushSendSummary, Push
 import type { AccessRequest, AccessRequestStatusView, DmMessage, DmThread, DmThreadList, DmThreadPage, Friend, FriendRequest, FriendSearch, FriendsOverview, StudioSongDetail, StudioSongMember, StudioSongSummary, FollowedSources, AdminLimits, TokenLimits, ModelCatalog, AccountSummary, AccountSupportView, AdminAccount, AppConfig, ChatAttachment, InstallationView, InstanceStateView, OperatorAuditEntry, OperatorSchedule, OperatorSchedulesView, SkippedSchedules, Invite, InvitePreview, MigrationReport, ChatHistoryPreviewResponse, ChatMessage, InboxItem, InboxList, Person, ChatQueueItem, Conversation, Me, ToolEvent, TurnProgress, UserSettingsResponse, SectionUpdateResponse, ResetPreviewResponse, RetentionPreviewResponse, TutorialsResponse, TutorialProgress, FeatureStatus, BriefDetail, BriefSummary, BriefMeasure, HostApplied, HostConfigReport, HostFeatures, HostLifecycle, HostManagerStatus, HostOperationKind, HostPreview, HostProbeOutcome, InstallOperation, InstallRecord, InstallSource, InstallSuggest, BackupInspection, BackupStatus, MaintenanceView, MigrationStatus, ResetPreview, HostUpdateStatus } from './types';
 import { parseSseFrame } from './parseSse.js';
 import { accountFetch, sessionChanged } from './browserAccount';
-import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative } from './types';
+import type { AccountExportJob, CapabilityGap, TurnStep, Responsibility, ResponsibilityVocabulary, AssistantInitiative, AssistantAccess } from './types';
 import type { DatabaseConnectionBody, DatabaseReport, DatabaseStatus, DockerStatus, NativeStatus } from './types';
 import type { GateDecisionCard, GateDecisionResult, GateSurface } from './types';
 
@@ -430,6 +430,9 @@ export const api = {
     responsibilityAction: (id: number, action: string, expectedRevision: number) =>
         request<{ responsibility: Responsibility }>(`/api/app/assistant/responsibilities/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
     assistantInitiatives: () => request<{ initiatives: AssistantInitiative[] }>('/api/app/assistant/initiatives?limit=100'),
+    // What the host's policy means for this person, including which pilot
+    // capabilities they have (documentation/delegated_operations.md).
+    assistantAccess: () => request<AssistantAccess>('/api/app/assistant/access'),
     initiativeAction: (id: number, action: string, expectedRevision: number) =>
         request<{ initiative: AssistantInitiative }>(`/api/app/assistant/initiatives/${id}/actions`, { method: 'POST', body: { action, expectedRevision } }),
     acknowledgeUpdates: (items: Array<{ id: number; revision: number }>) =>

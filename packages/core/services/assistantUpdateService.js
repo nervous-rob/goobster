@@ -141,6 +141,24 @@ class AssistantUpdateService {
         throw bad('audience needs a userId or a projectId.');
     }
 
+    /** Everyone who can see this update: its person, or its project's owner and members. */
+    async _audienceUserIds(row) {
+        if (row.audienceKind === 'user') return row.audienceUserId ? [String(row.audienceUserId)] : [];
+        const rows = await db.all(
+            `SELECT userId FROM observatory_projects WHERE id = @projectId
+             UNION SELECT userId FROM project_members WHERE projectId = @projectId`,
+            { projectId: Number(row.projectId) }
+        );
+        return rows.map(member => String(member.userId));
+    }
+
+    /** Tell open portals this update changed (kinds only; see assistantLiveService). Never throws. */
+    async _announce(row, kinds) {
+        try {
+            require('./assistantLiveService').changed(await this._audienceUserIds(row), kinds);
+        } catch { /* a display signal never fails the change */ }
+    }
+
     async _nextSequence() {
         const row = await db.get('SELECT MAX(sequence) AS top FROM assistant_updates', {});
         return Number(row?.top || 0) + 1;
@@ -169,6 +187,7 @@ class AssistantUpdateService {
         for (let attempt = 0; attempt < SEQUENCE_RETRIES; attempt += 1) {
             try {
                 const result = await db.transaction(async () => this._upsert(prepared));
+                if (result.changed) await this._announce(result.row, prepared.material.gate ? ['update', 'gate'] : 'update');
                 if (result.changed && prepared.envelope && params.deliverNow !== false) {
                     await this.deliverPending({ id: result.row.id });
                 }
@@ -283,7 +302,7 @@ class AssistantUpdateService {
 
     /**
      * File or refresh every owed Inbox envelope (one update, one person's, or
-     * a bounded batch). Call outside a transaction: filing can push.
+     * a bounded batch). Call outside a transaction: filing can contact.
      * @returns {Promise<number>} envelopes filed or refreshed
      */
     async deliverPending({ id = null, userId = null, limit = 100 } = {}) {
@@ -311,32 +330,43 @@ class AssistantUpdateService {
         return delivered;
     }
 
-    /** File, or refresh in place, the recipient's single Inbox envelope for this update. */
+    /**
+     * File, or refresh in place, the recipient's single Inbox envelope for
+     * this update. Filing is quiet: no browser push and no Discord echo.
+     * Whether the update also leaves the portal is the responsibility's
+     * interruption rule, applied by assistantDeliveryService through
+     * Attention's contact path (documentation/delegated_delivery.md).
+     */
     async _deliverEnvelope(row) {
         const inboxService = require('./inboxService');
         const sourceId = `${row.id}:${row.materialRevision}`;
         const link = '/home';
+        let itemId = null;
         if (row.inboxItemId) {
             const refreshed = await inboxService.refreshEnvelope({
                 userId: row.audienceUserId, itemId: row.inboxItemId, title: row.title, body: row.summary, sourceId
             });
-            if (refreshed) {
-                await this._envelopeFiled(row, row.inboxItemId);
-                return true;
-            }
+            if (refreshed) itemId = row.inboxItemId;
         }
-        const { item } = await inboxService.deliver({
-            userId: row.audienceUserId,
-            kind: 'notice',
-            title: row.title,
-            body: row.summary,
-            source: { type: INBOX_SOURCE_TYPE, id: sourceId },
-            link,
-            dedupeKey: `assistant_update:${row.id}`,
-            discord: false
-        });
-        if (!item?.id) return false;
-        await this._envelopeFiled(row, item.id);
+        if (!itemId) {
+            const { item } = await inboxService.deliver({
+                userId: row.audienceUserId,
+                kind: 'notice',
+                title: row.title,
+                body: row.summary,
+                source: { type: INBOX_SOURCE_TYPE, id: sourceId },
+                link,
+                dedupeKey: `assistant_update:${row.id}`,
+                discord: false,
+                push: false
+            });
+            if (!item?.id) return false;
+            itemId = item.id;
+        }
+        await this._envelopeFiled(row, itemId);
+        // An open request under an `immediate` rule is contacted about now
+        // when this process sends; otherwise on the steward's next pass.
+        await require('./assistantDeliveryService').contactNow({ id: row.id });
         return true;
     }
 
@@ -364,12 +394,14 @@ class AssistantUpdateService {
 
     /** Mark a gate resolved (the domain service decided it); the update stays in history. */
     async resolveGate({ audience, identityKey }) {
-        const { audienceKey } = this._audience(audience);
+        const resolved = this._audience(audience);
+        const { audienceKey } = resolved;
         const result = await db.run(
             `UPDATE assistant_updates SET gateResolvedAt = @now, updatedAt = @now
              WHERE audienceKey = @audienceKey AND identityKey = @identityKey AND gateJson IS NOT NULL AND gateResolvedAt IS NULL`,
             { audienceKey, identityKey, now: utcText() }
         );
+        if (result.changes > 0) await this._announce(resolved, 'gate');
         return result.changes > 0;
     }
 
@@ -577,6 +609,10 @@ class AssistantUpdateService {
                 currentRevision: Number(row.materialRevision)
             });
         }
+        // The person's other tabs and devices drop the highlight too.
+        if (results.some(result => result.status !== 'not_found')) {
+            require('./assistantLiveService').changed(String(userId), 'update');
+        }
         return { results };
     }
 
@@ -607,6 +643,7 @@ class AssistantUpdateService {
              ON CONFLICT (updateId, userId) DO UPDATE SET snoozedUntil = excluded.snoozedUntil, updatedAt = excluded.updatedAt`,
             { updateId: Number(row.id), userId: String(userId), until: utcText(date), now: utcText() }
         );
+        require('./assistantLiveService').changed(String(userId), 'update');
         return true;
     }
 

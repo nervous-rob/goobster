@@ -115,11 +115,14 @@ class InboxService {
      *   `discordUserId` defaults to the principal's Discord subject. Pass
      *   `{ status: 'sent' | 'failed', error? }` when the producer already
      *   delivered through Discord itself and only wants that recorded.
+     * @param {boolean} [params.push] - `false` files the item without the
+     *   browser push: for a producer whose outbound contact is decided
+     *   somewhere else (delegated work, documentation/delegated_delivery.md).
      * @returns {Promise<{ item: Object, created: boolean, discord: { status: string, error: string|null } }>}
      */
     async deliver({
         userId, kind, title, body = null, source = null, link = null,
-        attachments = null, dedupeKey = null, discord = false
+        attachments = null, dedupeKey = null, discord = false, push: pushEcho = true
     }) {
         const owner = String(userId ?? '').trim();
         if (!owner) throw new InboxError(400, 'BAD_USER', 'An inbox item needs an owner.');
@@ -169,12 +172,38 @@ class InboxService {
         // the row, to every device the person enrolled. Like the Discord
         // echo it is bookkeeping around the item, never the record.
         let push = { sent: 0, failed: 0, pruned: 0, skipped: true };
-        if (created) {
+        if (created && pushEcho !== false) {
             try {
                 push = await require('./pushService').notifyInboxItem(row);
             } catch { /* never throws, belt and braces */ }
         }
         return { item: await this._publicItem(row), created, discord: echo, push };
+    }
+
+    /**
+     * Echo an item that is already in the Inbox: the Discord DM and the
+     * browser push `deliver()` would have sent when it filed the row. For
+     * an item filed quietly (`push: false`, no `discord`) whose producer
+     * later decides it may leave the portal. Changes nothing about the item
+     * but its Discord bookkeeping, and never throws.
+     * @returns {Promise<{ item: Object|null, discord: { status: string, error: string|null }, push: Object }>}
+     */
+    async echo({ userId, itemId, discord = false, push: pushEcho = true }) {
+        let push = { sent: 0, failed: 0, pruned: 0, skipped: true };
+        const row = await db.get(
+            'SELECT * FROM inbox_items WHERE id = @id AND userId = @userId AND archivedAt IS NULL',
+            { id: Number(itemId), userId: String(userId ?? '') }
+        );
+        if (!row) return { item: null, discord: { status: 'skipped', error: 'no item' }, push };
+        const echo = discord
+            ? await this._echoToDiscord(row, discord)
+            : { status: row.discordStatus, error: row.discordError || null };
+        if (pushEcho !== false) {
+            try {
+                push = await require('./pushService').notifyInboxItem(row);
+            } catch { /* never throws, belt and braces */ }
+        }
+        return { item: { id: row.id }, discord: echo, push };
     }
 
     /**

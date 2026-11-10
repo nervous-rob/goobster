@@ -312,6 +312,7 @@ class PrivacyService {
                   AND status IN ('surfaced', 'delivered', 'opened', 'snoozed')) AS openNotices,
                  (SELECT COUNT(*) FROM attention_watches WHERE userId = @userId
                   AND status = 'ARMED') AS armedWatches,
+                 (SELECT COUNT(*) FROM attention_contacts WHERE userId = @userId) AS contacts,
                  (SELECT initiative FROM attention_policies WHERE userId = @userId) AS initiative`,
             { userId }
         );
@@ -574,6 +575,9 @@ class PrivacyService {
                 openLoops: attention?.openLoops || 0,
                 openNotices: attention?.openNotices || 0,
                 armedWatches: attention?.armedWatches || 0,
+                // Times something reached them outside the portal on another
+                // subsystem's request (delegated work), kept 30 days.
+                contacts: attention?.contacts || 0,
                 loops: attentionItems.map(row => ({
                     kind: row.kind,
                     subject: row.subject,
@@ -739,6 +743,10 @@ class PrivacyService {
             counts.attentionState = (await db.run(
                 'DELETE FROM attention_state WHERE userId = @userId', { userId }
             )).changes;
+            // The contact ledger: when something reached them outside the portal.
+            counts.attentionContacts = (await db.run(
+                'DELETE FROM attention_contacts WHERE userId = @userId', { userId }
+            )).changes;
             // Delegated responsibilities: the person's grants and their
             // history; their principal fields on anyone else's grant.
             const forgottenResponsibilities = await dormantData.forgetAssistantResponsibilities(userId);
@@ -756,6 +764,7 @@ class PrivacyService {
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
+            counts.assistantDigests = forgottenResponsibilities.digests;
 
             // Spitball Expeditions: research runs, their cycles, and the
             // evidence trail. Cycles/sources/claims cascade with the
@@ -1297,6 +1306,7 @@ class PrivacyService {
             assistant_process_observations: responsibilities.processObservations,
             assistant_runs: responsibilities.runs,
             assistant_run_operations: responsibilities.runOperations,
+            assistant_digests: responsibilities.digests,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',
@@ -1638,6 +1648,9 @@ class PrivacyService {
             )).c,
             attention_state: (await db.get(
                 'SELECT COUNT(*) AS c FROM attention_state WHERE userId = @userId', { userId }
+            )).c,
+            attention_contacts: (await db.get(
+                'SELECT COUNT(*) AS c FROM attention_contacts WHERE userId = @userId', { userId }
             )).c,
             sandbox_packages_attributed: (await db.get(
                 `SELECT COUNT(*) AS c FROM sandbox_packages

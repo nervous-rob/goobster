@@ -591,6 +591,17 @@ class AssistantResponsibilityService {
             throw new AssistantResponsibilityError('ATTENTION_NOT_ENROLLED',
                 'Turn on Attention (/attention enable or Settings) before activating a responsibility.', 409);
         }
+        // Reaching a person outside the portal (a digest, a contact) is a
+        // pilot capability (documentation/delegated_delivery.md).
+        const interruption = parseJson(row.rulesJson, {})?.interruption;
+        if (['digest', 'immediate'].includes(interruption)) {
+            const access = require('./assistantAccessService');
+            if (!(await access.allows(row.ownerUserId, 'delivery'))) {
+                throw new AssistantResponsibilityError(access.REFUSAL_CODE,
+                    'Digests and contacts for delegated work are limited to the installation\'s owner until the pilot decision is recorded. Keep updates on Home to activate.',
+                    409, { capability: 'delivery' });
+            }
+        }
     }
 
     async _snapshot(row, changeKind, changedBy) {
