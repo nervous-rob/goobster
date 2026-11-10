@@ -21,7 +21,8 @@ export const FAILURE_KIND_LABEL: Record<string, string> = {
     watch: 'watch',
     followup: 'reminder',
     integration_action: 'integration action',
-    reflection: 'knowledge reflection'
+    reflection: 'knowledge reflection',
+    assistant_run: 'delegated run'
 };
 
 const RESOURCE_LABEL: Record<string, string> = {

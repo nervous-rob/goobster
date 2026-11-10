@@ -136,6 +136,8 @@ module.exports = {
         payload: {
             files: [
                 'packages/core/services/{assistantResponsibilityService,assistantInitiativeService,assistantUpdateService,assistantProcessService,assistantStewardService,assistantGateService,assistantRunService,assistantRunnerService,assistantControlService,assistantAccessService}.js',
+                // Run tool modules (runTools/) and initiative source adapters (sources/).
+                'packages/core/services/assistant/**',
                 'packages/core/web/routes/assistant.js'
             ]
         }

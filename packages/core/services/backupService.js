@@ -235,7 +235,9 @@ function setAside(file, tag) {
  * Mark every piece of in-flight work failed with one fixed reason and
  * record a work_failures row for each. None of it is retried: the
  * observatory auto-resume only takes INTERRUPTED jobs, the expedition
- * runner only QUEUED ones, and both find none of these.
+ * runner only QUEUED ones, the delegated-work runner only QUEUED
+ * initiatives (and lease reaping only RUNNING ones), and all find none of
+ * these.
  * @param {{now?: Date}} [params]
  * @returns {Promise<Object>} counts by kind
  */
@@ -335,6 +337,39 @@ async function interruptInFlightWork({ now = new Date() } = {}) {
             );
             await workFailures.record({ kind: 'reflection', workId: run.id, phase: 'running', code: INTERRUPTED_CODE, reason: INTERRUPTED_REASON, actor: run.requestedBy });
             bump('reflection');
+        }
+
+        // Delegated runs. Lease reaping would return a RUNNING initiative to
+        // QUEUED, and a run left RUNNING under an initiative that was
+        // already requeued or parked would be resumed from its journal.
+        // Both end here; only the person's own "Try again" starts a new
+        // attempt, with a new journal.
+        for (const work of await db.all(
+            `SELECT i.id AS initiativeId, i.status AS initiativeStatus, i.ownerUserId, i.actingUserId,
+                    r.id AS runId, r.status AS runStatus
+             FROM assistant_initiatives i LEFT JOIN assistant_runs r ON r.initiativeId = i.id
+             WHERE i.status = 'RUNNING' OR r.status = 'RUNNING'
+             ORDER BY i.id`
+        )) {
+            if (work.runId != null) {
+                await db.run(
+                    `UPDATE assistant_runs SET status = 'FAILED', stopCode = @code, endedAt = @now, updatedAt = @now
+                     WHERE id = @id AND status IN ('RUNNING', 'WAITING')`,
+                    { id: work.runId, code: INTERRUPTED_CODE, now: nowText }
+                );
+            }
+            await db.run(
+                `UPDATE assistant_initiatives
+                 SET status = 'FAILED', stopCode = @code, waitReason = NULL, recheckAfter = NULL,
+                     leaseToken = NULL, leaseExpiresAt = NULL, revision = revision + 1, endedAt = @now, updatedAt = @now
+                 WHERE id = @id AND status IN ('RUNNING', 'QUEUED', 'WAITING')`,
+                { id: work.initiativeId, code: INTERRUPTED_CODE, now: nowText }
+            );
+            await workFailures.record({
+                kind: 'assistant_run', workId: work.runId, phase: work.runId != null ? work.runStatus : 'CLAIMED',
+                code: INTERRUPTED_CODE, reason: INTERRUPTED_REASON, actor: work.actingUserId || work.ownerUserId
+            });
+            bump('assistant_run');
         }
 
         for (const turn of await db.all('SELECT userId, turnId FROM web_live_turns')) {
