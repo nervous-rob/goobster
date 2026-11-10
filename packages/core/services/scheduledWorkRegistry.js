@@ -57,6 +57,13 @@ const SCHEDULED_WORK = Object.freeze({
         missedRecovery: excluded('a late poll reads the current CI verdict once; nothing is replayed'),
         processCatalog: excluded('not adapted yet: reports through the project and the owner\'s Inbox'),
         operatorPanel: excluded('runs on its owner\'s own GitHub connection')
+    }),
+    // The daily digest of delegated work (documentation/delegated_delivery.md).
+    assistant_digest: Object.freeze({
+        table: 'assistant_digests',
+        missedRecovery: excluded('no stored fire time: a digest is built from what is still unseen once its time has passed, at most once a day, so nothing is replayed'),
+        processCatalog: excluded('delivery of results, not a process with a contract'),
+        operatorPanel: excluded('private to its owner')
     })
 });
 

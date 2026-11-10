@@ -5,11 +5,12 @@ import { keys } from '../../lib/query';
 import { featureActive } from '../../lib/rooms';
 import { useMe } from '../../hooks/useSession';
 import { useToast } from '../../hooks/useToast';
-import type { ResponsibilityOperation } from '../../lib/types';
-import { DEFAULT_EXTERNAL_OPERATIONS, MAX_EXTERNAL_OPERATIONS, type Project } from './grants';
+import type { Interruption, ResponsibilityOperation } from '../../lib/types';
+import { DEFAULT_EXTERNAL_OPERATIONS, INTERRUPTION_CHOICE, MAX_EXTERNAL_OPERATIONS, type Project } from './grants';
 import { NO_WIDER_SOURCES, SourceChoices, widerOperations, widerScopes, type WiderSources } from './SourceChoices';
 
 type Clone = { name: string; repo: string; clonedBranch: string };
+
 
 /** Drafts a responsibility from plain choices. A draft grants nothing. */
 export function DraftForm({ projects, onCreated }: { projects: Project[]; onCreated: () => Promise<unknown> }) {
@@ -32,7 +33,13 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [days, setDays] = useState('30');
     const [autoStart, setAutoStart] = useState(false);
     const [deepResearch, setDeepResearch] = useState(false);
+    const [interruption, setInterruption] = useState<Interruption>('home');
     const [saving, setSaving] = useState(false);
+    // Reaching you outside the portal and repository work are pilot
+    // capabilities: each is offered only to an account that has it (the
+    // server checks again).
+    const access = useQuery({ queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(), retry: false, staleTime: 60_000 });
+    const canDeliver = access.data?.capabilities?.delivery === true;
     const canProjects = featureActive(me, 'projects');
     const canSandbox = featureActive(me, 'sandbox');
     const canResearch = featureActive(me, 'expeditions');
@@ -48,11 +55,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
     const [openPulls, setOpenPulls] = useState(false);
     const [perDay, setPerDay] = useState(String(DEFAULT_EXTERNAL_OPERATIONS));
     // Repository work is still in the pilot: offered only to whoever the host's policy allows.
-    const accessQ = useQuery({
-        queryKey: keys.assistantAccess, queryFn: () => api.assistantAccess(),
-        enabled: (canProjects && featureActive(me, 'github')) || canKnowledge, retry: false, staleTime: 60_000
-    });
-    const canReach = accessQ.data?.capabilities?.reach === true;
+    const canReach = access.data?.capabilities?.reach === true;
     const canRepos = canReach && canProjects && featureActive(me, 'github');
     const project = projects.find((entry) => String(entry.id) === projectId) || null;
     const ownerId = project && project.ownerId !== me.user.id ? project.ownerId : null;
@@ -154,7 +157,12 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 ...(sources().length ? { scopes: { sources: sources(), ...(sharing ? { audience: 'project' } : {}) } } : {}),
                 ...(reaches || writesOut ? { budgets: { externalOperations: daily } } : {}),
                 ...(days ? { expiresAt: new Date(Date.now() + Number(days) * 86400_000).toISOString() } : {}),
-                ...(autoStart ? { rules: { autoStart: true } } : {})
+                ...(autoStart || (canDeliver && interruption !== 'home') ? {
+                    rules: {
+                        ...(autoStart ? { autoStart: true } : {}),
+                        ...(canDeliver && interruption !== 'home' ? { interruption } : {})
+                    }
+                } : {})
             });
             setTitle('');
             setOutcome('');
@@ -360,6 +368,20 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
                 <input type="checkbox" checked={autoStart} onChange={(e) => setAutoStart(e.target.checked)} data-testid="responsibility-autostart" />{' '}
                 Start proposed work automatically (otherwise each piece waits for you to press Start). It stays within the daily budgets.
             </label>
+            {canDeliver && (
+                <label className="field">
+                    <span>How should its updates reach you?</span>
+                    <select value={interruption} onChange={(e) => setInterruption(e.target.value as Interruption)} data-testid="responsibility-interruption">
+                        {(Object.keys(INTERRUPTION_CHOICE) as Interruption[]).map((mode) => (
+                            <option key={mode} value={mode}>{INTERRUPTION_CHOICE[mode]}</option>
+                        ))}
+                    </select>
+                    <span className="hint">
+                        Everything is always on Home and in your Inbox. A digest or a contact also sends a browser notification or a Discord message,
+                        within your Attention limits (quiet hours, contacts per day, time between contacts).
+                    </span>
+                </label>
+            )}
             <button type="submit" className="btn primary" disabled={saving} data-testid="responsibility-save">Save draft</button>
         </form>
     );

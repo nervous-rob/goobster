@@ -79,7 +79,12 @@ const TOPICS = {
     ATTENTION_NOTICE_SURFACED: 'attention.notice_surfaced',
 
     AUTOMATION_RAN: 'automation.ran',
-    FOLLOWUP_DELIVERED: 'followup.delivered'
+    FOLLOWUP_DELIVERED: 'followup.delivered',
+
+    // Delegated work changed for one person: `{ userId, kinds }`, ids only.
+    // A display signal for open portals (documentation/delegated_delivery.md),
+    // not a fact to act on: the facts publish their own topics.
+    ASSISTANT_CHANGED: 'assistant.changed'
 };
 
 const KNOWN_TOPICS = new Set(Object.values(TOPICS));
