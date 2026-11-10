@@ -272,6 +272,7 @@ class FileDiscoveryService {
                     a.relativePath, a.metadataJson
              FROM kg_artifacts a JOIN kg_nodes n ON n.id = a.nodeId
              WHERE a.guildId = @guildId AND a.scopeKey = @scopeKey AND a.contentHash = @contentHash
+               AND n.archivedAt IS NULL
              ORDER BY a.id DESC LIMIT 1`,
             { guildId, scopeKey, contentHash }
         );

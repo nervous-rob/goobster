@@ -12,6 +12,7 @@ import { MenuButton } from '../shell/MenuButton';
 import type { AssistantInitiative, Responsibility } from '../lib/types';
 import { DraftForm } from './assistant/DraftForm';
 import { describeGrants, describeListening, externalOperationsPerDay, reachesGitHub, type Project } from './assistant/grants';
+import { KnowledgeChanges } from './assistant/KnowledgeChanges';
 import { ProcessList } from './assistant/ProcessList';
 import { ResponsibilityRow } from './assistant/ResponsibilityRow';
 
@@ -153,6 +154,7 @@ export function AssistantRoom() {
                         <div style={{ marginTop: 22 }}>
                             <DraftForm projects={projects} onCreated={refresh} />
                         </div>
+                        {featureActive(me, 'knowledge') && <KnowledgeChanges />}
                         <ProcessList data={processesQ.data} pending={processesQ.isPending} error={processesQ.isError ? processesQ.error as Error : null} />
                     </>
                 )}

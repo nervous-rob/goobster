@@ -1108,6 +1108,61 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
+    // Delegated knowledge work (assistantKnowledge.spec.js, DA-11b): a person
+    // with one suggested change to a note they saved (waiting), one change a
+    // run made directly (undoable) and one generated note a run archived
+    // (restorable). `owner: true` makes them the installation's owner, the
+    // only one offered saved-note work during the pilot. Safe to call again:
+    // it starts that person over, and clears the pilot decision.
+    app.post('/e2e/fixtures/assistant-knowledge', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            const responsibilityService = require('@goobster/core/services/assistantResponsibilityService');
+            const changes = require('@goobster/core/services/knowledgeChangeSetService');
+            const updates = require('@goobster/core/services/assistantUpdateService');
+            await identityService.ensureLegacyPrincipal({ discordId: userId, displayName: req.body?.name || 'Gardener' });
+            if (req.body?.owner) await identityService.grantAccount({ principalId: userId, entitlement: 'bootstrap', role: 'operator' });
+            const scopeKey = `USER:${userId}`;
+            for (const table of ['kg_edges', 'kg_provenance', 'kg_node_revisions']) {
+                await db.run(
+                    `DELETE FROM ${table} WHERE ${table === 'kg_edges' ? 'sourceId IN (SELECT id FROM kg_nodes WHERE scopeKey = @scopeKey) OR targetId IN (SELECT id FROM kg_nodes WHERE scopeKey = @scopeKey)' : 'nodeId IN (SELECT id FROM kg_nodes WHERE scopeKey = @scopeKey)'}`,
+                    { scopeKey }
+                );
+            }
+            await db.run('DELETE FROM kg_nodes WHERE scopeKey = @scopeKey', { scopeKey });
+            for (const [table, column] of [
+                ['kg_change_sets', 'userId'], ['assistant_update_receipts', 'userId'], ['assistant_updates', 'audienceUserId'],
+                ['assistant_initiatives', 'ownerUserId'], ['assistant_responsibilities', 'ownerUserId'],
+                ['inbox_items', 'userId'], ['attention_policies', 'userId']
+            ]) {
+                await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
+            }
+            await db.run("DELETE FROM instance_state WHERE key = 'assistantPilot'");
+            await policies.enroll({ userId, initiative: 'assist' });
+            const guildId = dmScopeId(userId);
+            const { responsibility } = await responsibilityService.create({
+                userId, body: { title: 'Keep my garden notes accurate', operations: [{ operation: 'read', resource: { kind: 'knowledge', ids: ['personal'] } }] }
+            });
+            const run = { id: 1, responsibilityId: responsibility.id, responsibilityRevision: responsibility.revision };
+            const frost = await knowledgeGraphService.createUserNote({ guildId, userId, label: 'Frost date', content: 'Frost is expected on the 14th. Cover the beans.' });
+            const soil = await knowledgeGraphService.createUserNote({ guildId, userId, label: 'Soil test', content: 'Loam, slightly acid.' });
+            const proposed = await changes.propose({
+                guildId, userId, run, nodeId: frost.id, expectedRevision: frost.revision,
+                content: 'Frost is expected on the 9th. Cover the beans.', rationale: 'Two almanacs now say the 9th.'
+            });
+            const direct = await changes.recordDirect({
+                guildId, userId, run: { ...run, id: 2 }, nodeId: soil.id, expectedRevision: soil.revision,
+                content: 'Loam, slightly acid (pH 6.2).', rationale: 'Added the measured pH.'
+            });
+            const stale = await knowledgeGraphService.addGeneratedNote({ guildId, userId, label: 'Old watering schedule', content: 'Water daily.' });
+            await knowledgeGraphService.archiveNote({ guildId, userId, nodeId: stale.id, by: 'run' });
+            await updates.deliverPending({ userId });
+            res.json({ ok: true, proposalId: proposed.id, directId: direct.id, frostId: frost.id });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
     // The domain resolving a request (what a repair approval would do).
     app.post('/e2e/fixtures/assistant-home/resolve', express.json(), async (req, res) => {
         try {

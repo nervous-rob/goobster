@@ -34,6 +34,7 @@ const CAPABILITIES = Object.freeze({
 });
 /** Grant operations that belong to a gated capability. */
 const OPERATION_CAPABILITY = Object.freeze({
+    'kg.saved.propose': 'reach',
     'kg.saved.amend': 'reach',
     'kg.edge': 'reach',
     'kg.archive': 'reach',

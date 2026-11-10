@@ -401,9 +401,30 @@ export type InboxUpdateRef = {
  * card, so one that has changed is refused instead of applied.
  */
 export type GateDecisionOption = { id: string; label: string; effect: string | null; danger: boolean };
+/** One run of a proposed text change: added, removed, unchanged, or a folded stretch of unchanged passages. */
+export type GateDiffEntry = { op: 'same' | 'add' | 'del' | 'skip'; text: string };
 export type GateDecisionCard = {
     ref: string; kind: string; state: 'open' | 'resolved'; title: string; detail: string | null; outcome: string | null;
     occurrence: number; revision: string; options: GateDecisionOption[];
+    /** Present only on a card that proposes a change to text (a note proposal). */
+    diff?: GateDiffEntry[];
+};
+
+/** What delegated runs proposed, changed and archived in the person's notes (documentation/delegated_knowledge.md). */
+export type KnowledgeChange = {
+    id: number; kind: 'saved_note_edit' | 'direct_change' | 'source_retraction'; status: 'PROPOSED' | 'APPLIED' | 'REJECTED' | 'STALE' | 'REVERTED';
+    nodeId: number | null; label: string | null; rationale: string | null; diff: GateDiffEntry[];
+    claimStatus: { from: string; to: string } | null; policy: string | null; decision: string | null;
+    impact: { source: string | null; reason: string | null; notes: Array<{ id: number; label: string }>; moreNotes: number; assumptions: Array<{ missionId: number; title: string }>; unverifiable: boolean } | null;
+    revertible: boolean; createdAt: string; decidedAt: string | null; revertedAt: string | null;
+};
+export type KnowledgeArchivedNote = {
+    id: number; label: string; content: string; curation: string; archivedAt: string; archivedBy: string | null; archiveCode: string;
+    mergedInto: { id: number; label: string | null } | null; connections: number;
+};
+export type KnowledgeOverview = {
+    proposals: KnowledgeChange[]; changes: KnowledgeChange[]; archived: KnowledgeArchivedNote[];
+    retractedLinks: Array<{ id: number; relation: string; from: string; to: string; retractedAt: string }>;
 };
 export type GateSurface = 'home' | 'inbox' | 'chat' | 'project';
 export type GateDecisionResult = {

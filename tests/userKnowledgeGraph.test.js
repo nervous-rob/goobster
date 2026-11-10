@@ -144,7 +144,8 @@ describe('legalizer mutations', () => {
         expect(await kg.mergeNodes({
             guildId: SCOPE, scopeKey, keepLabel: 'raspberry pi', dropLabel: 'pi cluster'
         })).toBe(true);
-        expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @g', { g: SCOPE })).c).toBe(1);
+        expect((await db.get('SELECT COUNT(*) AS c FROM kg_nodes WHERE guildId = @g AND archivedAt IS NULL', { g: SCOPE })).c).toBe(1);
+        expect((await db.get('SELECT mergedIntoId FROM kg_nodes WHERE guildId = @g AND label = @l', { g: SCOPE, l: 'pi cluster' })).mergedIntoId).not.toBeNull();
         expect((await kg.getNode(SCOPE, 'raspberry pi', scopeKey)).content).toBe('v2');
     });
 

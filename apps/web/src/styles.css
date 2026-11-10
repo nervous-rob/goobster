@@ -2478,6 +2478,10 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 /* The decision buttons of one request, the same on Home and in the Inbox. */
 .gate-decision { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; margin-top: 8px; }
 .gate-decision .hint { flex: 1 1 220px; min-width: 0; }
+.gate-diff { flex: 1 1 100%; font-family: var(--mono, ui-monospace, monospace); font-size: 0.85em; border: 1px solid var(--border, #8884); border-radius: 6px; padding: 6px 8px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.gate-diff-add { background: #2e7d3226; }
+.gate-diff-del { background: #c6282826; text-decoration: line-through; }
+.gate-diff-skip { opacity: 0.6; font-style: italic; }
 .assistant-components { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 8px; }
 .assistant-component {
   display: flex; flex-direction: column; gap: 4px; padding: 10px 12px; text-decoration: none; color: inherit;

@@ -65,6 +65,19 @@ Self-loops are rejected. Duplicate `(source, target, relation)` upserts weight.
 - **temporal**: `before`, `after`, `during`
 - **social**: `member_of`, `works_with`, `knows`
 
+### Archive, merge and claim status
+
+A note can be archived (`archivedAt`, `archivedBy`, `archiveCode`): it leaves
+retrieval, search and the graph views but stays in the person's overview, the
+export and erasure, and can be restored. A merge archives the dropped note as
+an alias (`mergedIntoId`) and moves its edges as merge-marked edges, so it can
+be undone. `claimStatus` (`current`, `disputed`, `superseded`, `retracted`)
+labels what a note claims without changing its words. Edges carry a
+`revision`, `evidenceKind`/`evidenceId`, `originRunId` and a retraction
+(`retractedAt`, `retractionCode`); a retracted edge is kept and restorable.
+`kg_change_sets` records proposed and applied changes to saved notes. See
+[delegated_knowledge.md](delegated_knowledge.md).
+
 ## Tags
 
 Tags cluster nodes without hand-maintaining every edge. Notes sharing a tag are implicitly related; explicit edges capture stronger claims. On the Map, those tags become visual hubs (stronger springs, diamond nodes, cluster hulls) and a parent/child grouping is derived from co-occurrence so a large graph clumps instead of tangling — the hierarchy is view-time, never written to `kg_tags`.

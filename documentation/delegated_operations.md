@@ -121,7 +121,7 @@ records the pilot decision, only the owner has them.**
 - **The owner** is any active account with the operator role. An
   installation with two operators has two owners; a disabled or demoted
   operator is not one.
-- **What is gated today.** Of DA-7 through DA-11, three things have shipped.
+- **What is gated today.** Of DA-7 through DA-11, four things have shipped. Delegated knowledge work (DA-11b) is gated as `reach` like repository work.
   Deciding a request where it is shown (DA-7a,
   [assistant_home.md](assistant_home.md#deciding-a-request-where-it-is-shown))
   shipped before this gate existed and does not check it: every person can
@@ -131,8 +131,10 @@ records the pilot decision, only the owner has them.**
   clone are offered to a run, and shown in the draft form, only for the
   owner, and each call checks the gate again before it reaches GitHub. The
   grant vocabulary contains all the `reach` operations (`repo.commit`,
-  `repo.push`, `pr.create`, and the not yet built `kg.saved.amend`,
-  `kg.edge`, `kg.archive`, `external.write`), so for anyone but the owner,
+  `repo.push`, `pr.create`, the saved-note operations `kg.saved.propose`,
+  `kg.saved.amend`, `kg.edge` and `kg.archive` of DA-11b
+  ([delegated_knowledge.md](delegated_knowledge.md)), and the not yet built
+  `external.write`), so for anyone but the owner,
   activating or resuming a responsibility that grants one is refused with
   `PILOT_ONLY` (naming the operation), and `authorize()` refuses the
   dispatch with `PILOT_ONLY` even if such a grant is already active.

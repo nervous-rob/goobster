@@ -760,10 +760,14 @@ class AssistantRunService {
 
         // What the run reported, before the lines naming what it changed.
         const reported = result.summary;
-        if (applied.lines.length) {
-            // A change was made: the person is always told, whatever the model reported.
+        if (applied.lines.length || applied.waiting.length) {
+            // A change was made, or a request filed: the person is always told, whatever the model reported.
             result.outcome = 'DONE';
-            result.summary = clip(`${result.summary ? `${result.summary}\n\n` : ''}Changed: ${applied.lines.join(' ')}`, SUMMARY_CHARS);
+            const parts = [
+                applied.lines.length ? `Changed: ${applied.lines.join(' ')}` : '',
+                applied.waiting.length ? `Waiting for you: ${applied.waiting.join(' ')}` : ''
+            ].filter(Boolean).join('\n');
+            result.summary = clip(`${result.summary ? `${result.summary}\n\n` : ''}${parts}`, SUMMARY_CHARS);
         }
         // Settle first: a result is only published for work that still holds its lease.
         const settled = await initiatives.settle({
@@ -1085,6 +1089,7 @@ class AssistantRunService {
             { runId }
         );
         const lines = [];
+        const waiting = [];
         const components = new Set();
         // What a project's members may be told: changes to the project itself.
         const projectLines = [];
@@ -1093,6 +1098,13 @@ class AssistantRunService {
             const text = String(row.resultText || '');
             // A write tool that declined (title exists, note is the person's) changed nothing.
             if (!text || /^Not /.test(text)) continue;
+            // Evidence only: nothing to tell the person (a confirmation).
+            if (TOOLS[row.tool]?.quiet) continue;
+            // A request filed for the person to decide changed nothing yet.
+            if (TOOLS[row.tool]?.proposes) {
+                waiting.push(text.split('\n')[0]);
+                continue;
+            }
             lines.push(text.split('\n')[0]);
             const component = TOOLS[row.tool]?.component;
             if (component) components.add(component);
@@ -1101,7 +1113,7 @@ class AssistantRunService {
                 if (component) projectComponents.add(component);
             }
         }
-        return { lines, components: [...components], projectLines, projectComponents: [...projectComponents] };
+        return { lines, waiting, components: [...components], projectLines, projectComponents: [...projectComponents] };
     }
 
     /** Retention: journals and runs of long-finished work (the initiative prune cascades too). */

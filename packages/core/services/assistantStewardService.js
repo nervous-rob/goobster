@@ -78,7 +78,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             reconcile: await initiatives.reconcile({ now }),
             gates: await require('./assistantGateService').adoptProjectGates({}),
             incidents: await require('./assistantIncidentService').reconcile({ now, upSince }),
-            envelopes: await updates.deliverPending({})
+            envelopes: await updates.deliverPending({}),
+            knowledgeProposalsExpired: await require('./knowledgeChangeSetService').expireOpen({ now })
         };
         // Home says how fresh its picture is from this, in any process.
         await instanceState.set(HEARTBEAT_KEY, { at: now.toISOString(), since: upSince.toISOString() });
@@ -89,7 +90,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 incidents: await require('./assistantIncidentService').prune({ days: RETENTION_DAYS.incidents, now }),
                 runs: await require('./assistantRunService').prune({ days: RETENTION_DAYS.initiatives, now }),
                 initiatives: await initiatives.prune({ days: RETENTION_DAYS.initiatives, now }),
-                updates: await updates.prune({ days: RETENTION_DAYS.updates, now })
+                updates: await updates.prune({ days: RETENTION_DAYS.updates, now }),
+                knowledgeChanges: await require('./knowledgeChangeSetService').prune({ now })
             };
         }
         return result;
