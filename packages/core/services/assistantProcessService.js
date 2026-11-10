@@ -79,12 +79,16 @@ function adapter({ feature = null, table, columns, present, history = null, resu
         async list(userId) {
             return db.all(`SELECT id FROM ${table} WHERE userId = @userId ORDER BY id`, { userId });
         },
-        /** Every process of this kind the person owns, described, in one query. */
+        /**
+         * The processes of this kind the person owns, described, in one
+         * query: the newest LIST_MAX, so finished one-shot rows (old watches)
+         * are what falls off, in id order.
+         */
         async listDescribed(userId) {
             const rows = await db.all(
-                `SELECT ${columns} FROM ${table} WHERE userId = @userId ORDER BY id LIMIT ${LIST_MAX}`, { userId }
+                `SELECT ${columns} FROM ${table} WHERE userId = @userId ORDER BY id DESC LIMIT ${LIST_MAX}`, { userId }
             );
-            return rows.map(row => ({ id: Number(row.id), ...present(row) }));
+            return rows.reverse().map(row => ({ id: Number(row.id), ...present(row) }));
         },
         ...(history ? { history } : {})
     };

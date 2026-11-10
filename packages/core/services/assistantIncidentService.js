@@ -9,7 +9,8 @@
  * deletes a process, and it never runs a model.
  *
  * An incident opens when a process has failed `incidentFailures` times
- * running or has been stalled for `stalledIncidentSeconds`. Processes
+ * running or has been stalled for `stalledIncidentSeconds` while this
+ * installation was running. Processes
  * failing with the same upstream cause share one incident (`cause:<CODE>`),
  * and a process that depends on a failing one joins that incident as a
  * dependent instead of getting its own.
@@ -178,12 +179,13 @@ class AssistantIncidentService {
      * @param {Object} [params]
      * @param {string} [params.userId] - one person, or everyone due
      * @param {Date} [params.now]
-     * @param {boolean} [params.stalls] - false right after this installation was
-     *   itself not running: a schedule that slipped while nothing ran is not
-     *   yet the process's failure, so no stall incident is opened this pass
+     * @param {Date} [params.upSince] - since when this installation has been
+     *   running without a gap. A schedule that slipped while nothing ran is
+     *   not the process's failure, so a stall opens an incident only once it
+     *   has lasted `stalledIncidentSeconds` of that time. Omitted: no limit.
      * @returns {Promise<{ owners: number, opened: number, reopened: number, recovering: number, resolved: number, relevance: number }>}
      */
-    async reconcile({ userId = null, now = new Date(), stalls = true } = {}) {
+    async reconcile({ userId = null, now = new Date(), upSince = null } = {}) {
         const result = { owners: 0, opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0 };
         if (features.enforcedOff('assistant')) return result;
         let after = '';
@@ -197,7 +199,7 @@ class AssistantIncidentService {
             }
             for (const owner of owners) {
                 try {
-                    const outcome = await this._reconcileOwner(owner.userId, { now, announce: owner.announce, stalls });
+                    const outcome = await this._reconcileOwner(owner.userId, { now, announce: owner.announce, upSince });
                     result.owners += 1;
                     for (const key of ['opened', 'reopened', 'recovering', 'resolved', 'relevance']) result[key] += outcome[key];
                 } catch (error) {
@@ -210,12 +212,13 @@ class AssistantIncidentService {
         return result;
     }
 
-    async _reconcileOwner(owner, { now, announce, stalls }) {
+    async _reconcileOwner(owner, { now, announce, upSince }) {
         const result = { opened: 0, reopened: 0, recovering: 0, resolved: 0, relevance: 0 };
         const { processes: entries } = await require('./assistantProcessService').assess({ userId: owner, now });
         const byRef = new Map(entries.map(entry => [entry.ref, entry]));
         const { incidents: open } = await this.list({ userId: owner });
         const settings = assessment.DEFAULTS;
+        const upSeconds = upSince ? Math.max(0, (now.getTime() - new Date(upSince).getTime()) / 1000) : Infinity;
 
         // An incident this process is already in, for the cause it is failing with now.
         const held = (ref, causeCode) => open.find(incident => incident.members.some(member => member.ref === ref)
@@ -242,7 +245,7 @@ class AssistantIncidentService {
             } else if (judged.health.sharedCause) {
                 failing = true;
             } else {
-                failing = assessment.incidentWorthy(judged) && (stalls || judged.execution !== 'stalled');
+                failing = assessment.incidentWorthy(judged, { upSeconds });
             }
             if (!failing) continue;
             if (judged.health.sharedCause && announce) place(`cause:${judged.health.sharedCause}`, judged.health.sharedCause, entry, 'failing');

@@ -311,11 +311,17 @@ function assessProcess({ described, contract = null, observations = [], linkedIt
  * Whether a process, judged alone, has earned an incident: it has failed
  * `incidentFailures` times running, or has been stalled for
  * `stalledIncidentSeconds`.
+ *
+ * `options.upSeconds` is how long this installation has been running without
+ * a gap. A stall is only held against a process for time in which it could
+ * have run, so the stall counts for no longer than that.
  */
 function incidentWorthy(assessment, options = {}) {
-    const settings = { ...DEFAULTS, ...options };
+    const { upSeconds = Infinity, ...overrides } = options;
+    const settings = { ...DEFAULTS, ...overrides };
     if (assessment.health.failRun >= settings.incidentFailures) return true;
-    return assessment.execution === 'stalled' && (assessment.health.overdueSeconds || 0) >= settings.stalledIncidentSeconds;
+    if (assessment.execution !== 'stalled') return false;
+    return Math.min(assessment.health.overdueSeconds || 0, upSeconds) >= settings.stalledIncidentSeconds;
 }
 
 /**

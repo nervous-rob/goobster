@@ -202,7 +202,7 @@ test.describe('assistant-first Home', () => {
         const report = page.getByTestId('assistant-processes');
         await expect(report.getByRole('heading', { name: 'Processes' })).toBeVisible();
         await expect(report.getByTestId('processes-summary')).toHaveText(
-            '4 processes · 1 not working · 1 running with a problem · 1 may no longer be needed'
+            '5 processes · 1 not working · 1 running with a problem · 1 may no longer be needed · 1 not enough to judge'
         );
         const incident = report.getByTestId('process-incident');
         await expect(incident).toHaveCount(1);
@@ -230,9 +230,18 @@ test.describe('assistant-first Home', () => {
         await expect(watch.getByTestId('process-relevance')).toContainText('The goal it was set up for is resolved. It is still switched on.');
 
         // A report only: nothing on it changes a process.
-        await expect(report.getByRole('button')).toHaveCount(0);
+        await expect(rows.getByRole('button')).toHaveCount(0);
+        await expect(incident.getByRole('button')).toHaveCount(0);
+
+        // A switched-off process with nothing to report is folded away, not dropped.
+        await report.getByTestId('processes-show-idle').click();
+        await expect(rows).toHaveCount(5);
+        const off = rows.filter({ hasText: 'Old weekly report' });
+        await expect(off.getByTestId('process-execution')).toContainText('Not enough to judge');
+        await expect(off.getByTestId('process-execution')).toContainText('It is switched off.');
         const after = await (await page.request.get('/api/app/assistant/processes')).json();
-        expect(after.processes.every((entry) => entry.enabled)).toBe(true);
+        expect(after.processes.filter((entry) => entry.enabled).map((entry) => entry.name).sort())
+            .toEqual(['Morning digest', 'Nightly import', 'Price check', 'Release watch']);
     });
 
     test('with Attention off the page says why nothing runs', async ({ page }) => {

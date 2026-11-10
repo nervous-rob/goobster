@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { Link } from '@tanstack/react-router';
 import { useDateLabel } from '../../hooks/useDateLabel';
 import type { AssistantProcess, AssistantProcessList, ProcessExecution, ProcessIncident, ProcessRelevance } from '../../lib/types';
@@ -170,10 +171,16 @@ function ProcessRow({ process, nameOf }: { process: AssistantProcess; nameOf: (r
 /** Not-working first, then problems, then the rest, each group by name. */
 const ORDER: ProcessExecution[] = ['blocked', 'unreachable', 'stalled', 'degraded', 'unknown', 'healthy'];
 
+/** Switched off with nothing to report: a finished watch, a paused task. Folded away until asked for. */
+const isIdle = (process: AssistantProcess) => !process.enabled && process.assessment.execution === 'unknown' && !process.incident;
+
 export function ProcessList({ data, pending, error }: { data: AssistantProcessList | undefined; pending: boolean; error: Error | null }) {
-    const processes = [...(data?.processes || [])].sort((a, b) =>
+    const [showIdle, setShowIdle] = useState(false);
+    const sorted = [...(data?.processes || [])].sort((a, b) =>
         ORDER.indexOf(a.assessment.execution) - ORDER.indexOf(b.assessment.execution) || a.name.localeCompare(b.name));
-    const byRef = new Map(processes.map((process) => [process.ref, process.name]));
+    const idle = sorted.filter(isIdle).length;
+    const processes = showIdle ? sorted : sorted.filter((process) => !isIdle(process));
+    const byRef = new Map(sorted.map((process) => [process.ref, process.name]));
     const nameOf = (ref: string) => byRef.get(ref) || ref;
     const counts = data?.counts;
     const summary: string[] = [];
@@ -194,8 +201,8 @@ export function ProcessList({ data, pending, error }: { data: AssistantProcessLi
             </p>
             {pending && <div className="empty">Loading…</div>}
             {error && <div className="empty" role="alert">{error.message}</div>}
-            {data && processes.length === 0 && <div className="hint" data-testid="processes-empty">No recurring work is set up yet.</div>}
-            {data && processes.length > 0 && <div className="row-meta" data-testid="processes-summary">{summary.join(' · ')}</div>}
+            {data && sorted.length === 0 && <div className="hint" data-testid="processes-empty">No recurring work is set up yet.</div>}
+            {data && sorted.length > 0 && <div className="row-meta" data-testid="processes-summary">{summary.join(' · ')}</div>}
             {data && data.incidents.length > 0 && (
                 <ul className="assistant-list" style={{ marginTop: 10 }} aria-label="Open incidents">
                     {data.incidents.map((incident) => <IncidentRow key={incident.id} incident={incident} />)}
@@ -205,6 +212,12 @@ export function ProcessList({ data, pending, error }: { data: AssistantProcessLi
                 <div className="list-card" style={{ marginTop: 10 }}>
                     {processes.map((process) => <ProcessRow key={process.ref} process={process} nameOf={nameOf} />)}
                 </div>
+            )}
+            {idle > 0 && (
+                <button type="button" className="btn subtle" style={{ marginTop: 10 }} aria-expanded={showIdle}
+                    data-testid="processes-show-idle" onClick={() => setShowIdle((value) => !value)}>
+                    {showIdle ? 'Hide switched off' : `Show ${idle} switched off`}
+                </button>
             )}
         </section>
     );

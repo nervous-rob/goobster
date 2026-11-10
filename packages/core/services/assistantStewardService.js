@@ -15,11 +15,12 @@
  *     ones whose gate closed (assistantGateService);
  *  5. open, reopen, settle and resolve process incidents, and file the
  *     update for a process that outlived its purpose
- *     (assistantIncidentService). A stall incident is not opened on the
- *     first pass after this installation was itself not running;
+ *     (assistantIncidentService). A stall counts toward an incident only
+ *     for time this installation was itself running;
  *  6. file Inbox envelopes still owed by committed updates.
  * Each pass records its time in `instance_state` (`assistant_steward_pass`)
- * so the Home projection can say when its picture was last refreshed.
+ * so the Home projection can say when its picture was last refreshed, and
+ * since when passes have followed each other without a gap.
  * Every six hours it also applies retention: process observations 90 days,
  * terminal initiatives, settled updates and resolved incidents 180 days.
  *
@@ -61,10 +62,14 @@ async function sweep({ now = new Date(), retention = null } = {}) {
         const updates = require('./assistantUpdateService');
         const processes = require('./assistantProcessService');
         const instanceState = require('./instanceStateService');
-        // Whether the previous pass was recent: if not, this installation was
-        // not running, and an overdue schedule is not yet the process's fault.
-        const previous = Date.parse((await instanceState.get(HEARTBEAT_KEY))?.at || '');
-        const continuous = Number.isFinite(previous) && now.getTime() - previous <= STALE_AFTER_MS;
+        // Since when passes have followed each other without a gap. Across a
+        // gap this installation was not running (stopped, paused, restored),
+        // and a schedule that slipped then is not the process's fault.
+        const beat = await instanceState.get(HEARTBEAT_KEY);
+        const previous = Date.parse(beat?.at || '');
+        const since = Date.parse(beat?.since || beat?.at || '');
+        const continuous = Number.isFinite(previous) && now.getTime() - previous >= 0 && now.getTime() - previous <= STALE_AFTER_MS;
+        const upSince = continuous && Number.isFinite(since) ? new Date(since) : now;
         const result = {
             expired: await responsibilities.expireDue({ now }),
             leasesReaped: await initiatives.reapExpiredLeases({ now }),
@@ -72,11 +77,11 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             requeued: await initiatives.requeueDue({ now }),
             reconcile: await initiatives.reconcile({ now }),
             gates: await require('./assistantGateService').adoptProjectGates({}),
-            incidents: await require('./assistantIncidentService').reconcile({ now, stalls: continuous }),
+            incidents: await require('./assistantIncidentService').reconcile({ now, upSince }),
             envelopes: await updates.deliverPending({})
         };
         // Home says how fresh its picture is from this, in any process.
-        await instanceState.set(HEARTBEAT_KEY, { at: now.toISOString() });
+        await instanceState.set(HEARTBEAT_KEY, { at: now.toISOString(), since: upSince.toISOString() });
         if (runRetention) {
             lastRetentionAt = now.getTime();
             result.retention = {

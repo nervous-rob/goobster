@@ -753,10 +753,10 @@ async function main() {
             res.status(500).json({ error: String(error?.message || error) });
         }
     });
-    // Recurring work in four conditions (documentation/process_stewardship.md):
+    // Recurring work in five conditions (documentation/process_stewardship.md):
     // one that has failed three times running, one that failed once, one that
-    // works, and one that works but whose goal is resolved. Then one incident
-    // pass, as the steward would run it. No model, no network.
+    // works, one that works but whose goal is resolved, and one switched off.
+    // Then one incident pass, as the steward would run it. No model, no network.
     app.post('/e2e/fixtures/assistant-home/processes', express.json(), async (req, res) => {
         try {
             const userId = String(req.body?.userId || '');
@@ -783,6 +783,8 @@ async function main() {
             await make('Price check', ['ok', 'ok', 'failed']);
             await make('Morning digest', ['ok', 'ok']);
             const watchId = await make('Release watch', ['ok', 'ok']);
+            const offId = await make('Old weekly report', []);
+            await db.run('UPDATE automations SET isEnabled = 0 WHERE id = @id', { id: offId });
             const itemId = Number(await db.insert(
                 `INSERT INTO attention_items (guildId, userId, kind, subject, state)
                  VALUES (@scope, @userId, 'goal', 'Ship the release', 'resolved')`,

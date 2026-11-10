@@ -7,8 +7,8 @@
  * cooldown reopens the same one; a recovery is announced once, after the
  * cooldown; failures with one upstream cause are one incident and one
  * interruption; a process waiting on a failing one joins that incident; a
- * stall is not blamed on the process right after this installation was
- * itself down; nothing is opened or said for a person with Attention off;
+ * stall is held against a process only for time this installation was
+ * itself running; nothing is opened or said for a person with Attention off;
  * a purpose that is over produces one informational update and one
  * candidate; an ignored result alone produces nothing; and one person's
  * incidents never reach another.
@@ -345,7 +345,7 @@ describe('grouping', () => {
 });
 
 describe('stalls', () => {
-    test('a schedule a day overdue opens an incident, but not on the first pass after this installation was down', async () => {
+    test('a schedule a day overdue opens an incident, counting only time this installation was running', async () => {
         const job = await automation('nightly import', { nextRun: at(0) });
         await ran(job, -24, 'ok');
 
@@ -355,11 +355,14 @@ describe('stalls', () => {
             execution: 'stalled', reasons: { execution: 'SCHEDULE_OVERDUE' }
         });
 
-        // A day late, seen by the first pass after downtime: nothing is opened.
-        expect(await pass(25, { stalls: false })).toMatchObject({ opened: 0 });
+        // A day late, but this installation only came back an hour ago: nothing is opened,
+        // and still nothing 23 hours after it came back.
+        expect(await pass(25, { upSince: at(24) })).toMatchObject({ opened: 0 });
+        expect(await pass(47, { upSince: at(24) })).toMatchObject({ opened: 0 });
         expect(await rows()).toHaveLength(0);
 
-        expect(await pass(25.5)).toMatchObject({ opened: 1 });
+        // A full day of running without the process running is the process's stall.
+        expect(await pass(48.5, { upSince: at(24) })).toMatchObject({ opened: 1 });
         const [incident] = await rows();
         expect(incident).toMatchObject({ incidentKey: `process:${job.ref}`, causeCode: 'SCHEDULE_OVERDUE' });
         const [update] = await updatesFor('process_incident:');
@@ -367,20 +370,25 @@ describe('stalls', () => {
         expect(update.summary).not.toContain('SCHEDULE_OVERDUE');
     });
 
-    test('the steward holds stall incidents back when its own heartbeat is stale', async () => {
+    test('the steward restarts the stall clock after a gap in its own passes', async () => {
         const job = await automation('nightly import', { nextRun: at(0) });
         await ran(job, -24, 'ok');
-        await ran(job, -1, 'ok');
+        const minutes = (hours, extra) => new Date(at(hours).getTime() + extra * 60000);
+        const beat = async () => instanceState.get(steward.HEARTBEAT_KEY);
 
         // Last pass two days ago: this installation was down across the missed run.
-        await instanceState.set(steward.HEARTBEAT_KEY, { at: at(-23).toISOString() });
-        const first = await steward.sweep({ now: at(25), retention: false });
-        expect(first.incidents).toMatchObject({ opened: 0 });
+        await instanceState.set(steward.HEARTBEAT_KEY, { at: at(-23).toISOString(), since: at(-200).toISOString() });
+        expect((await steward.sweep({ now: at(25), retention: false })).incidents).toMatchObject({ opened: 0 });
+        expect(await beat()).toEqual({ at: at(25).toISOString(), since: at(25).toISOString() });
+
+        // Passes that follow each other keep the same start, and the stall is still young.
+        expect((await steward.sweep({ now: minutes(25, 5), retention: false })).incidents).toMatchObject({ opened: 0 });
+        expect(await beat()).toEqual({ at: minutes(25, 5).toISOString(), since: at(25).toISOString() });
         expect(await rows()).toHaveLength(0);
 
-        // The next pass follows a fresh heartbeat, so a stall still standing is the process's.
-        const second = await steward.sweep({ now: new Date(at(25).getTime() + 5 * 60000), retention: false });
-        expect(second.incidents).toMatchObject({ opened: 1 });
+        // A day of unbroken passes later the process still has not run: that is its stall.
+        await instanceState.set(steward.HEARTBEAT_KEY, { at: minutes(49, 0).toISOString(), since: at(25).toISOString() });
+        expect((await steward.sweep({ now: minutes(49, 5), retention: false })).incidents).toMatchObject({ opened: 1 });
         expect((await rows())[0].causeCode).toBe('SCHEDULE_OVERDUE');
     });
 });

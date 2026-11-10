@@ -7,9 +7,10 @@ tags: [planning, assistant, attention, delegation, projects, knowledge, home]
 
 # Planned: delegated assistant architecture
 
-**Status: design specification. Sections 3, 4, 5, 6 (generated notes) and 9
-are implemented as recorded in ADR 0016, 0017 and 0018; the rest, and all of
-section 13, is planned.** Updated 2026-11-09.
+**Status: design specification. Sections 3, 4, 5, 6 (generated notes), 8
+(assessment and incidents only) and 9 are implemented as recorded in ADR
+0016, 0017, 0018 and 0019; the rest, and all of section 13, is planned.**
+Updated 2026-11-10.
 Source baseline: `c3b773ee` (2026-10-27). Revalidate the observations below
 against the implementation branch before each increment. Table names, service
 names, fields, routes, events, and errors explicitly described as proposed are
@@ -395,7 +396,15 @@ cancel executable work. The reason and remaining external effects stay visible.
 **Shipped in DA-1d:** the catalog read model, contracts and typed
 observations for automations and project triggers. See
 [delegated_responsibilities.md](delegated_responsibilities.md#processes).
-Health, relevance, repair and retirement are still planned.
+
+**Shipped in DA-5a:** observations for watches and followed sources, the
+settled outcome of project-trigger jobs, the two-axis assessment, incident
+grouping with hysteresis and cooldown, the `process_health` and
+`process_relevance` generators and the Home Processes card reading the
+assessment. See [process_stewardship.md](process_stewardship.md) and
+[ADR 0019](adr/0019-process-assessment-and-incidents.md). It observes and
+reports only. Repair and retirement (pause, archive, restore, cleanup) are
+still planned.
 
 Introduce a read model through adapters for existing process types. Proposed
 `process_contracts` attach purpose, owning/acting principal, related goal/project,

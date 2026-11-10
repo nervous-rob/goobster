@@ -117,6 +117,15 @@ describe('execution', () => {
         expect(assessProcess({ described: event, contract: purpose(), observations: [], now: NOW }).execution).toBe('unknown');
     });
 
+    test('a stall earns an incident after a day, counting only time the installation was running', () => {
+        const judged = (hours) => assessProcess({ described: cron({ nextRunAt: at(hours * 3600) }), observations: runs(['ok']), now: NOW });
+        expect(incidentWorthy(judged(2))).toBe(false);
+        expect(incidentWorthy(judged(25))).toBe(true);
+        // Three days overdue, but nothing could have run it until an hour ago.
+        expect(incidentWorthy(judged(72), { upSeconds: 3600 })).toBe(false);
+        expect(incidentWorthy(judged(72), { upSeconds: 25 * 3600 })).toBe(true);
+    });
+
     test('one or two failures degrade; three in a row block; a missing target is unreachable', () => {
         expect(judge({ observations: runs(['ok', 'failed']) })).toMatchObject({ execution: 'degraded', reasons: { execution: 'RECENT_FAILURE' } });
         expect(judge({ observations: runs(['ok', 'failed', 'failed']) }).execution).toBe('degraded');
@@ -126,6 +135,8 @@ describe('execution', () => {
         });
         expect(incidentWorthy(blocked)).toBe(true);
         expect(incidentWorthy(judge({ observations: runs(['failed', 'failed']) }))).toBe(false);
+        // Failures count however briefly this installation has been up.
+        expect(incidentWorthy(blocked, { upSeconds: 60 })).toBe(true);
         expect(judge({ observations: runs(['failed', 'failed', 'failed'], { code: 'CHANNEL_NOT_FOUND' }) }))
             .toMatchObject({ execution: 'unreachable', reasons: { execution: 'TARGET_UNREACHABLE' } });
         // A process that says it is blocked is believed at once, but one report is not yet an incident.
