@@ -409,7 +409,7 @@ describe('editing what is there', () => {
         const marathon = await blockId(PLAN, 'Run a marathon');
         const todo = await blockId(PLAN, 'Book the trip');
         expect(await write('updateBlock', { block: marathon, text: 'Run two marathons' })).toBe('changed the paragraph "Run a marathon"');
-        expect(await write('updateBlock', { block: todo, checked: true })).toContain('to do');
+        expect(await write('updateBlock', { block: todo, checked: true })).toBe('changed the to-do "Book the trip"');
         expect(fake.get(marathon)).toMatchObject({ type: 'paragraph' });
         expect(fake.texts(PLAN)).toEqual(expect.arrayContaining(['Run two marathons', 'Book the trip']));
         expect(fake.get(todo).to_do.checked).toBe(true);
@@ -522,8 +522,9 @@ describe('in a delegated run', () => {
         expect(ops.map(row => `${row.tool} ${row.refusalCode || row.status}`)).toEqual([
             'listConnectors SUCCEEDED', 'readConnector SUCCEEDED', 'writeConnector SUCCEEDED', 'writeConnector SUCCEEDED', 'writeConnector SUCCEEDED'
         ]);
-        expect(ops[0].resultText).toContain(`notion / ${PLAN}: Notion, read: page`);
-        expect(ops[0].resultText).toContain('only by asking the person (askConnector): archive');
+        expect(ops[0].resultText).toContain(`connector "notion", resource "${PLAN}" (Notion) - readConnector operations: page`);
+        expect(ops[0].resultText).toContain(`connector "notion", resource "${PLAN}" (Notion) - writeConnector operations: append`);
+        expect(ops[0].resultText).toContain(`connector "notion", resource "${PLAN}" (Notion) - askConnector operations, each done only if the person approves it: archive`);
         expect(ops.slice(1).every(row => row.resourceKind === 'external' && row.resourceId === `notion:${PLAN}`)).toBe(true);
         expect(ops[2].resultText).toMatch(/^Wrote to Notion \([0-9a-f]{32}\): changed the paragraph "Run a marathon"\. That cannot be undone from here\.$/);
 

@@ -332,10 +332,14 @@ const propertiesLine = (properties) => Object.entries(properties || {})
     .map(([name, text]) => `${name}: ${clip(text, 120)}`)
     .join('; ');
 
+/** A block type in words a person reads: "to-do", "bulleted list item". */
+const typeName = (type) => (type === 'to_do' ? 'to-do' : String(type || 'block').replace(/_/g, ' '));
+
 const labelOfBlock = (block) => {
     if (block?.type === 'child_page') return `the page "${clip(block.child_page?.title || 'Untitled', LABEL_CHARS)}"`;
-    const text = clip(notion.blockToText(block) || plainOf(block), LABEL_CHARS);
-    return text ? `the ${String(block?.type || 'block').replace(/_/g, ' ')} "${text}"` : `a ${String(block?.type || 'block').replace(/_/g, ' ')} block`;
+    // The block's own words, without the "- [ ]" a page read shows before them.
+    const text = clip(plainOf(block) || notion.blockToText(block), LABEL_CHARS);
+    return text ? `the ${typeName(block?.type)} "${text}"` : `a ${typeName(block?.type)} block`;
 };
 
 // --- Where a call lands --------------------------------------------------------
@@ -374,7 +378,7 @@ async function editableBlock({ resource, input, token }) {
     const root = await rootOf(token, resource);
     if (same(input.block, root.id)) throw declined('NOT_A_BLOCK', 'that is the granted page itself, not a block in it');
     const block = await inside(token, root, input.block, 'block');
-    if (!EDITABLE.has(block?.type)) throw declined('UNSUPPORTED_BLOCK', `a ${String(block?.type || 'block').replace(/_/g, ' ')} block cannot be edited from here`);
+    if (!EDITABLE.has(block?.type)) throw declined('UNSUPPORTED_BLOCK', `a ${typeName(block?.type)} block cannot be edited from here`);
     if (input.checked !== undefined && block.type !== 'to_do') throw declined('NOT_A_TODO', 'only a to-do can be ticked');
     if (block.archived || block.in_trash) throw declined('BLOCK_ARCHIVED', 'that block is in the trash');
     return block;
@@ -604,7 +608,7 @@ module.exports = {
                 const block = await editableBlock({ resource, input, token });
                 const textSet = input.text === undefined || plainOf(block) === String(input.text);
                 const checkSet = input.checked === undefined || Boolean(block.to_do?.checked) === input.checked;
-                return textSet && checkSet ? { state: 'done', result: `changed a ${block.type.replace(/_/g, ' ')} block` } : { state: 'absent' };
+                return textSet && checkSet ? { state: 'done', result: `changed a ${typeName(block.type)} block` } : { state: 'absent' };
             }
         },
         {

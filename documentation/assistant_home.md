@@ -72,6 +72,17 @@ offers Apply and Dismiss. An applied change can be undone from the Assistant
 room's "Changes to your notes" list. See
 [delegated_knowledge.md](delegated_knowledge.md).
 
+## A request to do something on an outside service
+
+When a responsibility's work wants an action it may never take itself on
+an outside connector (moving a Notion page or block to the trash), it asks.
+The request is the same card on Home and in the Inbox: what would be done,
+to what, and what follows, with a button that does it and *Leave it*.
+Approving does that one action then, as you; nothing is approved in
+advance, and a model can never press the button. See
+[delegated_connectors.md](delegated_connectors.md#asking-first) (gate kind
+`connector_request`).
+
 ## Needs you is a filter of the Inbox
 
 There is one collection: the Inbox. **Needs you is the Inbox filtered to

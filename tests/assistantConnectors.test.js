@@ -284,7 +284,7 @@ describe('writeConnector in a run', () => {
 
         const ops = await connectorOps();
         expect(ops.map(op => `${op.tool}:${op.status}`)).toEqual(['listConnectors:SUCCEEDED', 'writeConnector:SUCCEEDED']);
-        expect(ops[0].resultText).toContain('notebook / garden: Test notebook, write: append');
+        expect(ops[0].resultText).toContain('connector "notebook", resource "garden" (Test notebook) - writeConnector operations: append');
         expect(ops[0].resultText).toContain('clear (Delete every entry');
         expect(ops[1]).toMatchObject({ operation: 'external.write', resourceKind: 'external', resourceId: 'notebook:garden' });
         expect(ops[1].resultText).toBe('Wrote to Test notebook (garden): entry 1 added. That cannot be undone from here.');

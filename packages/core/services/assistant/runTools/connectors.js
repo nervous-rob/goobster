@@ -142,9 +142,11 @@ module.exports = {
                     const { connector, resource } = parsed;
                     const ops = (canRead ? connector.reads : connector.writes)
                         .map(op => `${op.operation} (${op.describe})`).join('; ');
-                    lines.push(`${connector.id} / ${resource}: ${connector.name}, ${canRead ? 'read' : 'write'}: ${ops || 'nothing'}`);
+                    // Each argument is named: a real model read "id / resource: name, read: page" as three other things.
+                    const where = `connector "${connector.id}", resource "${resource}" (${connector.name})`;
+                    lines.push(`${where} - ${canRead ? 'readConnector' : 'writeConnector'} operations: ${ops || 'none'}`);
                     if (canWrite && connector.asks.length) {
-                        lines.push(`${connector.id} / ${resource}: ${connector.name}, only by asking the person (askConnector): ${
+                        lines.push(`${where} - askConnector operations, each done only if the person approves it: ${
                             connector.asks.map(op => `${op.operation} (${op.describe})`).join('; ')}`);
                     }
                 }
