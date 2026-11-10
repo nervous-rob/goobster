@@ -216,6 +216,8 @@ describe('what producers announce', () => {
         expect(await announced(() => act('pause'))).toEqual([]);
         expect(await announced(() => act('resume'))).toContainEqual({ userId: OWNER, kinds: ['update'] });
         expect(live.hintsFor(['update'])).toContain('assistant-processes');
+        // A proposed or decided change to the person's notes is a request: the page's list of them reads again.
+        expect(live.hintsFor(['gate'])).toEqual(['home', 'assistant-responsibilities', 'assistant-initiatives', 'inbox', 'assistant-knowledge']);
     });
 
     test('run progress is announced at most once per run every five seconds', async () => {
@@ -256,7 +258,7 @@ describe('a stream\'s watch', () => {
             await sleep(60);
             expect(got).toHaveLength(1);
             expect(got[0].kinds).toEqual(['update', 'run']);
-            expect(got[0].invalidate).toEqual(['home', 'assistant-responsibilities', 'assistant-initiatives', 'inbox', 'assistant-processes']);
+            expect(got[0].invalidate).toEqual(['home', 'assistant-responsibilities', 'assistant-initiatives', 'inbox', 'assistant-processes', 'assistant-knowledge']);
             expect(Object.keys(got[0]).sort()).toEqual(['at', 'invalidate', 'kinds']);
 
             // More changes inside the interval: nothing yet, then one event with their union.
@@ -403,7 +405,7 @@ describe('the portal event stream', () => {
             expect(frame).toBeTruthy();
             const data = JSON.parse(frame.split('\n').find(line => line.startsWith('data: ')).slice(6));
             expect(data.kinds).toEqual(['update', 'gate']);
-            expect(data.invalidate).toEqual(['home', 'assistant-responsibilities', 'assistant-initiatives', 'inbox', 'assistant-processes']);
+            expect(data.invalidate).toEqual(['home', 'assistant-responsibilities', 'assistant-initiatives', 'inbox', 'assistant-processes', 'assistant-knowledge']);
             expect(Object.keys(data).sort()).toEqual(['at', 'invalidate', 'kinds']);
             expect(text).not.toMatch(/private|Private/);
 

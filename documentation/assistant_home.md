@@ -62,6 +62,16 @@ start research, run a job, turn on Attention or activate a responsibility.
   join). With Attention off it explains that nothing runs and links to
   Activity → Attention; turning Attention on starts nothing by itself.
 
+## A suggested note change, and a source review
+
+A responsibility's proposal to change a note you saved, and a review of what
+rests on a withdrawn source, are requests like the others: the same card on
+Home and in the Inbox, decided with the same buttons. The card shows the
+change as a diff (added and removed text, unchanged passages folded) and
+offers Apply and Dismiss. An applied change can be undone from the Assistant
+room's "Changes to your notes" list. See
+[delegated_knowledge.md](delegated_knowledge.md).
+
 ## Needs you is a filter of the Inbox
 
 There is one collection: the Inbox. **Needs you is the Inbox filtered to

@@ -89,7 +89,8 @@ async function sweep({ now = new Date(), retention = null } = {}) {
             reconcile: await initiatives.reconcile({ now }),
             gates: await require('./assistantGateService').adoptProjectGates({}),
             incidents: await require('./assistantIncidentService').reconcile({ now, upSince }),
-            envelopes: await updates.deliverPending({})
+            envelopes: await updates.deliverPending({}),
+            knowledgeProposalsExpired: await require('./knowledgeChangeSetService').expireOpen({ now })
         };
         // After the envelopes: a contact or a digest points at a filed one.
         result.delivery = await require('./assistantDeliveryService').sweep({ now });
@@ -106,6 +107,7 @@ async function sweep({ now = new Date(), retention = null } = {}) {
                 updates: await updates.prune({ days: RETENTION_DAYS.updates, now }),
                 proposalCounters: await require('./assistant/proposalCaps').prune({ now }),
                 messageLabels: await require('./assistant/messageClassification').prune({ now }),
+                knowledgeChanges: await require('./knowledgeChangeSetService').prune({ now }),
                 delivery: await require('./assistantDeliveryService').prune({ now })
             };
         }

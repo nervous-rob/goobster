@@ -772,6 +772,7 @@ class PrivacyService {
             counts.processCleanups = forgottenResponsibilities.processCleanups;
             // Delegated runs and their operation journals (retrieved text).
             counts.assistantRuns = forgottenResponsibilities.runs;
+            counts.knowledgeChangeSets = forgottenResponsibilities.knowledgeChanges;
             counts.assistantRunOperations = forgottenResponsibilities.runOperations;
             counts.assistantDigests = forgottenResponsibilities.digests;
 
@@ -1322,6 +1323,7 @@ class PrivacyService {
             assistant_digests: responsibilities.digests,
             assistant_proposal_counters: responsibilities.proposalCounters,
             assistant_message_labels: responsibilities.messageLabels,
+            kg_change_sets: responsibilities.knowledgeChanges,
             execution_admissions: (await db.get('SELECT COUNT(*) AS c FROM execution_admissions WHERE actorId = @userId OR scopeId = @dmScope', { userId, dmScope })).c,
             memory_embeddings: (await db.get(
                 'SELECT COUNT(*) AS c FROM memory_embeddings WHERE authorId = @userId OR guildId = @dmScope',

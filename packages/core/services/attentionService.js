@@ -437,6 +437,7 @@ async function generateContradictions(ctx) {
          JOIN kg_nodes s ON s.id = e.sourceId
          JOIN kg_nodes t ON t.id = e.targetId
          WHERE e.scopeKey = @scopeKey AND e.relation = 'contradicts'
+           AND e.retractedAt IS NULL AND s.archivedAt IS NULL AND t.archivedAt IS NULL
            AND e.createdAt >= @cutoff
          ORDER BY e.id DESC LIMIT 10`,
         { scopeKey: `USER:${ctx.userId}`, cutoff }

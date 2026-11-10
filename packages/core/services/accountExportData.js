@@ -76,6 +76,7 @@ const INVENTORY = [
     ['assistant_initiatives', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_runs', 'ownerUserId = @userId', '*', 'id'],
     ['assistant_run_operations', 'ownerUserId = @userId', '*', 'id'],
+    ['kg_change_sets', 'userId = @userId', '*', 'id'],
     ['assistant_updates', "audienceKind = 'user' AND audienceUserId = @userId", '*', 'sequence'],
     ['assistant_update_receipts', 'userId = @userId', '*', 'updateId'],
     ['assistant_digests', 'userId = @userId', '*', 'id'],

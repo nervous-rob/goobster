@@ -1994,7 +1994,7 @@ class ObservatoryService {
             scopeKey: coords.scopeKey,
             limit: Math.min(Math.max(Number(limit) || 100, 1), 500)
         };
-        let where = 'n.guildId = @guildId AND n.scopeKey = @scopeKey';
+        let where = 'n.guildId = @guildId AND n.scopeKey = @scopeKey AND n.archivedAt IS NULL';
         if (q) {
             where += ' AND (n.label LIKE @q ESCAPE \'#\' OR n.content LIKE @q ESCAPE \'#\')';
             params.q = `%${String(q).trim().replace(/[#%_]/g, '#$&')}%`;

@@ -43,7 +43,9 @@ How it works:
    when an update or a request changed, and `assistant-processes` when an
    update changed, since it may be a process incident; a process that is
    paused, resumed, archived, restored or cleaned up is announced as an
-   `update` too, so the Processes report follows it).
+   `update` too, so the Processes report follows it; and
+   `assistant-knowledge` when an update or a request changed, since it may
+   be a change to the person's notes that was proposed, made or decided).
 3. The client reads those again through the ordinary routes, which check
    the session and what it may see on every read. The event is a reason to
    look, never the data.
