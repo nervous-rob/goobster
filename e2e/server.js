@@ -730,6 +730,7 @@ async function main() {
                 ['assistant_responsibilities', 'ownerUserId'], ['inbox_items', 'userId'], ['attention_policies', 'userId'],
                 ['assistant_process_incident_members', 'ownerUserId'], ['assistant_process_incidents', 'ownerUserId'],
                 ['assistant_process_observations', 'ownerUserId'], ['assistant_process_contracts', 'ownerUserId'],
+                ['assistant_process_cleanups', 'ownerUserId'], ['assistant_process_lifecycle', 'ownerUserId'],
                 ['attention_items', 'userId'], ['automations', 'userId']
             ]) {
                 await db.run(`DELETE FROM ${table} WHERE ${column} = @userId`, { userId });
@@ -795,6 +796,16 @@ async function main() {
                 body: { purpose: 'Tell me when the release ships', attentionItemId: itemId }
             });
             res.json({ ok: true, pass: await incidents.reconcile({ userId }) });
+        } catch (error) {
+            res.status(500).json({ error: String(error?.message || error) });
+        }
+    });
+    // One more incident pass for that person, as the steward would run it.
+    app.post('/e2e/fixtures/assistant-home/processes/pass', express.json(), async (req, res) => {
+        try {
+            const userId = String(req.body?.userId || '');
+            if (!/^\d{5,20}$/.test(userId)) return res.status(400).json({ error: 'userId' });
+            res.json({ ok: true, pass: await require('@goobster/core/services/assistantIncidentService').reconcile({ userId }) });
         } catch (error) {
             res.status(500).json({ error: String(error?.message || error) });
         }

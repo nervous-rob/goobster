@@ -2491,6 +2491,7 @@ html[data-page-width="full"] .settings-section { max-width: 1040px; }
 .process-row.is-blocked, .process-row.is-stalled, .process-row.is-unreachable { box-shadow: inset 3px 0 0 var(--danger); }
 .process-row.is-degraded { box-shadow: inset 3px 0 0 var(--warn, var(--accent)); }
 .process-incident { border-color: var(--danger); }
+.process-cleanup { margin-top: 8px; padding: 8px 10px; border: 1px solid var(--border); border-radius: 8px; font-size: 0.9rem; }
 .assistant-grants { margin: 6px 0; padding-left: 18px; font-size: 0.9rem; }
 .assistant-draft { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
 .assistant-draft h2 { margin: 0; font-size: 1rem; }
