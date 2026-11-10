@@ -766,12 +766,14 @@ class AssistantRunService {
                 kind: 'finding',
                 title,
                 summary: summary || null,
-                components: [...new Set([...(project ? ['projects'] : []), ...(request ? ['conversations'] : []), 'research', ...applied.components])],
+                components: [...new Set([...(project ? ['projects'] : []), ...(request?.conversationId != null ? ['conversations'] : []), 'research', ...applied.components])],
                 source: { kind: 'initiative', id: initiative.id },
                 // A result of something asked in a conversation links back to it.
                 actions: [
                     { kind: 'open_initiative', id: String(initiative.id) },
-                    ...(request ? [{ kind: 'open_conversation', id: String(request.conversationId) }] : [])
+                    ...(request?.conversationId != null
+                        ? [{ kind: request.kind === 'chat_message' ? 'open_chat' : 'open_conversation', id: String(request.conversationId) }]
+                        : [])
                 ],
                 responsibilityId: responsibility.id,
                 initiativeId: initiative.id,
