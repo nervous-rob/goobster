@@ -76,7 +76,8 @@ const TABLES = [
     { feature: 'assistant', table: 'assistant_run_operations', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_proposal_counters', column: 'ownerUserId' },
     { feature: 'assistant', table: 'assistant_message_labels', column: 'ownerUserId' },
-    { feature: 'assistant', table: 'kg_change_sets', column: 'userId' }
+    { feature: 'assistant', table: 'kg_change_sets', column: 'userId' },
+    { feature: 'assistant', table: 'assistant_connector_requests', column: 'ownerUserId' }
 ];
 
 /** Credentials the seed stores: never in a report, an audit or an export. */
@@ -194,6 +195,12 @@ function createDormantSeed(db) {
             `INSERT INTO assistant_message_labels (responsibilityId, responsibilityRevision, ownerUserId, messageId, label)
              VALUES (@responsibilityId, 1, @u, 1, 'request')`,
             { responsibilityId, u }
+        );
+        await db.run(
+            `INSERT INTO assistant_connector_requests (ownerUserId, responsibilityId, operationId, connector, resource, operation, target, label)
+             VALUES (@u, @responsibilityId, @operationId, 'notion', '00000000000000000000000000000001', 'archive',
+                     '00000000-0000-0000-0000-000000000002', 'the page "Old notes"')`,
+            { responsibilityId, u, operationId: `seed:${responsibilityId}` }
         );
         const initiativeId = await db.insert(
             `INSERT INTO assistant_initiatives (responsibilityId, responsibilityRevision, ownerUserId, actingUserId,

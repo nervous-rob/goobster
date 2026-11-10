@@ -122,7 +122,8 @@ What holds for all three:
 - **Nothing private leaves.** Once a run has read your private knowledge
   (`lookupNotes`, `listGeneratedNotes`), `pushProjectRepo` and
   `openPullRequest` are refused with `PRIVATE_CONTEXT`, whoever can read the
-  project: nobody here knows who reads the repository on GitHub. The rule is
+  project: nobody here knows who reads the repository on GitHub. Reading an
+  outside connector counts as a private read here too. The rule is
   per piece of work. It does not follow text a person or an earlier run
   already put in the clone.
 - **A daily cap.** Pushes and pull requests count against
@@ -376,14 +377,19 @@ the model did, with that version and the model used. It is not part of
 
 A run can read from and write to a named resource of an installed outside
 connector with `listConnectors`, `readConnector` and `writeConnector`, as you,
-under the same guard, private-read rule, daily cap and crash reconciliation as
-a push. The framework is built and no connector is installed; see
-[delegated_connectors.md](delegated_connectors.md).
+under the same guard, daily cap and crash reconciliation as a push. The
+private-read rule differs in one way: a run may write back into the same
+outside resource it read, and nowhere else outside
+(`PRIVATE_CONTEXT` otherwise). `askConnector` files a request for an action a
+run may never take itself; it happens only if you approve that one request
+under Needs you. Notion is the connector installed: one page or one database
+you name, read and written as you, with moving anything to the trash asked
+for each time. See [delegated_connectors.md](delegated_connectors.md) and
+[delegated_notion.md](delegated_notion.md).
 
 ## Not built yet
 
-An actual outside
-connector (the framework is DA-11d), acting on a process other than by the two typed repairs
+An outside connector other than Notion, acting on a process other than by the two typed repairs
 ([Repairing a process](#repairing-a-process)), and work recognized by a model from what was said in a
 conversation. Requests you address to Goobster in a conversation are built:
 see [delegated_conversation_requests.md](delegated_conversation_requests.md).

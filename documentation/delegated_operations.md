@@ -183,6 +183,14 @@ records the pilot decision, only the owner has them.**
   grant of `read` or `external.write` on an `external` resource is refused
   with `PILOT_ONLY` at activation and at dispatch for anyone but the owner,
   the tools are not offered to them and the connector card is not shown.
+  That covers the Notion connector (DA-11e,
+  [delegated_notion.md](delegated_notion.md)): reading, writing and asking.
+  Approving a request a run filed (moving a Notion page to the trash) checks
+  the gate again at that moment, so a request filed while the owner held the
+  capability is refused with `PILOT_ONLY`, and stays waiting, if they no
+  longer do. Your stop-all holds an approval back the same way
+  (`HOST_STOPPED`): nothing is sent to the outside service while delegated
+  work is stopped.
   Process repair (DA-5c) is gated as `repair`: for anyone but the owner no
   repair is offered or proposed, `process.repair` is refused with
   `PILOT_ONLY` at activation and at dispatch, and a repair run that was

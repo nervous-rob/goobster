@@ -361,6 +361,10 @@ async function forgetAssistantResponsibilities(userId) {
     const messageLabels = (await db.run(
         `DELETE FROM assistant_message_labels WHERE ownerUserId = @userId OR ${owned}`, { userId }
     )).changes;
+    // What a run asked the person to approve on an outside connector (a page title is theirs).
+    const connectorRequests = (await db.run(
+        `DELETE FROM assistant_connector_requests WHERE ownerUserId = @userId OR ${owned}`, { userId }
+    )).changes;
     const initiatives = (await db.run(
         `DELETE FROM assistant_initiatives WHERE ownerUserId = @userId OR ${owned}`, { userId }
     )).changes;
@@ -470,7 +474,7 @@ async function forgetAssistantResponsibilities(userId) {
         responsibilities, revisions, anonymized: others.length,
         initiatives, cursors, proposalCounters, messageLabels, updates, receipts, processContracts, processObservations, incidents, incidentMembers,
         processLifecycle, processCleanups, processRepairs,
-        runs, runOperations, knowledgeChanges, confirmationReceipts, digests
+        runs, runOperations, knowledgeChanges, connectorRequests, confirmationReceipts, digests
     };
 }
 
@@ -508,6 +512,7 @@ async function countAssistantResponsibilities(userId) {
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),
         messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId'),
         knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId'),
+        connectorRequests: await count('SELECT COUNT(*) AS c FROM assistant_connector_requests WHERE ownerUserId = @userId'),
         updates: await count("SELECT COUNT(*) AS c FROM assistant_updates WHERE audienceKind = 'user' AND audienceUserId = @userId"),
         updateReceipts: await count('SELECT COUNT(*) AS c FROM assistant_update_receipts WHERE userId = @userId'),
         confirmationReceipts: await count('SELECT COUNT(*) AS c FROM assistant_confirmation_receipts WHERE userId = @userId'),
@@ -565,7 +570,8 @@ async function auditAssistantResponsibilities(userId) {
         runOperations: await count('SELECT COUNT(*) AS c FROM assistant_run_operations WHERE ownerUserId = @userId'),
         proposalCounters: await count('SELECT COUNT(*) AS c FROM assistant_proposal_counters WHERE ownerUserId = @userId'),
         messageLabels: await count('SELECT COUNT(*) AS c FROM assistant_message_labels WHERE ownerUserId = @userId'),
-        knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId')
+        knowledgeChanges: await count('SELECT COUNT(*) AS c FROM kg_change_sets WHERE userId = @userId'),
+        connectorRequests: await count('SELECT COUNT(*) AS c FROM assistant_connector_requests WHERE ownerUserId = @userId')
     };
 }
 

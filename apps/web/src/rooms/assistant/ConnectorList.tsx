@@ -8,8 +8,9 @@ import type { AssistantConnector } from '../../lib/types';
 /**
  * Outside connectors (documentation/delegated_connectors.md): the services
  * a responsibility can be granted a named resource on. Each shows its
- * manifest, what it reads and writes, the owner's recorded decision and
- * whether the person has connected it, and can be revoked: that deletes the
+ * manifest, what it reads and writes, what it may only ask the person to
+ * approve, the owner's recorded decision and whether the person has
+ * connected it, and can be revoked: that deletes the
  * person's credential, so work holding a grant on it is refused at its
  * next call. Nothing is shown when no connector is installed, or the pilot
  * does not include them for this person.
@@ -43,6 +44,7 @@ export function ConnectorList({ enabled }: { enabled: boolean }) {
             <p className="hint">
                 A connector reaches one outside service as you, with your own credential. A responsibility can be granted a named
                 resource on it, never the whole service. Reading never changes anything outside; writing cannot be undone from here.
+                Some actions are never granted: work can only ask, and each one happens when you approve it under Needs you.
             </p>
             {connectors.map((connector) => (
                 <div key={connector.id} className="list-row" data-testid="connector-row">
@@ -57,6 +59,11 @@ export function ConnectorList({ enabled }: { enabled: boolean }) {
                                 <li key={`w-${entry.operation}`}>
                                     Can write: {entry.operation}, {entry.describe}{' '}
                                     {entry.reconcilable ? '(checked with the service after a crash)' : '(stops for your review after a crash)'}
+                                </li>
+                            ))}
+                            {(connector.asks || []).map((entry) => (
+                                <li key={`a-${entry.operation}`} data-testid="connector-ask">
+                                    Only with your approval, each time: {entry.operation}, {entry.describe}
                                 </li>
                             ))}
                         </ul>

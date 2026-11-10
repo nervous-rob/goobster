@@ -1,10 +1,19 @@
 /**
- * Read-only Notion REST wrapper (plain fetch, no SDK - the githubService
- * pattern). Every call takes the requesting user's personal integration
- * token (user_integrations via userIntegrationService); nothing here reads
+ * Notion REST wrapper (plain fetch, no SDK - the githubService pattern).
+ * Every call takes the requesting user's personal integration token
+ * (user_integrations via userIntegrationService); nothing here reads
  * global config, because Notion access is always per-user.
  *
+ * Chat uses the reads (`search`, `getPageText`). The object-level calls
+ * below them (`getBlock` ... `archivePage`) are for the delegated Notion
+ * connector (services/assistant/connectors/notion.js, ADR 0030), which is
+ * the only caller of the writes and decides what may be touched; nothing
+ * here checks a grant.
+ *
  * All methods throw NotionError; callers surface `.message` directly.
+ * `BAD_REQUEST`, `BAD_TOKEN`, `FORBIDDEN`, `NOT_FOUND`, `CONFLICT` and
+ * `RATE_LIMITED` are Notion's own refusals: nothing was changed.
+ * `UNAVAILABLE` (a timeout, a reset, a 5xx) says nothing either way.
  */
 
 const API_BASE = 'https://api.notion.com';
@@ -117,6 +126,12 @@ class NotionService {
         if (response.status === 404) {
             throw new NotionError('NOT_FOUND', 'Notion returned 404 - the page may not be shared with the integration.');
         }
+        if (response.status === 400) {
+            throw new NotionError('BAD_REQUEST', 'Notion did not accept the request (400).');
+        }
+        if (response.status === 409) {
+            throw new NotionError('CONFLICT', 'Notion could not save that because the content changed at the same time (409).');
+        }
         if (response.status === 429) {
             throw new NotionError('RATE_LIMITED', 'Notion rate limit hit - try again in a moment.');
         }
@@ -210,8 +225,81 @@ class NotionService {
             truncated
         };
     }
+
+    // --- Object-level calls for the delegated connector -----------------------
+
+    /** One block (a page id answers as its `child_page` block), with its `parent`. */
+    getBlock(token, id) {
+        return this._request(token, `/v1/blocks/${normalizePageId(id)}`);
+    }
+
+    /** One page object: `parent`, `properties`, `archived`. */
+    getPage(token, id) {
+        return this._request(token, `/v1/pages/${normalizePageId(id)}`);
+    }
+
+    /** One database object: `parent`, `title`, the property schema. */
+    getDatabase(token, id) {
+        return this._request(token, `/v1/databases/${normalizePageId(id)}`);
+    }
+
+    /** One page of a block's (or page's) direct children. */
+    listChildren(token, id, { cursor = null, limit = 100 } = {}) {
+        return this._request(token, `/v1/blocks/${normalizePageId(id)}/children`, {
+            params: { page_size: Math.max(1, Math.min(Number(limit) || 100, 100)), start_cursor: cursor || undefined }
+        });
+    }
+
+    /** One page of a database's rows. */
+    queryDatabase(token, id, { filter = null, sorts = null, cursor = null, limit = 20 } = {}) {
+        return this._request(token, `/v1/databases/${normalizePageId(id)}/query`, {
+            method: 'POST',
+            body: {
+                page_size: Math.max(1, Math.min(Number(limit) || 20, 100)),
+                ...(filter ? { filter } : {}),
+                ...(sorts ? { sorts } : {}),
+                ...(cursor ? { start_cursor: cursor } : {})
+            }
+        });
+    }
+
+    /** Append blocks to the end of a page or block. */
+    appendChildren(token, id, children) {
+        return this._request(token, `/v1/blocks/${normalizePageId(id)}/children`, { method: 'PATCH', body: { children } });
+    }
+
+    /** Create a page (a row) in a database. */
+    createPage(token, { databaseId, properties, children = [] }) {
+        return this._request(token, '/v1/pages', {
+            method: 'POST',
+            body: { parent: { database_id: normalizePageId(databaseId) }, properties, ...(children.length ? { children } : {}) }
+        });
+    }
+
+    /** Set a block's own content (`{ [type]: { rich_text, checked } }`). The type cannot change. */
+    updateBlock(token, id, body) {
+        return this._request(token, `/v1/blocks/${normalizePageId(id)}`, { method: 'PATCH', body });
+    }
+
+    /** Set properties of a page. */
+    updatePage(token, id, properties) {
+        return this._request(token, `/v1/pages/${normalizePageId(id)}`, { method: 'PATCH', body: { properties } });
+    }
+
+    /** Move a block to the trash. Notion's API has no permanent delete. */
+    archiveBlock(token, id) {
+        return this._request(token, `/v1/blocks/${normalizePageId(id)}`, { method: 'PATCH', body: { archived: true } });
+    }
+
+    /** Move a page to the trash. */
+    archivePage(token, id) {
+        return this._request(token, `/v1/pages/${normalizePageId(id)}`, { method: 'PATCH', body: { archived: true } });
+    }
 }
 
 module.exports = new NotionService();
 module.exports.NotionError = NotionError;
 module.exports.normalizePageId = normalizePageId;
+module.exports.richTextToPlain = richTextToPlain;
+module.exports.titleOf = titleOf;
+module.exports.blockToText = blockToText;

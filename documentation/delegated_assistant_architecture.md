@@ -1184,7 +1184,7 @@ ADR 0015 hold the reasons). What the implementation settled:
 - `externalOperations` is enforced for `pushProjectRepo` and
   `openPullRequest`: per responsibility per UTC day, counted from the
   journal, 2 when unset and never above 20 (`EXTERNAL_BUDGET`). DA-11d
-  should reuse `guard` and this budget for `external.write`.
+  reuses `guard` and this budget for `external.write`.
 - `publishes: 'external'`: a push or pull request is refused with
   `PRIVATE_CONTEXT` once the run has read private knowledge.
 - The tools are offered only when the grant names the operation on a
@@ -1242,14 +1242,15 @@ activation. Broad surveillance remains a product non-goal: there is no
 responsibility.
 
 **Framework shipped in DA-11d** ([delegated_connectors.md](delegated_connectors.md),
-ADR 0028), with no connector: the owner has not named one. What the
+ADR 0028). What the
 implementation settled, in `services/assistant/connectors/registry.js`,
 `runTools/connectors.js` and `assistantConnectorService.js`:
 
 - A manifest also carries each operation's `run` and optional `validate`,
   and a write's optional `reconcile`; a write without one stops for review
   after any uncertainty. `register()` refuses a manifest without the
-  owner's recorded decision (`NO_OWNER_DECISION`); `shipped.js` is empty.
+  owner's recorded decision (`NO_OWNER_DECISION`); `shipped.js` lists only
+  what the owner decided.
 - A grant is `{ kind: 'external', ids: ['<connector>:<resource>'] }` on
   `read` or `external.write`, checked when saved: the connector is
   installed and the resource has the manifest's shape, with no wildcard.
@@ -1263,6 +1264,38 @@ implementation settled, in `services/assistant/connectors/registry.js`,
   `GET /api/app/assistant/connectors` and `POST
   /api/app/assistant/connectors/:id/revoke` are the portal's routes.
 - No schema change.
+
+**Notion shipped in DA-11e** ([delegated_notion.md](delegated_notion.md),
+ADR 0030), in `services/assistant/connectors/notion.js` and
+`assistantConnectorRequestService.js`:
+
+- A grant is `notion:<32 hex>`, one page or one database. The manifest's
+  `resource.canonical` reduces a link or dashed id to that at save and at
+  every call. The credential is the existing `notion` provider; the
+  manifest's `permits` holds the person to their own Notion allowlist.
+- Containment is the adapter's job: every id a call names is walked up its
+  parents to the granted id (at most twelve hops) before anything is read
+  or changed, and again when an approved action is carried out.
+- Reads: `page`, `blocks`, `rows`. Writes: `append`, `createPage`
+  (reconciled by a marker line derived from the operation id),
+  `updateBlock`, `updatePage` (reconciled by comparing what is there with
+  what was asked).
+- The private-read rule gained an origin. `readConnector` is `source:
+  'private'` with `sourceScope: 'resource'`; `writeConnector` is
+  `publishes: 'external'` with `publishesTo: 'resource'`. A run keeps
+  `privateOrigins` and `privateUnscoped`, rebuilt from the journal on
+  resume, and an external write after a private read is allowed only into
+  the one resource every private read came from.
+- A manifest may list `asks`. A fourth tool, `askConnector` (needs
+  `external.write`, no budget, publishes nothing), files a row in
+  `assistant_connector_requests` and a `question` update with gate kind
+  `connector_request`. `assistantGateService.decide` is the only way one is
+  approved; approving re-checks the pilot, the host's stop, the connector,
+  the grant, the credential, `permits` and containment, then calls the
+  ask's `run`. The steward pass withdraws requests whose grant or
+  connector is gone and prunes answered ones at 180 days.
+- One new table. Erasure, export, the transparency and audit counts and
+  dormant-data handling cover it.
 
 ### 13.6 Operator controls and evaluation (DA-12)
 

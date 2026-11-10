@@ -486,6 +486,53 @@ const processRepair = {
     }
 };
 
+// --- An outside action a delegated run asked for (gate kind `connector_request`) ---
+
+const CONNECTOR_OUTCOME = {
+    APPROVED: 'You approved it, and it was done.',
+    DECLINED: 'You refused it. Nothing was changed.',
+    WITHDRAWN: 'It was withdrawn before it was answered. Nothing was changed.'
+};
+
+/**
+ * A run may never take a connector's `asks` (Notion: moving a page to the
+ * trash). It files a request; this is the person's own answer to that one
+ * request (ADR 0030). Approving runs the action with their credential, now.
+ */
+const connectorRequest = {
+    staleCodes: ['ALREADY_DECIDED', 'NOT_FOUND', 'REQUEST_WITHDRAWN'],
+
+    async describe(gate, viewer) {
+        const requests = require('./assistantConnectorRequestService');
+        const registry = require('./assistant/connectors/registry');
+        const request = await requests.get(gate.id);
+        // Only the person whose credential would be used may answer it.
+        if (!request || request.ownerUserId !== String(viewer.userId)) return null;
+        const connector = registry.get(request.connector);
+        const ask = connector ? registry.operationOf(connector, 'ask', request.operation) : null;
+        const open = request.status === 'PENDING';
+        // The confirmation is read on its own, so it names the thing as well as what happens to it.
+        const named = `${request.label.charAt(0).toUpperCase()}${request.label.slice(1)}`;
+        return {
+            state: open ? 'open' : 'resolved',
+            title: requests.question(request, connector, ask),
+            detail: `Goobster asked for this while working for you and cannot do it itself. ${ask?.consequence || ''}`.trim(),
+            outcome: open ? null : (CONNECTOR_OUTCOME[request.status] || 'This request is no longer open.'),
+            revision: request.createdAt,
+            options: [
+                { id: 'approve', label: ask?.action || 'Approve', effect: `${named}. ${ask?.consequence || 'It is done as you, now.'}`, danger: true },
+                { id: 'decline', label: 'Leave it', effect: 'Nothing changes. Goobster is not asked to try again.' }
+            ]
+        };
+    },
+
+    async decide(gate, viewer, optionId) {
+        const requests = require('./assistantConnectorRequestService');
+        const outcome = await requests.decide({ userId: viewer.userId, id: gate.id, approve: optionId === 'approve' });
+        return { message: outcome.message };
+    }
+};
+
 module.exports = {
     project_approve: projectApprove,
     friend_request: friendRequest,
@@ -493,5 +540,6 @@ module.exports = {
     process_retirement: processRetirement,
     process_repair: processRepair,
     note_proposal: noteProposal,
-    source_retraction: sourceRetraction
+    source_retraction: sourceRetraction,
+    connector_request: connectorRequest
 };
