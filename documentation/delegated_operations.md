@@ -142,6 +142,12 @@ records the pilot decision, only the owner has them.**
     Drafting and activating your own responsibility on the Responsibilities
     page is not part of DA-7 and stays open to everyone.
 
+  The wider sources of DA-8
+  ([delegated_opportunity_sources.md](delegated_opportunity_sources.md))
+  check `sources`: for anyone but the owner, activating a responsibility
+  that names `personal_chat`, `followed_source`, `job_failure` or
+  `ci_verdict` is refused with `PILOT_ONLY`.
+
   Of `reach`, repository work and shared findings have shipped. Repository
   work (DA-11a, [delegated_runs.md](delegated_runs.md#repository-work)) is
   gated as `reach`: committing, pushing and opening pull requests in a
