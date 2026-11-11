@@ -1,4 +1,4 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
 import { keys } from '../../lib/query';
@@ -8,6 +8,7 @@ import { useToast } from '../../hooks/useToast';
 import { useConfirm } from '../../hooks/useConfirm';
 import { Field, SaveBar, SectionHeader } from './SectionFrame';
 import { SCOPE_FOR } from './sectionMeta';
+import { SOUND_THEMES, SOUND_CUES, playSound, stopSound, type SoundTheme } from '../../lib/sounds';
 import { PushSettings } from '../../components/PushSettings';
 import { featureActive } from '../../lib/rooms';
 import { useMe } from '../../hooks/useSession';
@@ -28,6 +29,11 @@ type Draft = {
     notifyMentionBanners: boolean;
     notifyOutbound: boolean;
     notifySounds: boolean;
+    soundTheme: SoundTheme;
+    soundVolume: number;
+    soundNotifications: boolean;
+    soundInteractions: boolean;
+    soundVoice: boolean;
     presenceVisible: boolean;
     defaultSnoozeHours: string;
 };
@@ -51,7 +57,9 @@ const LABELS: Record<string, string> = {
     boundaries: 'Boundaries',
     quietHoursTzMode: 'Quiet hours timezone', notifyInApp: 'In-app notices',
     notifyMentionBanners: 'Mention banners', notifyOutbound: 'Outbound contact',
-    notifySounds: 'Notification sounds', presenceVisible: 'Show me as online',
+    soundTheme: 'Sound family', soundVolume: 'Sound volume', soundNotifications: 'Notification cues',
+    soundInteractions: 'Interaction cues', soundVoice: 'Voice session cues',
+    notifySounds: 'App sounds', presenceVisible: 'Show me as online',
     defaultSnoozeHours: 'Default snooze'
 };
 
@@ -78,6 +86,11 @@ const toDraft = (v: Values): Draft => ({
     notifyMentionBanners: v.notifyMentionBanners !== false,
     notifyOutbound: v.notifyOutbound !== false,
     notifySounds: Boolean(v.notifySounds),
+    soundTheme: v.soundTheme || 'goo-pop',
+    soundVolume: v.soundVolume ?? 60,
+    soundNotifications: v.soundNotifications !== false,
+    soundInteractions: v.soundInteractions !== false,
+    soundVoice: v.soundVoice !== false,
     presenceVisible: v.presenceVisible !== false,
     defaultSnoozeHours: String(v.defaultSnoozeHours ?? 24)
 });
@@ -87,6 +100,7 @@ export function InitiativeSection({ section, onDirty }: {
     onDirty: (dirty: boolean) => void;
 }) {
     const toast = useToast();
+    useEffect(() => () => stopSound(), []);
     const confirm = useConfirm();
     const queryClient = useQueryClient();
     const applyResult = useApplySectionResult();
@@ -112,6 +126,9 @@ export function InitiativeSection({ section, onDirty }: {
         if ('notifyMentionBanners' in diff) out.notifyMentionBanners = draft.notifyMentionBanners;
         if ('notifyOutbound' in diff) out.notifyOutbound = draft.notifyOutbound;
         if ('notifySounds' in diff) out.notifySounds = draft.notifySounds;
+        for (const key of ['soundTheme', 'soundVolume', 'soundNotifications', 'soundInteractions', 'soundVoice'] as const) {
+            if (key in diff) out[key] = draft[key];
+        }
         if ('presenceVisible' in diff) out.presenceVisible = draft.presenceVisible;
         if ('defaultSnoozeHours' in diff) out.defaultSnoozeHours = Number(draft.defaultSnoozeHours);
         return out;
@@ -119,6 +136,7 @@ export function InitiativeSection({ section, onDirty }: {
     const d = useSectionDraft('initiative', section, toDraft, toChanges);
     useReportDirty(onDirty, d.dirty);
 
+    const [previewStatus, setPreviewStatus] = useState('');
     const enabled = Boolean(section.values.enabled);
     // The daily digest of delegated work is a pilot capability: its time is
     // offered only where that feature is on and this account has it.
@@ -278,8 +296,43 @@ export function InitiativeSection({ section, onDirty }: {
                         onChange={(e) => d.set({ notifyMentionBanners: e.target.checked })} /> Mention banners</label>
                     <label className="settings-check"><input type="checkbox" checked={d.draft.notifyOutbound}
                         onChange={(e) => d.set({ notifyOutbound: e.target.checked })} /> Outbound Discord DMs</label>
-                    <label className="settings-check"><input type="checkbox" checked={d.draft.notifySounds}
-                        onChange={(e) => d.set({ notifySounds: e.target.checked })} /> In-app sounds</label>
+
+                </div>
+            </Field>
+
+            <Field id="sounds" label="App sounds" scope="Your account"
+                hint="Short cues in the open app. Browser push sounds are controlled by your device. Game audio has its own controls.">
+                <label className="settings-check"><input id="sounds-input" type="checkbox" checked={d.draft.notifySounds}
+                    onChange={e => { stopSound(); d.set({ notifySounds: e.target.checked }); }} /> Enable app sounds</label>
+            </Field>
+            <Field id="sound-family" label="Sound family" scope="Your account">
+                <select id="sound-family-input" className="input" value={d.draft.soundTheme}
+                    onChange={e => { stopSound(); d.set({ soundTheme: e.target.value as SoundTheme }); }}>
+                    {SOUND_THEMES.map(t => <option key={t.value} value={t.value}>{t.label} — {t.hint}</option>)}
+                </select>
+            </Field>
+            <Field id="sound-volume" label={`Sound volume (${d.draft.soundVolume}%)`} scope="Your account">
+                <input id="sound-volume-input" type="range" min="0" max="100" step="1" value={d.draft.soundVolume}
+                    onChange={e => { stopSound(); d.set({ soundVolume: Number(e.target.value) }); }} />
+            </Field>
+            <Field id="sound-categories" label="Play sounds for" scope="Your account">
+                <div id="sound-categories-input" className="settings-stack">
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.soundNotifications}
+                        onChange={e => d.set({ soundNotifications: e.target.checked })} /> Notifications and completed work</label>
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.soundInteractions}
+                        onChange={e => d.set({ soundInteractions: e.target.checked })} /> Chat sends and action errors</label>
+                    <label className="settings-check"><input type="checkbox" checked={d.draft.soundVoice}
+                        onChange={e => d.set({ soundVoice: e.target.checked })} /> Voice session opening and closing</label>
+                </div>
+            </Field>
+            <Field id="sound-preview" label="Preview sounds" hint="Preview uses the family and volume above, even while app sounds are off. Save to apply your choices.">
+                <div id="sound-preview-input" className="settings-stack">
+                    {SOUND_CUES.map(cue => <button key={cue} type="button" className="btn subtle small" onClick={async () => {
+                        setPreviewStatus(`Playing ${cue.replace('-', ' ')}…`);
+                        const played = await playSound(cue, { preview: d.draft });
+                        setPreviewStatus(played ? '' : 'Preview unavailable. Check the volume and pause other audio, then try again.');
+                    }}>Preview {cue.replace('-', ' ')}</button>)}
+                    <span role="status">{previewStatus}</span>
                 </div>
             </Field>
 

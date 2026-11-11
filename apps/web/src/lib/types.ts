@@ -1600,6 +1600,11 @@ export type UserSettingsResponse = {
             notifyMentionBanners: boolean;
             notifyOutbound: boolean;
             notifySounds: boolean;
+            soundTheme: 'goo-pop' | 'pocket-wood' | 'prism' | 'orbit';
+            soundVolume: number;
+            soundNotifications: boolean;
+            soundInteractions: boolean;
+            soundVoice: boolean;
             presenceVisible: boolean;
             defaultSnoozeHours: number;
             quietHoursTzMode: 'utc' | 'local';

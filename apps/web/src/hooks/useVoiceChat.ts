@@ -1,3 +1,4 @@
+import { playSound, setVoiceSoundSuppression, stopSound } from '../lib/sounds';
 import { openMicrophone } from '../lib/microphone';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, fetchSpeech } from '../lib/api';
@@ -151,6 +152,8 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
     }, []);
 
     const stop = useCallback(() => {
+        const wasActive = statusRef.current !== 'idle';
+        stopSound();
         generationRef.current += 1;
         releaseWakeLock();
         liveRef.current?.stop();
@@ -176,6 +179,8 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
         setMutedState(false);
         mutedRef.current = false;
         setStatusBoth('idle');
+        setVoiceSoundSuppression(false);
+        if (wasActive) void playSound('voice-close');
     }, [stopRecorder, stopPlayback, setStatusBoth, releaseWakeLock]);
 
     useEffect(() => () => stop(), [stop]);
@@ -428,6 +433,10 @@ export function useVoiceChat({ onUtterance, onNotify }: VoiceChatOptions) {
             setMutedState(true);
             if (liveRef.current) liveRef.current.setMuted(true);
         }
+        setVoiceSoundSuppression(true);
+        liveRef.current?.setPaused(true);
+        await playSound('voice-open');
+        if (generation !== generationRef.current) return;
         startListening();
         void acquireWakeLock();
     }, [startLive, startBatch, monitorTick, startListening, acquireWakeLock]);

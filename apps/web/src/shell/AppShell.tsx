@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Link, Outlet, useNavigate, useRouterState } from '@tanstack/react-router';
+import { configureSounds, installSoundLifecycle, playSound } from '../lib/sounds';
 import { api } from '../lib/api';
 import { applyAtmosphere } from '../lib/atmosphere';
 import { Icon, RoomIcon } from '../icons/Icon';
@@ -91,7 +92,9 @@ export function AppShell() {
     const appearance = settingsQ.data?.sections.appearance.values;
     const mentionBanners = settingsQ.data?.sections.initiative.values.notifyMentionBanners !== false;
     const notifyInApp = settingsQ.data?.sections.initiative.values.notifyInApp !== false;
-    const notifySounds = Boolean(settingsQ.data?.sections.initiative.values.notifySounds);
+    const soundValues = settingsQ.data?.sections.initiative.values;
+    useEffect(() => installSoundLifecycle(), []);
+    useEffect(() => { configureSounds(me ? soundValues : undefined); }, [me, soundValues]);
     const [attentionPing, setAttentionPing] = useState(false);
     const [inboxPing, setInboxPing] = useState<InboxEvent | null>(null);
 
@@ -113,19 +116,6 @@ export function AppShell() {
     // Someone @-mentioned this user in a shared parlor discussion while
     // they were here - show a clickable notice that deep-links to the chat.
     useEffect(() => {
-        function playPing() {
-            if (!notifySounds) return;
-            try {
-                const ctx = new AudioContext();
-                const osc = ctx.createOscillator();
-                const gain = ctx.createGain();
-                osc.frequency.value = 880;
-                gain.gain.value = 0.04;
-                osc.connect(gain).connect(ctx.destination);
-                osc.start();
-                osc.stop(ctx.currentTime + 0.12);
-            } catch { /* autoplay / reduced motion */ }
-        }
         const onMention = (event: Event) => {
             if (!mentionBanners) return;
             const detail = (event as CustomEvent<ParlorMentionEvent>).detail || {};
@@ -139,12 +129,13 @@ export function AppShell() {
                 tag: detail.conversationId ? `mention-${detail.conversationId}-${detail.messageId ?? ''}` : null
             });
             setMention(detail);
-            playPing();
+            void playSound('notification', { eventId: detail.messageId ? `mention-${detail.conversationId}-${detail.messageId}` : undefined });
         };
-        const onNoticed = () => {
+        const onNoticed = (event: Event) => {
             if (!notifyInApp) return;
             setAttentionPing(true);
-            playPing();
+            const detail = (event as CustomEvent<{ noticeId?: number }>).detail;
+            void playSound('attention', { eventId: detail?.noticeId ? `noticed-${detail.noticeId}` : undefined });
         };
         // A result landed in the Inbox (a reminder, a task's output, an
         // invitation) while this tab was open. Not shown while already there.
@@ -159,7 +150,7 @@ export function AppShell() {
             });
             if (resolveRoom(window.location.pathname) === 'activity') return;
             setInboxPing(detail);
-            playPing();
+            void playSound(detail.sourceType === 'work_failure' ? 'failure' : ['task', 'expedition'].includes(detail.kind || '') ? 'success' : 'notification', { notification: true, eventId: detail.itemId ? `inbox-${detail.itemId}` : undefined });
         };
         window.addEventListener('goobster-parlor-mention', onMention);
         window.addEventListener('goobster-attention-noticed', onNoticed);
@@ -169,7 +160,7 @@ export function AppShell() {
             window.removeEventListener('goobster-attention-noticed', onNoticed);
             window.removeEventListener('goobster-inbox', onInbox);
         };
-    }, [mentionBanners, notifyInApp, notifySounds]);
+    }, [mentionBanners, notifyInApp]);
     useEffect(() => {
         if (!inboxPing) return;
         const timer = window.setTimeout(() => setInboxPing(null), 12_000);

@@ -439,6 +439,7 @@ const staticAssets = {
     '/app/style.css': 'core',
     '/app/liveAudioWorklet.js': 'core',
     '/app/icons': 'core',
+    '/app/sounds': 'core',
     '/app/screenshots': 'core',
     '/activity': 'discordActivity',
     '/activity/vendor/embedded-app-sdk': 'discordActivity',

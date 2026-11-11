@@ -88,3 +88,15 @@ test('a cursor remains valid after its row is archived and limits are whole numb
     expect(second.items.map(item => item.id)).toEqual([oldest]);
     expect(second.nextCursor).toBeNull();
 });
+
+test('new failure deliveries expose their source for sound routing without replaying deduplicated deliveries', async () => {
+    const events = [];
+    const stop = eventBus.subscribe(event => { if (event.kind === 'inbox') events.push(event.payload); });
+    try {
+        const args = { userId: OWNER, kind: 'system', title: 'A job failed', source: { type: 'work_failure', id: 123 }, dedupeKey: 'sound-failure', discord: false };
+        const first = await inbox.deliver(args);
+        await inbox.deliver(args);
+        expect(events).toHaveLength(1);
+        expect(events[0]).toMatchObject({ itemId: first.item.id, sourceType: 'work_failure', kind: 'system' });
+    } finally { stop(); }
+});

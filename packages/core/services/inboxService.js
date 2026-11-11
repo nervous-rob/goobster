@@ -167,7 +167,7 @@ class InboxService {
                 params
             );
             row = await db.get('SELECT * FROM inbox_items WHERE id = @id', { id });
-            eventBus.publish('inbox', { userId: owner, itemId: row.id, kind });
+            eventBus.publish('inbox', { userId: owner, itemId: row.id, kind, sourceType: row.sourceType });
         }
 
         let echo = { status: row.discordStatus, error: row.discordError || null };
