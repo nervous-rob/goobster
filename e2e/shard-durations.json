@@ -6,6 +6,7 @@
     "assistantHome.spec.js": 12,
     "assistantKnowledge.spec.js": 10,
     "attachmentDrop.spec.js": 26,
+    "chatViewport.spec.js": 6,
     "composer.spec.js": 4,
     "databaseWizard.spec.js": 13,
     "discussionSwitch.spec.js": 2,
