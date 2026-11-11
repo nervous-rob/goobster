@@ -884,7 +884,9 @@ describe('a clean stdout', () => {
     const ROOT = path.join(__dirname, '..');
 
     function childEnv(dbPath, extra = {}) {
-        const env = { ...process.env, GOOBSTER_DB_PATH: dbPath, GOOBSTER_MCP_ENABLED: '1', ...extra };
+        // Exercise real CLI logging, including migrations, outside Jest's quiet mode.
+        const env = { ...process.env, NODE_ENV: 'production', GOOBSTER_DB_PATH: dbPath, GOOBSTER_MCP_ENABLED: '1', ...extra };
+        delete env.JEST_WORKER_ID;
         delete env.GOOBSTER_DB_URL;
         delete env.GOOBSTER_PG_TEST_ISOLATE;
         return env;
@@ -912,12 +914,12 @@ describe('a clean stdout', () => {
                 'scripts/mcp-token.js', 'create', '--user', '100000000000000061', '--label', 'Clean', '--scope', 'docs'
             ], { cwd: ROOT, env: childEnv(dbPath), encoding: 'utf8' });
             expect(created.status).toBe(0);
-            expect(created.stderr).toMatch(/Migrated/);
+            expect(created.stderr).not.toMatch(/Migrated/);
             const lines = created.stdout.trim().split('\n');
             expect(lines).toHaveLength(1);
             expect(lines[0]).toMatch(/^gst_[A-Za-z0-9_-]{43}$/);
 
-            // Drop a migrated column so the server's own first open has to migrate again.
+            // Simulate an older database so the server's first open must migrate.
             const Database = require('better-sqlite3');
             const raw = new Database(dbPath);
             raw.exec('ALTER TABLE stock_symbols DROP COLUMN ivUpdatedAt');
