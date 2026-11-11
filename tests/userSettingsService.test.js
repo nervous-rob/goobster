@@ -740,3 +740,27 @@ describe('model registry settings contract', () => {
         expect(changed.data.values).toMatchObject({ researchProvider: 'anthropic', researchModel: null });
     });
 });
+
+describe('portal sound preferences', () => {
+    test('defaults to Goo Pop without changing existing opt-in, and persists all sound controls', async () => {
+        const userId = nextUser();
+        const initial = await userSettingsService.getSettings({ userId });
+        expect(initial.sections.initiative.values).toMatchObject({ notifySounds: false, soundTheme: 'goo-pop', soundVolume: 60 });
+        const changes = { notifySounds: true, soundTheme: 'prism', soundVolume: 35,
+            soundNotifications: false, soundInteractions: true, soundVoice: false };
+        await userSettingsService.updateSection({ userId, section: 'initiative', changes });
+        const saved = await userSettingsService.getSettings({ userId });
+        expect(saved.sections.initiative.values).toMatchObject(changes);
+        expect(saved.sections.initiative.values.enabled).toBe(false);
+    });
+    test.each([
+        { soundTheme: '../invalid' }, { soundVolume: -1 }, { soundVolume: 101 },
+        { soundVolume: '50' }, { soundVolume: 1.5 }, { soundNotifications: 'true' }
+    ])('rejects invalid sound preferences atomically: %j', async changes => {
+        const userId = nextUser();
+        await expect(userSettingsService.updateSection({ userId, section: 'initiative', changes: { notifySounds: true, ...changes } }))
+            .rejects.toMatchObject({ status: 400 });
+        const saved = await userSettingsService.getSettings({ userId });
+        expect(saved.sections.initiative.values.notifySounds).toBe(false);
+    });
+});

@@ -56,7 +56,7 @@ export const SECTIONS: SectionMeta[] = [
         icon: '🧭',
         scope: 'Your account',
         blurb: 'How proactive Goobster is allowed to be, how often he may reach out, and when to stay quiet.',
-        keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm', 'presence', 'snooze', 'push', 'browser notifications']
+        keywords: ['attention', 'initiative', 'proactive', 'nudge', 'assist', 'delegate', 'observe', 'quiet hours', 'do not disturb', 'notifications', 'budget', 'boundaries', 'dm', 'presence', 'snooze', 'push', 'browser notifications', 'sounds', 'sound family', 'volume', 'goo pop', 'prism', 'orbit', 'pocket wood']
     },
     {
         id: 'memory',
@@ -142,6 +142,10 @@ export const FIELDS: FieldMeta[] = [
     { section: 'initiative', fieldId: 'contact-budget', label: 'Contact budget', keywords: ['budget', 'dms per day', 'cooldown', 'how often', 'notifications', 'messages'] },
     { section: 'initiative', fieldId: 'quiet-hours', label: 'Quiet hours', keywords: ['quiet', 'do not disturb', 'dnd', 'night', 'sleep', 'hours'] },
     { section: 'initiative', fieldId: 'quiet-hours-tz', label: 'Quiet hours timezone', keywords: ['local quiet hours', 'dst', 'timezone quiet'] },
+    { section: 'initiative', fieldId: 'sounds', label: 'App sounds', keywords: ['sound', 'mute', 'audio', 'enable'] },
+    { section: 'initiative', fieldId: 'sound-family', label: 'Sound family', keywords: ['goo pop', 'pocket wood', 'prism', 'orbit', 'tones'] },
+    { section: 'initiative', fieldId: 'sound-volume', label: 'Sound volume', keywords: ['volume', 'loudness'] },
+    { section: 'initiative', fieldId: 'sound-preview', label: 'Preview sounds', keywords: ['preview', 'failure', 'success', 'test sound'] },
     { section: 'initiative', fieldId: 'notifications', label: 'Notification channels', keywords: ['notifications', 'sounds', 'banners', 'in-app', 'outbound'] },
     { section: 'initiative', fieldId: 'browser-notifications', label: 'Browser notifications', keywords: ['push', 'browser notifications', 'device', 'alerts', 'web push', 'phone', 'pwa'] },
     { section: 'initiative', fieldId: 'presence', label: 'Show me as online', keywords: ['presence', 'online', 'visibility', 'friends'] },

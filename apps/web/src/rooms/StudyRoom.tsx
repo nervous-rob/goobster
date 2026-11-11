@@ -1,3 +1,4 @@
+import { playSound } from '../lib/sounds';
 import { useAttachmentDrop } from '../hooks/useAttachmentDrop';
 import { useCallback, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -686,6 +687,7 @@ export function StudyRoom() {
         // once the model answers), so its local copy - the message and the
         // error - stays on screen instead of vanishing without a word.
         let failed = false;
+        let sendSoundPlayed = false;
         turn.begin({ role: 'user', content: text, images: pendingImages }, { keep: incognito });
         try {
             await streamChat({
@@ -698,13 +700,16 @@ export function StudyRoom() {
                 // prose (no links, tables, or lists) instead of Markdown.
                 spoken: voiceChat.isActive()
             }, {
-                onTyping: turn.onTyping,
+                onTyping: () => {
+                    turn.onTyping();
+                    if (!sendSoundPlayed) { sendSoundPlayed = true; void playSound('send'); }
+                },
                 onDelta: turn.onDelta,
                 onTool: turn.onTool,
                 onMessage: (message) => {
                     // The pipeline reports a failed turn as an error reply
                     // (not an SSE error) and stores nothing for it.
-                    if (message.isError) failed = true;
+                    if (message.isError) { failed = true; void playSound('failure'); }
                     turn.onMessage({
                         role: 'assistant',
                         content: message.content || '',
@@ -724,6 +729,7 @@ export function StudyRoom() {
                 },
                 onError: (error) => {
                     failed = true;
+                    void playSound('failure');
                     turn.onMessage({
                         role: 'assistant',
                         content: error.message || 'Something went wrong.',

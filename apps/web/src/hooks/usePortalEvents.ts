@@ -23,6 +23,7 @@ const AFTER_RECONNECT = ['home', 'assistant-responsibilities', 'assistant-initia
 
 export type InboxEvent = {
     itemId?: number;
+    sourceType?: string | null;
     kind?: string;
 };
 

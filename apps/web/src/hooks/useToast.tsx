@@ -1,5 +1,7 @@
 import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react';
 
+import { playSound } from '../lib/sounds';
+
 type ToastFn = (message: string, isError?: boolean) => void;
 
 const ToastContext = createContext<ToastFn>(() => {});
@@ -9,6 +11,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     const timer = useRef<number | null>(null);
     const show = useCallback<ToastFn>((message, isError = false) => {
         setToast({ message, error: isError });
+        if (isError) void playSound('failure');
         if (timer.current) window.clearTimeout(timer.current);
         timer.current = window.setTimeout(() => setToast(null), 4000);
     }, []);

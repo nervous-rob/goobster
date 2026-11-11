@@ -221,6 +221,11 @@ const PREFERENCE_DEFAULTS = {
     notifyMentionBanners: true,
     notifyOutbound: true,
     notifySounds: false,
+    soundTheme: 'goo-pop',
+    soundVolume: 60,
+    soundNotifications: true,
+    soundInteractions: true,
+    soundVoice: true,
     presenceVisible: true,
     defaultSnoozeHours: LIMITS.SNOOZE_HOURS_DEFAULT,
     quietHoursTzMode: 'utc',
@@ -277,6 +282,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
     ],
     initiative: [
         'notifyInApp', 'notifyMentionBanners', 'notifyOutbound', 'notifySounds',
+        'soundTheme', 'soundVolume', 'soundNotifications', 'soundInteractions', 'soundVoice',
         'presenceVisible', 'defaultSnoozeHours', 'quietHoursTzMode'
     ],
     memory: ['defaultNewChatPrivacy', 'learnMemories', 'useMemories', 'chatHistoryRetentionDays'],
@@ -291,6 +297,7 @@ const PREFERENCE_KEYS_BY_SECTION = {
 const BOOLEAN_PREF_KEYS = new Set([
     'startVoiceMuted', 'showCaptions', 'autoReadReplies',
     'notifyInApp', 'notifyMentionBanners', 'notifyOutbound', 'notifySounds',
+    'soundNotifications', 'soundInteractions', 'soundVoice',
     'presenceVisible', 'linkByTag', 'enterToSend', 'expandChatDetails',
     'learnMemories', 'useMemories'
 ]);
@@ -324,6 +331,14 @@ function coercePreference(key, raw) {
         return { ok: true, value: raw };
     }
     switch (key) {
+        case 'soundTheme':
+            return ['goo-pop', 'pocket-wood', 'prism', 'orbit'].includes(raw)
+                ? { ok: true, value: raw }
+                : { ok: false, code: 'BAD_SOUND_THEME', message: 'Choose a supported sound family.' };
+        case 'soundVolume':
+            return typeof raw === 'number' && Number.isInteger(raw) && raw >= 0 && raw <= 100
+                ? { ok: true, value: raw }
+                : { ok: false, code: 'BAD_SOUND_VOLUME', message: 'Sound volume must be an integer from 0 to 100.' };
         case 'accountPreferredName': {
             if (raw === null || raw === '') return { ok: true, value: null };
             const clean = String(raw).trim();
