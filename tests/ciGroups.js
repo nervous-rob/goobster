@@ -36,6 +36,7 @@ const GROUPS = [
             'configJson',
             'cursorAgentService',
             'dbSchemaUpgrade',
+            'dbBootstrap',
             'dialectForeignKeys',
             'dmCommands',
             'postgresConnectRetry',

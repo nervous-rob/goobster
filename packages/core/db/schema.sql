@@ -348,6 +348,13 @@ CREATE TABLE IF NOT EXISTS kg_nodes (
     subjectId TEXT,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revision INTEGER NOT NULL DEFAULT 1,
+    generated INTEGER NOT NULL DEFAULT 0,
+    archivedAt TEXT,
+    archivedBy TEXT,
+    archiveCode TEXT,
+    mergedIntoId INTEGER,
+    claimStatus TEXT NOT NULL DEFAULT 'current' CHECK (claimStatus IN ('current', 'disputed', 'superseded', 'retracted')),
     UNIQUE (guildId, scopeKey, label)
 );
 
@@ -366,6 +373,12 @@ CREATE TABLE IF NOT EXISTS kg_edges (
     weight REAL NOT NULL DEFAULT 0.5,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    revision INTEGER NOT NULL DEFAULT 1,
+    evidenceKind TEXT,
+    evidenceId INTEGER,
+    originRunId INTEGER,
+    retractedAt TEXT,
+    retractionCode TEXT,
     UNIQUE (guildId, sourceId, targetId, relation)
 );
 
@@ -394,6 +407,7 @@ CREATE TABLE IF NOT EXISTS kg_provenance (
     sourceKind TEXT NOT NULL CHECK (sourceKind IN ('memory', 'fact', 'consolidation', 'monologue', 'tool', 'user', 'artifact', 'research_claim', 'research_source', 'expedition', 'parlor_conversation')),
     sourceId INTEGER,
     createdAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    retractedAt TEXT,
     UNIQUE (nodeId, sourceKind, sourceId)
 );
 
@@ -635,7 +649,10 @@ CREATE TABLE IF NOT EXISTS stock_symbols (
     exchange TEXT,
     currency TEXT,
     quoteType TEXT,
-    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    updatedAt TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    impliedVol REAL,
+    ivUpdatedAt TEXT,
+    corporateCheckedAt TEXT
 );
 
 -- Snapshot rows recorded whenever a fresh quote is fetched; the recent window
@@ -1817,6 +1834,7 @@ CREATE TABLE IF NOT EXISTS project_assets (
     pinnedAt TEXT,
     createdAt TEXT NOT NULL DEFAULT (datetime('now')),
     updatedAt TEXT NOT NULL DEFAULT (datetime('now')),
+    revision INTEGER NOT NULL DEFAULT 1,
     UNIQUE (projectId, slug)
 );
 

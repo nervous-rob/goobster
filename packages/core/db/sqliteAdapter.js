@@ -12,6 +12,7 @@ const fs = require('node:fs');
 const { AsyncLocalStorage } = require('node:async_hooks');
 const Database = require('better-sqlite3');
 const { COLUMN_MIGRATIONS } = require('./migrations');
+const { logMigration } = require('./migrationLog');
 const { repairMissionUniquesSync } = require('./repairMissionUniques');
 const { repairObservatoryJobsSync } = require('./repairObservatoryJobs');
 
@@ -58,10 +59,9 @@ function getDb() {
 
     migrateExistingTables(db);
     db.exec(fs.readFileSync(path.join(__dirname, 'schema.sql'), 'utf8'));
-    // Second pass for the tables schema.sql just created: a column added to
-    // an existing table lives only in COLUMN_MIGRATIONS, so schema.sql's
-    // CREATE TABLE text can lag behind it, and the first pass skipped
-    // tables that did not exist yet.
+    // Defensive second pass: legacy table rebuilds may use an older column
+    // list. Fresh tables already contain every COLUMN_MIGRATIONS entry;
+    // tests/dbBootstrap.test.js guards that contract.
     applyColumnMigrations(db);
     if (readOnly) db.pragma('query_only = ON');
 
@@ -392,7 +392,7 @@ function applyColumnMigrations(database) {
         if (columns.length === 0) continue;
         if (!columns.some(c => c.name === column)) {
             database.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl}`);
-            console.log(`[DB] Migrated: added ${table}.${column}`);
+            logMigration(`[DB] Migrated: added ${table}.${column}`);
         }
     }
 }
@@ -418,7 +418,7 @@ function applyTableRebuilds(database) {
                 const ddl = tableDdl(database, spec.table);
                 if (!ddl || spec.isCurrent(ddl)) continue;
                 rebuildTable(database, spec.table, spec.ddl, spec.columns);
-                console.log(`[DB] Migrated: rebuilt ${spec.table} with ${spec.reason}`);
+                logMigration(`[DB] Migrated: rebuilt ${spec.table} with ${spec.reason}`);
             }
             const violations = database.pragma('foreign_key_check');
             if (violations.length > 0) {
@@ -481,7 +481,7 @@ function repairDroppedLegacyReferences(database) {
             staging => repaired.replace(/^CREATE TABLE\s+"?\w+"?/i, `CREATE TABLE ${staging}`),
             columns
         );
-        console.log(`[DB] Migrated: repaired ${name} references to a dropped table`);
+        logMigration(`[DB] Migrated: repaired ${name} references to a dropped table`);
     }
 }
 

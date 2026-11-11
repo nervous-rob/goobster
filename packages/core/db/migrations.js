@@ -4,7 +4,9 @@
  * schema.sql only creates missing tables (CREATE TABLE IF NOT EXISTS), so
  * columns added to existing tables must be listed here and back-filled on
  * open. Each entry is [table, column, columnDdl] where columnDdl is written
- * in SQLite dialect (the Postgres adapter translates it).
+ * in SQLite dialect (the Postgres adapter translates it). New entries must
+ * also appear in schema.sql so fresh databases need no column upgrades.
+ * Keep historical entries here for existing installations.
  *
  * Both adapters run these (and their constraint migrations) *before*
  * schema.sql, so its CREATE INDEX statements may freely name columns added
