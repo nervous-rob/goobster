@@ -1,4 +1,4 @@
-/* global DataTransfer, DataTransferItem, DragEvent, window */
+/* global ClipboardEvent, ClipboardItem, DataTransfer, DataTransferItem, DragEvent, window */
 const { test, expect } = require('@playwright/test');
 const { login } = require('./helpers');
 const C = require('./constants');
@@ -28,6 +28,88 @@ async function dropOn(page, selector, { files = [], strings = {}, directory = fa
 }
 const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aWZkAAAAASUVORK5CYII=';
 const image = name => ({ name, type: 'image/png', base64: PNG });
+
+async function pasteOn(page, selector, { files = [], text = '' } = {}) {
+    return page.locator(selector).evaluate((el, { files, text }) => {
+        const clipboardData = new DataTransfer();
+        for (const file of files) {
+            const body = file.base64 ? Uint8Array.from(atob(file.base64), c => c.charCodeAt(0)) : file.text || '';
+            clipboardData.items.add(new File([body], file.name, { type: file.type || 'text/plain' }));
+        }
+        if (text) clipboardData.setData('text/plain', text);
+        return !el.dispatchEvent(new ClipboardEvent('paste', { clipboardData, bubbles: true, cancelable: true }));
+    }, { files, text });
+}
+
+test('Chat pastes clipboard files once without inserting their accompanying text', async ({ page }) => {
+    await page.goto('/app/chat');
+    const composer = page.getByRole('textbox', { name: 'Message Goobster' });
+    await composer.fill('Read these');
+    let sent;
+    await page.route('**/api/app/chat', route => {
+        sent = route.request().postDataJSON();
+        return route.fulfill({ contentType: 'text/event-stream', body: 'event: done\ndata: {}\n\n' });
+    });
+    expect(await pasteOn(page, 'textarea[aria-label="Message Goobster"]', {
+        files: [image('clipboard.png'), { name: 'pasted.txt', text: 'Clipboard document' }, { name: 'pasted.pdf', type: 'application/pdf', text: '%PDF-pasted' }],
+        text: 'Accompanying clipboard text'
+    })).toBe(true);
+    await expect(page.locator('.image-thumb')).toHaveCount(1);
+    await expect(page.locator('.pending-file-chip')).toHaveCount(2);
+    await expect(composer).toHaveValue('Read these');
+    expect(sent).toBeUndefined();
+    await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await expect.poll(() => sent).toBeTruthy();
+    expect(sent.images).toHaveLength(1);
+    expect(sent.files).toEqual([
+        { name: 'pasted.txt', content: 'Clipboard document' },
+        { name: 'pasted.pdf', contentBase64: Buffer.from('%PDF-pasted').toString('base64') }
+    ]);
+});
+
+test('text and link paste stay native; pasted files share attachment limits', async ({ page }) => {
+    await page.goto('/app/chat');
+    const selector = 'textarea[aria-label="Message Goobster"]';
+    expect(await pasteOn(page, selector, { text: 'Plain text https://example.org/file.pdf' })).toBe(false);
+    await dropOn(page, '.study-main', { files: [image('existing.png')] });
+    await pasteOn(page, selector, { files: [image('two.png'), image('three.png'), image('four.png'), image('five.png')] });
+    await expect(page.locator('.image-thumb')).toHaveCount(4);
+    await expect(page.locator('#toast')).toContainText('At most 4 images');
+    await pasteOn(page, selector, { files: [{ name: 'unsupported.zip', type: 'application/zip', text: 'PK' }, { name: 'accepted.txt', text: 'Keep this' }] });
+    await expect(page.locator('.pending-file-chip')).toHaveCount(1);
+    await expect(page.locator('.pending-file-chip')).toContainText('accepted.txt');
+});
+
+test('Ctrl/Cmd+V pastes clipboard text normally and attaches a clipboard image', async ({ page, context }) => {
+    await page.goto('/app/chat');
+    await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+    const composer = page.getByRole('textbox', { name: 'Message Goobster' });
+    await page.evaluate(() => navigator.clipboard.writeText('Native clipboard text'));
+    await composer.focus();
+    await page.keyboard.press('ControlOrMeta+V');
+    await expect(composer).toHaveValue('Native clipboard text');
+    await page.evaluate(async () => {
+        const canvas = window.document.createElement('canvas');
+        canvas.width = canvas.height = 2;
+        canvas.getContext('2d').fillRect(0, 0, 2, 2);
+        const blob = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+        await navigator.clipboard.write([new ClipboardItem({ 'image/png': blob })]);
+    });
+    await page.keyboard.press('ControlOrMeta+V');
+    await expect(page.locator('.image-thumb')).toHaveCount(1);
+    await expect(composer).toHaveValue('Native clipboard text');
+});
+
+test('pasting into a nested note editor stages files only in that editor', async ({ page }) => {
+    await page.goto('/app/knowledge/notes');
+    await page.getByRole('button', { name: 'New note', exact: true }).click();
+    expect(await pasteOn(page, '.note-editor-modal textarea', { files: [{ name: 'note.txt', text: 'Private draft' }] })).toBe(true);
+    const dialog = page.getByRole('dialog');
+    await expect(dialog).toHaveCount(1);
+    await expect(dialog.locator('.pending-file-chip')).toHaveCount(1);
+    await expect(dialog.locator('.pending-file-chip')).toContainText('note.txt');
+    await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+});
 
 test.beforeEach(async ({ page }) => { await login(page); });
 test.afterEach(async ({ page }) => {

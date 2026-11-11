@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type DragEvent } from 'react';
+import { useEffect, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { isAttachmentDrag, readAttachmentDrop, resolveAttachmentDrop, type AttachmentDrop } from '../lib/attachmentDrop';
 import { useToast } from './useToast';
 
@@ -38,8 +38,38 @@ export function useAttachmentDrop({ onDrop, disabled = false, label, resetKey = 
         event.stopPropagation();
         return true;
     }
+    function attach(snapshot: AttachmentDrop) {
+        if (disabled || pending.current) { toast('Wait for the current attachment operation to finish.', true); return; }
+        const abort = new AbortController();
+        controller.current = abort;
+        pending.current = true;
+        setBusy(true);
+        void resolveAttachmentDrop(snapshot, abort.signal).then(async drop => {
+            if (abort.signal.aborted || current.current.resetKey !== resetKey) return;
+            if (current.current.disabled) { toast('The attachment destination changed. Add the files again when it is ready.', true); return; }
+            drop.warnings.forEach(message => toast(message, true));
+            if (drop.files.length || drop.links.length) await current.current.onDrop(drop);
+        }).catch(error => {
+            if (!abort.signal.aborted) toast((error as Error).message, true);
+        }).finally(() => {
+            if (controller.current === abort) {
+                pending.current = false;
+                if (!abort.signal.aborted) setBusy(false);
+            }
+        });
+    }
     const dropProps = {
         'data-attachment-drop': label,
+        onPaste(event: ClipboardEvent<HTMLElement>) {
+            // Leave text, HTML and URLs to the focused editor. Only clipboard
+            // files use the attachment pipeline, including screenshot images.
+            const data = event.clipboardData;
+            if (!data.files.length && !Array.from(data.items).some(item => item.kind === 'file')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            // Clipboard data must be copied before the event handler returns.
+            attach(readAttachmentDrop(data));
+        },
         onDragEnter(event: DragEvent<HTMLElement>) {
             if (!claim(event)) return;
             depth.current++;
@@ -57,25 +87,7 @@ export function useAttachmentDrop({ onDrop, disabled = false, label, resetKey = 
             if (!claim(event)) return;
             depth.current = 0;
             setActive(false);
-            if (disabled || pending.current) { toast('Wait for the current attachment operation to finish.', true); return; }
-            const snapshot = readAttachmentDrop(event.dataTransfer);
-            const abort = new AbortController();
-            controller.current = abort;
-            pending.current = true;
-            setBusy(true);
-            void resolveAttachmentDrop(snapshot, abort.signal).then(async drop => {
-                if (abort.signal.aborted || current.current.resetKey !== resetKey) return;
-                if (current.current.disabled) { toast('The attachment destination changed. Drop the files again when it is ready.', true); return; }
-                drop.warnings.forEach(message => toast(message, true));
-                if (drop.files.length || drop.links.length) await current.current.onDrop(drop);
-            }).catch(error => {
-                if (!abort.signal.aborted) toast((error as Error).message, true);
-            }).finally(() => {
-                if (controller.current === abort) {
-                    pending.current = false;
-                    if (!abort.signal.aborted) setBusy(false);
-                }
-            });
+            attach(readAttachmentDrop(event.dataTransfer));
         }
     };
     const indicator = (active || busy) ? <div className="attachment-drop-indicator" role="status">{busy ? 'Preparing attachments…' : label}</div> : null;

@@ -146,6 +146,12 @@ a.nav-btn {
   display: flex;
   flex-direction: column;
 }
+/* Keep a swipe at the transcript boundary from scrolling the outer page into
+   blank space when a mobile browser's layout and visual viewports differ.
+   This contains vertical scroll chaining without disabling pinch zoom. */
+.study-main > .chat-scroll {
+  overscroll-behavior-y: contain;
+}
 .workshop-preview-stage { min-height: 60vh; }
 .workshop-inbox { margin-top: 28px; }
 .workshop-inbox-preview { margin-top: 8px; }
