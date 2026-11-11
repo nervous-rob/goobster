@@ -34,6 +34,7 @@ const {
     foreignKeyAlterSql
 } = require('./dialect');
 const { COLUMN_MIGRATIONS } = require('./migrations');
+const { logMigration } = require('./migrationLog');
 const { repairMissionUniques } = require('./repairMissionUniques');
 const { repairObservatoryJobs } = require('./repairObservatoryJobs');
 
@@ -259,7 +260,7 @@ async function migrateExistingTables(client) {
 
         const drops = stale.map(row => `DROP CONSTRAINT "${row.name}"`).join(', ');
         await client.query(`ALTER TABLE ${spec.table} ${drops}, ADD ${spec.add}`);
-        console.log(`[DB] Migrated: ${spec.table} gained ${spec.reason} (Postgres)`);
+        logMigration(`[DB] Migrated: ${spec.table} gained ${spec.reason} (Postgres)`);
     }
 
     await repairMissionUniques(client, {
@@ -286,7 +287,7 @@ async function applyColumnMigrations(client) {
         );
         if (exists.rowCount === 0) {
             await client.query(translateDdl(`ALTER TABLE ${table} ADD COLUMN ${ddl}`));
-            console.log(`[DB] Migrated: added ${table}.${column}`);
+            logMigration(`[DB] Migrated: added ${table}.${column}`);
         }
     }
 }
@@ -410,10 +411,9 @@ function ensureReady() {
                 await addForeignKeyIfMissing(client, fk);
             }
 
-            // Second pass for the tables schema.sql just created: a column
-            // added to an existing table lives only in COLUMN_MIGRATIONS, so
-            // schema.sql's CREATE TABLE text can lag behind it, and the
-            // first pass skipped tables that did not exist yet.
+            // Defensive second pass for bootstrap/upgrade compatibility. Fresh
+            // tables already contain every COLUMN_MIGRATIONS entry;
+            // tests/dbBootstrap.test.js guards that contract.
             await applyColumnMigrations(client);
         } finally {
             client.release();

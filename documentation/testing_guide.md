@@ -56,6 +56,21 @@ Unit Jest config lives in the root `package.json` (`testMatch`:
 
 Live checks use `jest.live.config.js`. They do not require `config.json`.
 
+## Database bootstrap and migration logs
+
+Each database-backed test file gets a fresh database or isolated PostgreSQL
+schema. New columns belong in both `packages/core/db/schema.sql` (fresh
+installs) and `COLUMN_MIGRATIONS` in `packages/core/db/migrations.js` (existing
+installs). Keep historical migrations so older installations can still upgrade.
+`tests/dbBootstrap.test.js` checks that the raw schema already contains every
+migration column; `tests/dbSchemaUpgrade.test.js` exercises older schemas and
+preserves their rows on both engines.
+
+Successful `[DB] Migrated:` messages are suppressed when `NODE_ENV=test` or
+`JEST_WORKER_ID` is set. Normal application startup still logs successful
+upgrades. Database warnings, errors, and thrown migration failures remain
+visible in tests; the test runner does not globally silence the console.
+
 ## Mock Setup
 
 ### 1. Discord.js Mocks
