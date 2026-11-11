@@ -9,6 +9,14 @@
     "anthropicKey": "",
     "googleAIKey": "",
 
+    "ai": {
+        "delegation": {
+            "provider": "",
+            "model": "",
+            "maxOutputTokens": 4096
+        }
+    },
+
     "activity": {
         "enabled": false,
         "devMode": false,

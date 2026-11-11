@@ -28,6 +28,10 @@ const OBS_VERBS = {
     audit: ['Auditing', 'Audited'],
     'needs-you': ['Checking what needs you', 'Checked what needs you'],
     'create-project': ['Creating project', 'Created project'],
+    create_project: ['Creating project', 'Created project'],
+    list_projects: ['Listing projects', 'Listed projects'],
+    list_unfiled_apps: ['Finding chat apps', 'Found chat apps'],
+    file_app: ['Filing app', 'Filed app'],
     list: ['Listing projects', 'Listed projects'],
     run: ['Running', 'Ran'],
     status: ['Checking job', 'Checked job'],
@@ -179,7 +183,7 @@ function observatoryContext(args) {
  * @returns {{ verb: string, context: string, header: string }}
  */
 function describeToolChip(name, argsPreview, { done = false } = {}) {
-    if (name === 'observatory') {
+    if (name === 'observatory' || name === 'projectAssets') {
         const args = parseArgsPreview(argsPreview);
         const verb = observatoryVerb(args, done);
         const context = observatoryContext(args);

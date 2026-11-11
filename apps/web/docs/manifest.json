@@ -8,6 +8,7 @@
     ["research", "Research expeditions", "documentation/spitball_expeditions.md"],
     ["briefs", "Research briefs", "documentation/research_brief.md"],
     ["projects", "Projects", "documentation/projects.md"],
+    ["project-tools", "Project tool guide", "documentation/skills/project-tools.md"],
     ["people", "Friends and direct messages", "documentation/friends_and_messages.md"],
     ["attention", "Attention and scheduled work", "documentation/attention.md"],
     ["assistant-home", "Home, Needs you and responsibilities", "documentation/assistant_home.md"],

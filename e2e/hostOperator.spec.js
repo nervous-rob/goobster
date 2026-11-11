@@ -128,6 +128,21 @@ test.describe('Host pages change the installation through the manager', () => {
         await expect(page.getByTestId('host-lifecycle')).toBeVisible();
     });
 
+    test('delegated assistant output caps are reviewed and persisted through the manager', async ({ page }) => {
+        await login(page, { userId: OPERATOR, name: OPERATOR_NAME });
+        await openHost(page, 'assistant');
+        const cap = page.getByLabel('Maximum output tokens per request');
+        await expect(cap).toBeEnabled();
+        await cap.fill('768');
+        await page.getByRole('button', { name: 'Review assistant settings' }).click();
+        await expect(page.getByTestId('host-assistants-review-preview')).toContainText('ai.delegation.maxOutputTokens');
+        await page.getByTestId('host-assistants-review-apply').click();
+        await expect(page.getByTestId('host-assistants-review-applied')).toBeVisible();
+        expect(JSON.parse(fs.readFileSync(path.join(dir, 'config.json'), 'utf8')).ai.delegation.maxOutputTokens).toBe(768);
+        await page.reload();
+        await expect(page.getByLabel('Maximum output tokens per request')).toHaveValue('768');
+    });
+
     test('turning Economy off names what else turns off, and a missing dependency blocks the preview', async ({ page }) => {
         await login(page, { userId: OPERATOR, name: OPERATOR_NAME });
         await openFeatures(page);

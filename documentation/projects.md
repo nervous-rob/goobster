@@ -1533,3 +1533,8 @@ named, refresh and Back on the project the transfer opened, the
 collaborator's view, the delete dialog) and `e2e/journeys.spec.js` (Plan:
 draft → approve → review → complete; run → output → Attention notice;
 conversation → knowledge).
+
+
+## Chat tools for project assets
+
+Use `projectAssets` directly for `list_projects`, `create_project`, `list_assets`, `get_asset`, `save_app`, `save_script`, `save_note`, `list_unfiled_apps` and `file_app`. This organization tool works with Projects enabled even when code execution is off; the shared `observatory.scope` still applies. `file_app` copies the exact source identified by a discovered app hash or pin ID. `observatory` remains the execution, workspace, repository, trigger and mission tool. `executePlan` only batches tools; it is not a project save or a durable mission. See [Project tool guide](skills/project-tools.md) for exact arguments, examples and failure handling.

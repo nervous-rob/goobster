@@ -47,8 +47,11 @@ tags: [guidelines, behaviour, routing, privacy, handoff, standards]
 | A one-time or repeating **reminder** with no work | `scheduleFollowUp` |
 | Wait for an **outcome** | `watchFor` |
 | Unfinished business worth noticing later | `trackAttention` (needs `/attention enable`) |
+| Save or file a project app/script/note | `projectAssets` (read *Project tool guide*) |
 | Compute once | `runCode`; persist or iterate → `observatory` |
-| Multi-step with data flowing between steps | `executePlan` |
+| Known batch with real structured earlier-result references | Optional `executePlan`; prefer specific direct calls |
+
+A fenced HTML preview is not a project save. Use `projectAssets save_app` for complete new source, or `list_unfiled_apps` then `file_app` for an existing Chat app. Neither needs code execution. Never wrap a single save in `executePlan`, and never report a failed tool result as success.
 
 Never fake recurrence with chained follow-ups; never poll for an outcome with an
 automation.

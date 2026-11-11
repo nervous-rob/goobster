@@ -546,7 +546,7 @@ module.exports = {
     executePlan: {
         definition: {
             name: 'executePlan',
-            description: 'Execute a dynamic plan where each step can access previous results and modify future steps.',
+            description: 'Batch existing tools with earlier-result references. Prefer calling the specific tool directly, including projectAssets for saving apps and observatory for project work. Use only when a known multi-step batch benefits from interpolation; it neither creates a Project Mission nor grants unavailable tools or bypasses approvals. Text results have no invented structured fields.',
             parameters: {
                 type: 'object',
                 properties: {
@@ -762,7 +762,7 @@ module.exports = {
                             }
                             
                             // Insert expanded steps and continue
-                            await processSteps(expandedSteps, stepNum - 1);
+                            if (await processSteps(expandedSteps, stepNum - 1) === false) return false;
                             continue;
                         } else if (forEach.includes('${step')) {
                             // If forEach references a step but no items were found, log a warning
@@ -797,6 +797,9 @@ module.exports = {
                         // A switched-off tool is a failed step, never "completed".
                         if (result && typeof result === 'object' && result.code === require('../../features/gate').FEATURE_UNAVAILABLE) {
                             throw new Error('that tool is not available on this installation');
+                        }
+                        if ((typeof result === 'string' && /^❌/.test(result.trim())) || (result && typeof result === 'object' && result.ok === false)) {
+                            throw new Error(typeof result === 'string' ? result : result.message || result.code || 'The tool reported failure.');
                         }
 
                         // Store result for future steps
@@ -839,7 +842,7 @@ module.exports = {
                     
                     if (stopOnError) {
                             results.push(`🛑 Execution stopped due to error in step ${stepNum}`);
-                            return;
+                            return false;
                         }
                     }
                 }
@@ -866,7 +869,9 @@ module.exports = {
             
             console.log(`Dynamic plan execution completed: ${successCount}/${totalStepsExecuted} successful`);
             
-            return finalResult;
+            // Preserve the string contract while exposing failures to the chat
+            // loop and enclosing plans, which recognize a leading failure marker.
+            return errors.length > 0 ? `❌ ${finalResult}` : finalResult;
         }
     }
 };

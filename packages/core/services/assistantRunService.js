@@ -315,7 +315,7 @@ class AssistantRunService {
     async _given(actor) {
         let route = {};
         try {
-            route = await require('./aiService').routeFor({ usageContext: { userId: actor, guildId: `dm:${actor}` } });
+            route = await require('./aiService').routeFor({ background: true, usageContext: { userId: actor, guildId: `dm:${actor}` } });
         } catch { /* recorded as unknown */ }
         let prompt = null;
         try { prompt = this.promptVersion().label; } catch { /* recorded as unknown */ }

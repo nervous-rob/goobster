@@ -14,6 +14,7 @@ module.exports = {
         docs: ['documentation/projects.md'],
         payload: {
             files: [
+                'packages/core/utils/tools/projectAssets.js',
                 'packages/core/services/{projectService,projectAssetService,projectMissionService,projectTriggerService}.js',
                 'packages/core/services/{workshopPinMigration,observatoryDashboard,observatoryService,projectHistoryService,projectRepoService,projectCiWatchService,projectTimelineService}.js',
                 'packages/core/utils/sealedGit.js',

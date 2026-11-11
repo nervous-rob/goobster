@@ -265,6 +265,7 @@ const aiTools = {
     generateImage: 'core',
     runCode: 'sandbox',
     observatory: 'observatory',
+    projectAssets: 'projects',
     requestPythonPackages: 'sandbox',
     findImages: 'core',
     fetchWebFile: 'core',
@@ -647,7 +648,7 @@ const systemDependencies = {
 const knownGaps = [
     { issue: '#318', surface: 'interactionTypes.intaction', note: 'One router token serves github and cursor actions; the owner is resolved from `pending.type` at runtime.' },
     { issue: '#319', surface: 'mcp', note: 'MCP enablement is read at boot only.' },
-    { issue: '#319', surface: 'aiTools.observatory', note: 'The definition needs an action-aware reduced form so project organization stays offered when only projects is active.' }
+    { issue: '#319', surface: 'aiTools.observatory', note: 'projectAssets now covers project/asset organization without execution. Remaining non-execution observatory actions (workspace/history/members/missions) still need an action-aware reduced form.' }
 ];
 
 function normalize(value) {

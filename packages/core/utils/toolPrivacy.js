@@ -8,7 +8,7 @@
 // nor drafts or steers it (documentation/delegated_conversation.md).
 const DELEGATION_TOOLS = new Set(['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork', 'spokenBriefing']);
 const INCOGNITO_BLOCKED_TOOLS = new Set([
-    'rememberFact', 'saveArtifact', 'findImages', 'fetchWebFile', 'noteCapabilityGap',
+    'rememberFact', 'saveArtifact', 'findImages', 'fetchWebFile', 'noteCapabilityGap', 'projectAssets',
     ...DELEGATION_TOOLS
 ]);
 

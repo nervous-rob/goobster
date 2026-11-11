@@ -465,7 +465,7 @@ describe('consultDocs tool', () => {
 });
 
 describe('the shipped corpus', () => {
-    test('parses cleanly and ships the three skill guides', () => {
+    test('parses cleanly and ships the skill guides', () => {
         const report = selfDocsService.validateCorpus({
             sources: ['README.md', 'documentation'],
             operatorDir: null,
@@ -477,7 +477,7 @@ describe('the shipped corpus', () => {
 
         const docs = selfDocsService.loadCorpus({ sources: ['documentation/skills'], operatorDir: null, workspaceRoot: REPO_ROOT });
         const skills = docs.filter(d => d.kind === 'skill');
-        expect(skills.map(d => d.title).sort()).toEqual(['Project examples', 'Troubleshooting tactics', 'Working guidelines']);
+        expect(skills.map(d => d.title).sort()).toEqual(['Project examples', 'Project tool guide', 'Troubleshooting tactics', 'Working guidelines']);
         for (const skill of skills) {
             expect(skill.summary).toBeTruthy();
             expect(skill.useWhen).toBeTruthy();

@@ -95,8 +95,7 @@ left off).
   everything - see `documentation/independent_runtime.md`. **Attention**
   (`/activity/attention`, formerly Noticed) is the proactive-attention
   ledger with its why/acknowledge/snooze controls (`documentation/attention.md`),
-  and **Scheduled** (`/activity/scheduled`, formerly Tasks) is reminders and
-  recurring AI tasks. The sidebar badge is the Inbox unread count alone.
+  and **Responsibilities** (`/activity/scheduled`, formerly Scheduled/Tasks) manages reminders, recurring AI work and open commitments, with links to initiative setup and operator model/limit controls. The sidebar badge is the Inbox unread count alone.
 
 Everything is **off by default**. Enabling it makes Goobster's public HTTP
 server (the one that serves `/health` and the Activity) also serve the web

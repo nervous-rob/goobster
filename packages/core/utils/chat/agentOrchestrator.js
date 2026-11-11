@@ -272,6 +272,11 @@ async function executeToolRound({ toolCalls, messagesForModel, transcript, steps
                 // run, a persona's tools), this is a model's call: operations
                 // only a person may take refuse inside it (ADR 0023).
                 fnResult = await modelCallScope.run(`loop:${call.name}`, () => executeTool(call.name, parsedArgs));
+                // Tools may return domain failures rather than throw. Preserve that
+                // distinction in the UI, handoff and retry cache.
+                if ((typeof fnResult === 'string' && /^❌/.test(fnResult.trim())) || (fnResult && typeof fnResult === 'object' && fnResult.ok === false)) {
+                    isError = true;
+                }
 
                 if (isFeatureUnavailable(fnResult)) {
                     unavailable = true;

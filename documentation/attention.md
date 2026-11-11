@@ -586,3 +586,46 @@ Fetching is HTTPS only, with public-address DNS checks and a pinned connection. 
 Limits: 20 follows per account and 10,000 stored identities per follow. A source pauses at its history limit; it never silently forgets GUIDs and re-announces old items. Unfollow removes that follow's history before it can be added again. The newest 100 entries retain bounded text; kept entries retain it too. Older identities, titles, URLs, hashes and timestamps remain for deduplication/provenance. The panel shows the latest 20 changes and counts kept, acted-on, dismissed, snoozed and manually paused results. These are feedback counts, not independent measures of research quality.
 
 Unfollow deletes the follow and its entries. Existing Attention/Inbox notices and explicitly prepared research drafts follow their existing retention rules. Account erasure removes follows and entries and clears unused host caches; shared cache rows are kept while another follow uses that host. The privacy report includes follows, the entry count and the newest 200 evidence rows. The existing backup/restore flow includes these database tables; as with other database content, they are in the unencrypted data portion of the backup.
+
+## Responsibilities and delegated assistant controls
+
+Open **Responsibilities** from Home (`/app/assistant`) to manage delegated
+work. The page shows active responsibilities, drafts and items needing review,
+with search, status filters and shortcuts to drafting, processes and results.
+The existing responsibility grants, activation confirmation, run history,
+feedback, connectors and process controls remain on this page. Use **Initiative
+& boundaries** for the personal Attention policy and quiet hours; Attention
+must be enabled before delegated work can run.
+
+**Activity → Scheduled** (`/app/activity/scheduled`, with `/tasks` as an alias)
+manages timer-based work. Search and filter tasks, edit a recurring task's
+name, prompt and UTC schedule in place, pause or resume it, or cancel a
+reminder. Editing a paused task leaves it paused. Reminders deliver fixed
+text; recurring tasks perform AI work. Morning-briefing and weekly-review
+starters prefill a draft which must be saved before it runs. These tasks run
+independently of Attention enrollment. Commitments and watches remain under
+**Activity → Attention**, linked from both management pages.
+
+Operators open **Host → Delegated work** (`/host/assistant`) to connect a provider, choose delegated
+model routing and set output limits through the existing manager review/apply
+flow. Configuration (restart required):
+
+- `ai.delegation.provider`: `openai`, `anthropic`, `gemini`, `ollama`, or empty
+  to inherit the request's provider.
+- `ai.delegation.model`: model ID or empty. A pinned provider with an empty
+  model uses that provider's default; both empty retain the caller's route.
+  A pinned provider or model uses the host connection, rather than a personal
+  endpoint. Unsupported combinations fail rather than silently falling back.
+- `ai.delegation.maxOutputTokens`: integer 16–131072, default 4096. Enforced
+  for each text/chat request through the AI router inside automation, watch,
+  project-job or expedition work contexts, and for requests marked background.
+  The registry clips after adding reasoning headroom. A smaller requested
+  visible-output budget is preserved before reasoning headroom is added.
+
+This is a per-request generated-token ceiling, including reasoning; it is not
+an entire-run or daily cap. Input, repeated tool rounds and other model text
+work share the existing **Tokens per account** budget on the same page. That
+budget includes usage reservations and may hold background work while its
+window is exhausted. Images, speech, embeddings and external Cursor agents
+are separate. Ordinary interactive chat retains its own model settings.
+Changing assistant policy does not grant initiative or external-write powers.

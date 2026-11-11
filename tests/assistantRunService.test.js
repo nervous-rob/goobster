@@ -103,6 +103,18 @@ const initiativeRow = (id) => db.get('SELECT * FROM assistant_initiatives WHERE 
 const runRow = () => db.get('SELECT * FROM assistant_runs', {});
 
 describe('a run', () => {
+    test('records the host-selected delegated route on the run', async () => {
+        const aiConfig = require('@goobster/core/config/aiConfig');
+        const previous = aiConfig.delegation;
+        aiConfig.delegation = { provider: 'anthropic', model: 'claude-sonnet-5', maxOutputTokens: 512 };
+        try {
+            await queued();
+            script([call('finish', { outcome: 'finding', title: 'Garden reviewed', summary: 'No changes needed today.' })]);
+            await runner.tick({ wait: true });
+            expect(await runRow()).toMatchObject({ provider: 'anthropic', model: 'claude-sonnet-5' });
+        } finally { aiConfig.delegation = previous; }
+    });
+
     test('does the work within the grant and files one finding', async () => {
         const { initiative } = await queued();
         script(

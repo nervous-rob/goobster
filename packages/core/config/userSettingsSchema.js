@@ -156,7 +156,7 @@ const EXPEDITION_DEPTHS = ['focused', 'standard', 'deep'];
 const OPTIONAL_PERSONAL_TOOLS = [
     'performSearch', 'generateImage', 'runCode', 'observatory', 'requestPythonPackages',
     'findImages', 'fetchWebFile',
-    'playTrack', 'speakMessage', 'launchCursorAgent', 'createGithubIssue', 'executePlan',
+    'playTrack', 'speakMessage', 'launchCursorAgent', 'createGithubIssue', 'executePlan', 'projectAssets',
     'searchGithubCode', 'readGithubFile', 'searchNotion', 'readNotionPage'
 ];
 const RESPONSE_LANGUAGES = [

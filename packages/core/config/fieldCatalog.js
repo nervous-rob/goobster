@@ -48,6 +48,7 @@ const SECTIONS = Object.freeze([
     { id: 'discord', title: 'Discord' },
     { id: 'ai.providers', title: 'AI providers' },
     { id: 'ai.models', title: 'AI models' },
+    { id: 'ai.delegation', title: 'Delegated assistants' },
     { id: 'ai.memory', title: 'Long-term memory' },
     { id: 'ollama', title: 'Local Ollama' },
     { id: 'search', title: 'Web search' },
@@ -158,6 +159,12 @@ group({ section: 'ai.providers', help: CONFIG_DOC + '#required-credentials' }, [
     ['ai.gemini.apiKey', 'secret', { env: ['GEMINI_API_KEY'], configPath: 'googleAIKey', help: URL_GEMINI, description: 'Google Gemini API key.' }],
     ['ai.personalEndpointHosts', 'list', { env: ['GOOBSTER_PERSONAL_AI_ENDPOINT_HOSTS'], runtime: 'config/aiConfig#personalEndpointHosts', default: [], validate: { custom: 'hostnameList' }, help: 'documentation/personal_ai.md#operator-setup', description: 'Additional trusted public HTTPS hosts for personal AI completion endpoints; OpenRouter is allowed by default.' }],
     ['ai.modelGuesses', 'boolean', { env: ['GOOBSTER_MODEL_GUESSES'], runtime: 'config/aiConfig#modelGuesses', default: true, help: 'documentation/adr/0011-model-registry.md#best-guesses-for-unreviewed-models', description: 'Let Goobster write a short best-guess description for newly listed chat models that have no reviewed profile; one model call per model, cached in the database.' }]
+]);
+
+group({ section: 'ai.delegation', sources: ['config'], help: 'documentation/attention.md' }, [
+    ['ai.delegation.provider', 'enum', { runtime: 'config/aiConfig#delegation.provider', default: '', validate: { enum: ['openai', 'anthropic', 'gemini', 'ollama'], allowEmpty: true }, description: 'Provider for delegated assistant runs, message classification, recurring tasks, watches, project jobs, expeditions and background text work. Empty inherits the request provider.' }],
+    ['ai.delegation.model', 'string', { runtime: 'config/aiConfig#delegation.model', default: '', validate: { pattern: MODEL_ID.source, allowEmpty: true }, description: 'Model ID for delegated text work. Empty uses the chosen provider’s default when a provider is pinned; otherwise inherits the request model. Use a model supported by that provider.' }],
+    ['ai.delegation.maxOutputTokens', 'integer', { runtime: 'config/aiConfig#delegation.maxOutputTokens', default: 4096, validate: { min: 16, max: 131072 }, description: 'Maximum generated tokens per delegated model request, including reasoning headroom. Smaller request limits still apply. Input tokens and repeated tool rounds also count against the account budget.' }]
 ]);
 
 // --- AI models (every default is pinned to config/aiConfig.js by the tests) --

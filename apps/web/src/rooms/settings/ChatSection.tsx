@@ -29,6 +29,7 @@ const OPTIONAL_TOOLS: Array<{ name: string; label: string }> = [
     { name: 'generateImage', label: 'Image generation' },
     { name: 'runCode', label: 'Code runner' },
     { name: 'observatory', label: 'Observatory' },
+    { name: 'projectAssets', label: 'Project apps, scripts & notes' },
     { name: 'requestPythonPackages', label: 'Python packages' },
     { name: 'findImages', label: 'Find images on the web' },
     { name: 'fetchWebFile', label: 'Fetch files from the web' },

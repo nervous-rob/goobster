@@ -4,6 +4,7 @@ import { api, ApiError } from '../../lib/api';
 import type { AdminAssistantView, AssistantCapField, AssistantCodeCount } from '../../lib/types';
 import { useConfirm } from '../../hooks/useConfirm';
 import { useToast } from '../../hooks/useToast';
+import { AssistantModelPolicy } from './ConfigPages';
 
 const ASSISTANT_KEY = ['admin-assistant'];
 const AUDIT_KEY = ['admin-audit'];
@@ -127,10 +128,10 @@ export function AssistantPage() {
         }
     }
 
-    if (query.isPending) return <div className="hint">Loading…</div>;
-    if (query.isError) return <div className="settings-danger">{query.error.message}</div>;
+    if (query.isPending) return <><div className="hint">Loading…</div><AssistantModelPolicy /></>;
+    if (query.isError) return <><div className="settings-danger">{query.error.message}</div><AssistantModelPolicy /></>;
     if (!view || !view.available) {
-        return <div className="empty" data-testid="assistant-unavailable">The delegated assistant is not turned on for this installation. Turn it on under Features.</div>;
+        return <><div className="empty" data-testid="assistant-unavailable">The delegated assistant is not turned on for this installation. Turn it on under Features.</div><AssistantModelPolicy /></>;
     }
 
     const open = view.pilot.decision.scope === 'everyone';
@@ -138,6 +139,11 @@ export function AssistantPage() {
         <>
             <section className="settings-section" aria-labelledby="host-assistant-title">
                 <h2 id="host-assistant-title">Delegated work</h2>
+                <nav aria-label="Delegated work settings" className="modal-actions" style={{ justifyContent: 'flex-start' }}>
+                    <a className="btn small" href="#host-assistant-caps-title">Daily budgets</a>
+                    <a className="btn small" href="#assistant-model-policy">Model and output limit</a>
+                    <a className="btn small" href="#host-assistant-pilot-title">Pilot access</a>
+                </nav>
                 <p className="hint">
                     Work people have handed to Goobster under a responsibility. Stopping it here stops it for everyone: nothing new starts,
                     work already running halts at its next step and waits, and nothing is cancelled. Resuming puts the halted work back in the queue.
@@ -195,6 +201,8 @@ export function AssistantPage() {
                 </p>
                 <CapsForm view={view} onSaved={applied} />
             </section>
+
+            <AssistantModelPolicy />
 
             <section className="settings-section" aria-labelledby="host-assistant-pilot-title">
                 <h2 id="host-assistant-pilot-title">Pilot</h2>

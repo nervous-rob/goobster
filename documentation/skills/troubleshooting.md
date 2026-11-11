@@ -41,6 +41,7 @@ through them in that order and say which one it was.
 | You notice | Why | Who fixes it and how |
 |---|---|---|
 | No `runCode` tool | Sandbox off (`sandbox.enabled` / `GOOBSTER_SANDBOX_ENABLED`) or scope is `web` and this is a Discord channel (`sandbox.scope`) | Operator; see *Code Sandbox* |
+| No `projectAssets` tool | Projects off/not installed, personal tool preference, or `observatory.scope` excludes this chat; organization does not need Sandbox | Operator / personal Settings; see *Project tool guide* |
 | No `observatory` tool | `observatory.enabled` off, or the sandbox is off (Observatory needs it), or scope is `web` | Operator; see *Projects* |
 | No `requestPythonPackages` tool | No `sandbox.approverUserIds` configured | Operator |
 | No `speakMessage` / `playTrack` | This is the web portal or an unattended automation turn - there is no Discord voice channel | Ask in a server voice channel |

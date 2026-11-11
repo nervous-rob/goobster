@@ -1,10 +1,10 @@
 # AI Provider Tool Integration
 
-This document explains how Goobster integrates tools across its AI providers: OpenAI, Google Gemini, and Ollama.
+This document explains how Goobster integrates tools across its AI providers: OpenAI, Anthropic, Google Gemini, and Ollama.
 
 ## Overview
 
-OpenAI and Gemini both use **native function calling**. Ollama (local models) uses a **prompt-based tool protocol** since many local models lack reliable native tool support.
+OpenAI, Anthropic and Gemini use **native function calling**. Ollama (local models) uses a **prompt-based tool protocol** since many local models lack reliable native tool support.
 
 All providers return the same normalized shape from `chat(messages, opts)`:
 
@@ -66,26 +66,32 @@ All tool prompt text lives in `utils/toolPromptBuilder.js`:
 
 Never duplicate tool documentation inside a provider service.
 
-## Available Tools
+## Available tools and routing
 
-All tools from `utils/toolsRegistry.js` are available on every provider:
+All providers use the shared registry. Actual availability is filtered by
+installed/enabled features, scope and personal settings; model contracts can
+also refuse unsupported tools or inputs. Native providers receive JSON schemas;
+prompt-based providers receive the same schemas, including enums, required
+fields and nested structures. Do not maintain an abbreviated tool inventory
+here: see the generated [feature reference](features.md) and runtime definitions.
 
-- **performSearch**: Web search using Perplexity API
-- **generateImage**: Image generation with various styles
-- **playTrack**: Music playback and playlist management
-- **setNickname**: Bot and user nickname management
-- **speakMessage**: Text-to-speech conversion
-- **echoMessage**: Returns the provided text
-- **executePlan**: Runs multiple tools sequentially and aggregates results
+Prefer specific tools directly. `projectAssets` saves/reads/files project apps,
+scripts and notes without execution. `observatory` handles project execution,
+workspace files, repos, triggers and missions. `executePlan` is optional batching,
+not a default wrapper, a save API, or a Project Mission. Read the
+[Project tool guide](skills/project-tools.md) for exact examples and gates.
+
+### Anthropic
+
+Anthropic uses native tool-use blocks, converted to the same normalized chat
+contract by `anthropicService`. Shared guidance applies on this provider too.
 
 ## Provider Capabilities
 
-| Capability | OpenAI (gpt-5.6-terra / gpt-5.6-sol) | Gemini (gemini-3.5-flash) | Ollama (local) |
-|---|---|---|---|
-| Function calling | Native | Native | Prompt-based |
-| Streaming (`onDelta`) | Yes | Yes | Yes (text-only requests) |
-| Reasoning effort | Yes | No | No |
-| Model switching | Yes | Yes | Yes |
+Provider/model capabilities are defined in `packages/core/models/catalog.js`
+and resolved by `models/registry.js`, including reasoning, tool use, search,
+streaming, sampling and token limits. Consult those contracts and the model
+catalog UI rather than assuming one capability for every model on a provider.
 
 ## Usage Example
 

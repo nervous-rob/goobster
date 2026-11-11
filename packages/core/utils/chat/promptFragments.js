@@ -22,6 +22,7 @@ const MINI_APP_BRIDGE =
     + 'Cross-project reads still declare <meta name="goobster-observatory-read" content="other-project-slug">. '
     + 'Then const port = await connectToGoobster(); request(port, { type: \'observatory.read\', project, path, responseType: \'json\'|\'text\'|\'dataurl\' }). '
     + 'The user is prompted the first time for a cross-project read. '
+    + 'To persist an app in a project, use projectAssets action="save_app" with project, name, language and code=complete source; use list_unfiled_apps then file_app to file an existing Chat app unchanged. A fenced HTML preview alone is not a project save. '
     + 'An app saved with save_app and opened in its project\'s Apps tab also gets window.goobster (no project argument): '
     + 'await goobster.list(dir), read(path, responseType), write(path, content, { encoding: \'utf8\'|\'json\'|\'base64\'|\'dataurl\' }), '
     + 'remove(path), run(path, { args, stdin, background }) for .py/.js/.sh workspace files (watch(jobId, onUpdate) streams a background run\'s output), '

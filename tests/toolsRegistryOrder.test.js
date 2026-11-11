@@ -20,8 +20,9 @@ describe('toolsRegistry catalog', () => {
         expect(TOOL_ORDER).toContain('noteCapabilityGap');
         expect(TOOL_ORDER.slice(TOOL_ORDER.indexOf('watchFor') + 1, TOOL_ORDER.indexOf('watchFor') + 5))
             .toEqual(['proposeResponsibility', 'describeDelegatedWork', 'controlDelegatedWork', 'spokenBriefing']);
-        expect(TOOL_ORDER).toHaveLength(58);
-        expect(new Set(TOOL_ORDER).size).toBe(58);
+        expect(TOOL_ORDER).toContain('projectAssets');
+        expect(TOOL_ORDER).toHaveLength(59);
+        expect(new Set(TOOL_ORDER).size).toBe(59);
     });
 
     test('getDefinitions preserves that order after gating', async () => {
