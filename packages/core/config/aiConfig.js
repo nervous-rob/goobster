@@ -25,6 +25,13 @@ module.exports = {
     /** Explicit compatibility profiles for additional operator-managed models. */
     customModels: fileConfig.ai?.customModels || [],
 
+    /** Operator policy for delegated text work; ordinary interactive chat is unchanged. */
+    delegation: {
+        provider: fileConfig.ai?.delegation?.provider || '',
+        model: fileConfig.ai?.delegation?.model || '',
+        maxOutputTokens: Number(fileConfig.ai?.delegation?.maxOutputTokens ?? 4096)
+    },
+
     /** Let Goobster write a short best-guess description for unreviewed chat models (one model call each, cached in the database). */
     modelGuesses: (process.env.GOOBSTER_MODEL_GUESSES ?? String(fileConfig.ai?.modelGuesses ?? 'true')) !== 'false',
 

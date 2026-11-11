@@ -178,7 +178,7 @@ export function DraftForm({ projects, onCreated }: { projects: Project[]; onCrea
             <p className="hint">A draft grants nothing. You review exactly what it allows and activate it yourself.</p>
             <label className="field">
                 <span>What should be looked after?</span>
-                <input type="text" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)}
+                <input id="responsibility-title" type="text" value={title} maxLength={200} onChange={(e) => setTitle(e.target.value)}
                     placeholder="Keep the notebook project moving" data-testid="responsibility-title" />
             </label>
             <label className="field">

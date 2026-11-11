@@ -101,6 +101,13 @@ function mountVoiceTasks(app, ctx, h) {
         })
     ));
 
+    app.patch('/api/app/tasks/automations/:automationId/details', requireAuth, chatRoute(async (req) =>
+        ctx.tasks.updateAutomation({
+            userId: req.webUser.userId, automationId: req.params.automationId,
+            name: req.body?.name, prompt: req.body?.prompt, cron: req.body?.cron
+        })
+    ));
+
     app.delete('/api/app/tasks/followups/:followupId', requireAuth, chatRoute(async (req) =>
         ctx.tasks.cancelFollowup({
             userId: req.webUser.userId,

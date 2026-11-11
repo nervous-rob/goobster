@@ -427,6 +427,18 @@ describe('runAgentLoop', () => {
         expect(secondRound.find(m => m.role === 'tool').content).toContain('404 Not Found');
     });
 
+    test.each(['❌ No such project.', { ok: false, code: 'NOT_FOUND', message: 'No such project.' }])('returned domain failures are marked failed and are not cached: %p', failure => {
+        aiService.chat
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c1', 'performSearch', { query: 'project' })] })
+            .mockResolvedValueOnce({ content: '', toolCalls: [toolCall('c2', 'performSearch', { query: 'project' })] })
+            .mockResolvedValueOnce({ content: 'The save failed.', toolCalls: [] });
+        const executeTool = jest.fn().mockResolvedValue(failure);
+        return runAgentLoop({ messages: baseMessages(), functionDefs: FUNCTION_DEFS, executeTool }).then(result => {
+            expect(executeTool).toHaveBeenCalledTimes(2);
+            expect(result.toolTranscript.every(entry => entry.isError)).toBe(true);
+        });
+    });
+
     test('identical repeated tool calls are served from cache, not re-executed', async () => {
         const sameCall = () => toolCall('cX', 'searchGithubCode', { query: 'chatHandler' });
         aiService.chat

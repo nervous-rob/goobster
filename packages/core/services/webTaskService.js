@@ -272,6 +272,36 @@ class WebTaskService {
         return { id: row.id, enabled: Boolean(enabled) };
     }
 
+    /** Edit in place; preserve delivery, ownership and pause state. */
+    async updateAutomation({ userId, automationId, name, prompt, cron }) {
+        const row = await db.get('SELECT * FROM automations WHERE id = @id AND userId = @userId',
+            { id: Number(automationId), userId });
+        if (!row) throw new WebTaskError(404, 'NOT_FOUND', 'No such task.');
+        const cleanName = String(name ?? '').trim();
+        const cleanPrompt = String(prompt ?? '').trim();
+        if (!cleanName || cleanName.length > MAX_NAME_LENGTH) throw new WebTaskError(400, 'BAD_NAME', 'Name must be 1–60 characters.');
+        if (!cleanPrompt || cleanPrompt.length > MAX_PROMPT_LENGTH) throw new WebTaskError(400, 'BAD_PROMPT', 'Prompt must be 1–2000 characters.');
+        const schedule = this._validateCron(cron);
+        const duplicate = await db.get('SELECT id FROM automations WHERE userId = @userId AND guildId = @scope AND name = @name AND id <> @id',
+            { userId, scope: row.guildId, name: cleanName, id: row.id });
+        if (duplicate) throw new WebTaskError(409, 'DUPLICATE_NAME', 'You already have a task with that name.');
+        let metadata = {};
+        try { metadata = JSON.parse(row.metadata || '{}'); } catch { /* repair legacy metadata */ }
+        // Read scheduling state in the write: a scheduler claim, pause or archive
+        // may have landed since the initial read. Never rewind its next fire.
+        const result = await db.run(`UPDATE automations SET name = @name, promptText = @prompt, schedule = @schedule,
+            nextRun = CASE WHEN isEnabled = 0 OR archivedAt IS NOT NULL THEN NULL
+                WHEN schedule = @schedule THEN nextRun ELSE @nextRun END,
+            metadata = @metadata, updatedAt = CURRENT_TIMESTAMP
+            WHERE id = @id AND userId = @userId`, {
+            id: row.id, userId, name: cleanName, prompt: cleanPrompt, schedule: schedule.cron,
+            nextRun: schedule.nextRun,
+            metadata: JSON.stringify({ ...metadata, originalSchedule: schedule.cron })
+        });
+        if (result.changes === 0) throw new WebTaskError(404, 'NOT_FOUND', 'No such task.');
+        return { id: row.id, updated: true };
+    }
+
     /**
      * Delete one of the user's automations (DM-scope or guild - the same
      * authority /automation delete already gives the owner).

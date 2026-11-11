@@ -11,12 +11,8 @@
 function formatToolDocs(functions) {
     return functions.map(fn => {
         const { name, description, parameters } = fn;
-        const params = parameters?.properties ?
-            Object.entries(parameters.properties)
-                .map(([key, prop]) => `  - ${key}: ${prop.type || 'any'}${prop.description ? ` (${prop.description})` : ''}`)
-                .join('\n') : 'No parameters';
-
-        return `**${name}**: ${description || 'No description available'}\nParameters:\n${params}`;
+        // Include enums, required fields and nested shapes for prompt-based providers too.
+        return `**${name}**: ${description || 'No description available'}\nParameters (JSON Schema):\n${JSON.stringify(parameters || { type: 'object', properties: {} })}`;
     }).join('\n\n');
 }
 
@@ -65,46 +61,19 @@ const SCHEDULING_GUIDANCE = `**SCHEDULING REQUESTS:**
 - Unfinished business worth remembering but not scheduling ("I still need to finish the demo code", "waiting to hear back about CI") → use trackAttention. It records that something matters so you can notice later when it goes stale or becomes urgent; it schedules nothing.
 - NEVER simulate recurrence by chaining one-time follow-ups; recurring workflows must be automations or repeating reminders.`;
 
-// Guidance shared by every provider about multi-step executePlan usage.
-const EXECUTE_PLAN_GUIDANCE = `**DYNAMIC EXECUTION PLANS:**
-When using executePlan for operations that require data from one step to inform later steps:
+// Project operations use focused tools; executePlan is an optional batching adapter.
+const PROJECT_GUIDANCE = `**PROJECTS AND SAVING APPS (when these tools are available):**
+- Prefer the specific tool directly. projectAssets organizes projects and versioned apps/scripts/notes without code execution; observatory handles execution, workspace files, history, repos, triggers and missions.
+- Save a NEW app: projectAssets {action:"save_app", project:"<existing slug>", name:"<title>", language:"html", code:"<complete HTML document>"}. code is source, not a path, URL, prose or fenced Markdown. SVG apps use language:"svg". save_script accepts python/javascript; save_note accepts markdown.
+- File an EXISTING Chat app unchanged: projectAssets action="list_unfiled_apps", then action="file_app" with the selected contentHash OR appletId and the target project. Copy the returned identifier exactly; do not regenerate or abbreviate the app. If ambiguous, ask which app.
+- Find the target with list_projects; create_project only when a new project is requested. Copy owner when a slug is ambiguous. For updates, list_assets then get_asset (slug, optional version/offset/limit), preserve existing behavior and save to the SAME slug for a new version.
+- An HTML chat preview, saveArtifact (knowledge attachment), a workspace file, and a project app asset are different. Only a successful projectAssets save_app/file_app or observatory save_app result confirms it was saved in the project's Apps view. Never claim a save from a code block alone.
+- For project state use observatory inspect; workspace discovery uses files/search/read; stored scripts use run_script; runs use run/status; project automation uses set_trigger; durable outcomes use mission. A Project Mission is not executePlan.
+- If a tool is absent or reports an error, explain the restriction, consultDocs and preserve the user's work. executePlan cannot unlock a disabled tool. Never report success until the tool confirms it. Read the Project tool guide via consultDocs for examples and recovery.`;
 
-1. **CRITICAL**: The plan array MUST contain ALL steps in order. Step 2 cannot reference step 1 if step 1 doesn't exist!
-
-2. **Gather first, then act**: If a later step depends on data you don't have yet, fetch it in an earlier step:
-   - Step 1: Fetch data (e.g. performSearch)
-   - Step 2: Use the result via \${step1} references (or forEach if step 1 returned an array)
-
-3. **Reference previous results**: Use \${stepN.field} to access data from step N:
-   - \${step1} - The entire result from step 1
-   - \${step1.items} - The 'items' array field from step 1's result (when a step returns structured data)
-   - \${item.id} - When inside a forEach loop, refers to current item's id property
-
-4. **Complete Example - Find the top song from a movie soundtrack and play it**:
-   {
-     "name": "executePlan",
-     "arguments": {
-       "plan": [
-         {
-           "name": "performSearch",
-           "args": {
-             "query": "most famous song from the Top Gun soundtrack (artist - title)"
-           }
-         },
-         {
-           "name": "playTrack",
-           "args": {
-             "track": "\${step1}"
-           }
-         }
-       ]
-     }
-   }
-
-**Common Patterns:**
-- "Look something up and act on it" → Fetch first (step 1), then use \${step1...} in step 2
-- "Do the same thing to several items" → Produce an array in one step, then forEach over it in the next
-- Multiple independent actions → List them as sequential steps in a single executePlan call`;
+const EXECUTE_PLAN_GUIDANCE = `**OPTIONAL TOOL BATCHING:**
+Call tools directly by default, read their results, then choose the next call. Use executePlan only for a known batch that benefits from earlier-result interpolation; do not wrap a single save or inspection.
+A plan contains all steps in order with {name, args}. References use \${step1} for the whole first result, or \${step1.field} only when that result actually has that structured field. Most observatory results are human-readable text, not objects. forEach requires an actual returned array; do not invent fields from prose. Later results cannot be referenced by earlier steps. Set stopOnError=true for dependent operations. It is not a durable project plan or a substitute for specific tools.`;
 
 /**
  * System guidance for providers with NATIVE function calling. The tool
@@ -121,7 +90,7 @@ ${selfDocsGuidance()}${CAPABILITY_GAP_GUIDANCE}
 
 ${SCHEDULING_GUIDANCE}
 
-${EXECUTE_PLAN_GUIDANCE}`;
+${PROJECT_GUIDANCE}\n\n${EXECUTE_PLAN_GUIDANCE}`;
 }
 
 /**
@@ -156,7 +125,7 @@ ${NOTES_GUIDANCE}
 
 ${selfDocsGuidance()}${SCHEDULING_GUIDANCE}
 
-${EXECUTE_PLAN_GUIDANCE}
+${PROJECT_GUIDANCE}\n\n${EXECUTE_PLAN_GUIDANCE}
 
 Available tools:
 ${formatToolDocs(functions)}

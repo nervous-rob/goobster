@@ -237,6 +237,7 @@ class AIServiceRouter {
     }
 
     async generateText(prompt, opts = {}) {
+        opts = require('../utils/delegationPolicy').applyDelegationPolicy(opts);
         const personal = await this._personalConnection(opts);
         if (personal) return this._admit({ ...opts, personal }, async signal =>
             (await require('./personalAiService').chat(personal, prompt, { ...opts, signal })).content, prompt);
@@ -248,6 +249,7 @@ class AIServiceRouter {
      * @returns {Promise<{content: string, toolCalls: Array<{id: string, name: string, arguments: string}>}>}
      */
     async chat(messages, opts = {}) {
+        opts = require('../utils/delegationPolicy').applyDelegationPolicy(opts);
         const personal = await this._personalConnection(opts);
         if (personal) return this._admit({ ...opts, personal }, signal =>
             require('./personalAiService').chat(personal, messages, { ...opts, signal }), messages);
@@ -284,10 +286,12 @@ class AIServiceRouter {
      * person's own connection when they chose one, else the installation's
      * provider and its default model. Names only, as `usage_log` records
      * them. Never throws; an unknown part is null.
-     * @param {{ usageContext?: { userId?: string, guildId?: string }, provider?: string, model?: string }} [opts]
+     * @param {{ usageContext?: { userId?: string, guildId?: string }, provider?: string, model?: string, background?: boolean }} [opts]
      * @returns {Promise<{ provider: string|null, model: string|null, personal: boolean }>}
      */
     async routeFor(opts = {}) {
+        try { opts = require('../utils/delegationPolicy').applyDelegationPolicy(opts); }
+        catch { return { provider: null, model: null, personal: false }; }
         try {
             const personal = await this._personalConnection(opts);
             if (personal) return { provider: 'openrouter', model: personal.model || null, personal: true };

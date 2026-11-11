@@ -30,7 +30,7 @@ See [configuration.md](configuration.md) for every config key and environment va
 | Exchange | `exchange` | `economy` | 6 | 12 | 1 | 1 |
 | Gambling | `gambling` | `economy` | 3 | 3 | 0 | 0 |
 | GBA | `gba` | - | 1 | 0 | 0 | 0 |
-| Projects | `projects` | - | 0 | 0 | 1 | 4 |
+| Projects | `projects` | - | 0 | 1 | 1 | 4 |
 | Observatory | `observatory` | `projects`, `sandbox` | 0 | 1 | 0 | 0 |
 | Sandbox | `sandbox` | - | 0 | 2 | 0 | 0 |
 | MCP server | `mcp` | - | 0 | 0 | 0 | 0 |
@@ -215,7 +215,7 @@ Feature id: `projects`. Workshop projects: rooms, members, files with git-backed
 - **Kind:** feature
 - **Fresh install default:** on
 - **Depends on:** nothing
-- **Owns:** 3 MCP tools (`get_project`, `list_project_files`, `list_projects`); 1 portal room (`projects`); 4 guided tours; 2 portal route groups
+- **Owns:** 1 chat tool (`projectAssets`); 3 MCP tools (`get_project`, `list_project_files`, `list_projects`); 1 portal room (`projects`); 4 guided tours; 2 portal route groups
 - **Switch today:** `projects.enabled` or `GOOBSTER_PROJECTS_ENABLED`, default on.
 - **Host override:** `GOOBSTER_FEATURE_PROJECTS=0` turns it off for one process; `data/features.json` records the installation's choice (see [feature_state.md](feature_state.md)).
 - **Config keys:** `projects.enabled`, `observatory.historyEnabled`, `observatory.historyMaxFileMb`, `observatory.historyMaxMb`, `observatory.gitCommand`, `observatory.reposEnabled`, `observatory.maxReposPerProject`, `observatory.repoCloneDepth`, `observatory.repoMaxMb`

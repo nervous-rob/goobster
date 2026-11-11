@@ -178,7 +178,7 @@ module.exports = {
         definition: {
             name: 'observatory',
             description:
-                'The Observatory: persistent, long-running simulation projects layered on the code sandbox. '
+                'The Observatory: project execution, missions, workspace files, history and repositories. For saving or filing apps/scripts/notes, prefer projectAssets directly; it works even when execution is off. '
                 + `A project gives every run a durable workspace directory (exposed as $${PROJECT_DIR_ENV}) `
                 + 'whose files SURVIVE indefinitely - unlike runCode, whose workspace only lasts for the conversation. '
                 + 'Actions: "inspect" (ONE call for what\'s going on: mission, assets, triggers, recent jobs '
@@ -301,7 +301,7 @@ module.exports = {
                     inviteeId: { type: 'string', description: 'invite_user / remove_member: Discord user id of the collaborator' },
                     name: { type: 'string', description: 'New project name (create-project), asset name (save_*), trigger name (set_trigger / list_deliveries / delete_trigger), or clone name (repo_*: the repos/<name> folder; repo_clone derives it from the repository when omitted)' },
                     slug: { type: 'string', description: 'Asset slug (save_* / get_asset / rollback_asset / run_script). Derived from name when omitted.' },
-                    language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'Language for run or save_*' },
+                    language: { type: 'string', enum: ['python', 'javascript', 'bash', 'html', 'svg', 'markdown'], description: 'run: python/javascript/bash; save_app: html/svg; save_script: python/javascript; save_note: markdown' },
                     code: { type: 'string', description: 'Source code for run or save_*' },
                     template: { type: 'string', enum: ['data-table', 'run-console', 'chart'], description: 'save_app: build the app from a ready template instead of code (name = its title, path = the file it works on): data-table edits a JSON/CSV file, run-console runs a .py/.js/.sh with live output (template_args = default arguments), chart plots a JSON/CSV file' },
                     template_args: { type: 'string', description: 'save_app template=run-console: the default arguments, e.g. "--days 30"' },

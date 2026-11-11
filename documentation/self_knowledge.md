@@ -138,7 +138,7 @@ tags: [troubleshooting, errors]
 `summary` is required for skills (the corpus check fails without it). Write for
 the model: a method, then tables of *symptom → cause → who fixes it*, then what
 not to do. Cite other documents by title so the model can `read` them. Shipped
-guides: *Troubleshooting tactics*, *Project examples*, *Working guidelines*.
+guides: *Troubleshooting tactics*, *Project examples*, *Project tool guide*, *Working guidelines*.
 
 ## Operator notes
 

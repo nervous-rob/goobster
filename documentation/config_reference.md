@@ -48,6 +48,14 @@ Precedence, unless a row says otherwise: environment variable, then `config.json
 | `ai.gemini.chatModel` | string | env `GEMINI_CHAT_MODEL`, `GEMINI_MODEL`<br>config.json `ai.gemini.chatModel` | `"gemini-3.5-flash"` | restart | core | Gemini model for ordinary chat turns. |
 | `ai.gemini.thoughtfulModel` | string | env `GEMINI_THOUGHTFUL_MODEL`<br>config.json `ai.gemini.thoughtfulModel` | `"gemini-3.1-pro-preview"` | restart | core | Gemini model for Thoughtful Mode. |
 
+## Delegated assistants
+
+| Setting | Type | Where | Default | Applies | Needed by | What it does |
+| --- | --- | --- | --- | --- | --- | --- |
+| `ai.delegation.provider` | enum | config.json `ai.delegation.provider` | `""` | restart | core | Provider for delegated assistant runs, message classification, recurring tasks, watches, project jobs, expeditions and background text work. Empty inherits the request provider. |
+| `ai.delegation.model` | string | config.json `ai.delegation.model` | `""` | restart | core | Model ID for delegated text work. Empty uses the chosen provider’s default when a provider is pinned; otherwise inherits the request model. Use a model supported by that provider. |
+| `ai.delegation.maxOutputTokens` | integer | config.json `ai.delegation.maxOutputTokens` | `4096` | restart | core | Maximum generated tokens per delegated model request, including reasoning headroom. Smaller request limits still apply. Input tokens and repeated tool rounds also count against the account budget. |
+
 ## Long-term memory
 
 | Setting | Type | Where | Default | Applies | Needed by | What it does |

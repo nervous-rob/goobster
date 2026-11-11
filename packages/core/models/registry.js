@@ -125,7 +125,7 @@ function createRegistry(customModels = []) {
         }
         return {
             model, effort, effectiveEffort, sampling,
-            maxOutputTokens: model.maxOutputTokens ? Math.min(model.maxOutputTokens, budget) : budget
+            maxOutputTokens: Math.min(model.maxOutputTokens || Infinity, budget, opts.max_output_tokens_limit ?? Infinity)
         };
     }
 

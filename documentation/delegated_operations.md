@@ -108,6 +108,26 @@ These defaults are the numbers delegated runs shipped with. The owner's
 recorded pilot numbers replace them by being saved here; nothing else needs
 to change.
 
+## Model selection and per-request output
+
+The same **Host → Delegated work** page includes **Model and output limit**.
+Choose a host provider and model, or leave them empty to inherit routing.
+Pinning either uses the host connection. The model catalog is available after
+choosing a provider; an explicit model ID can also be entered.
+
+`ai.delegation.maxOutputTokens` defaults to 4096 (allowed: 16–131072).
+It caps generated tokens, including reasoning headroom, per model request.
+Smaller request limits still apply. A run can make several requests, so the
+responsibility's daily budget and account token limits still apply to total
+input and output usage. These controls cover delegated runs, scheduled tasks,
+watches, project jobs, expeditions and background text requests. Images,
+speech, embeddings and external Cursor agents have separate controls.
+
+Model and output settings use the manager's review/apply flow and require a
+restart; the daily caps above continue to use their existing immediate-save
+flow. See [config_reference.md](config_reference.md#delegated-assistants) for
+the three `ai.delegation` fields.
+
 ## The pilot gate
 
 The `assistant` feature is on or off for the whole installation. The

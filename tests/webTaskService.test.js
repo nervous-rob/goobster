@@ -56,6 +56,51 @@ beforeEach(async () => {
 
 const FUTURE = new Date(Date.now() + 60 * 60 * 1000).toISOString();
 
+test('editing a responsibility preserves pause state and ownership, validates schedules and versions no extra row', async () => {
+    const task = await webTaskService.createTask({ userId: USER, name: 'Brief', prompt: 'Review priorities', cron: '0 9 * * *' });
+    await webTaskService.setAutomationEnabled({ userId: USER, automationId: task.id, enabled: false });
+    await expect(webTaskService.updateAutomation({ userId: OTHER, automationId: task.id, name: 'Stolen', prompt: 'No', cron: '0 10 * * *' })).rejects.toMatchObject({ code: 'NOT_FOUND' });
+    await expect(webTaskService.updateAutomation({ userId: USER, automationId: task.id, name: 'Brief', prompt: 'Review', cron: '* * * * *' })).rejects.toMatchObject({ code: 'SCHEDULE_TOO_FREQUENT' });
+    await webTaskService.updateAutomation({ userId: USER, automationId: task.id, name: 'Evening review', prompt: 'Review blockers', cron: '0 17 * * 1-5' });
+    const rows = (await webTaskService.listTasks({ userId: USER })).automations;
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ id: task.id, name: 'Evening review', prompt: 'Review blockers', enabled: false, schedule: '0 17 * * 1-5', nextRun: null });
+});
+
+describe('editing while the scheduler or process lifecycle changes a task', () => {
+    afterEach(() => jest.restoreAllMocks());
+
+    function afterTaskRead(change) {
+        const get = db.get.bind(db);
+        jest.spyOn(db, 'get').mockImplementation(async (sql, params) => {
+            const result = await get(sql, params);
+            if (sql.startsWith('SELECT * FROM automations WHERE id')) await change(result);
+            return result;
+        });
+    }
+
+    test('a prompt edit does not rewind a scheduler claim', async () => {
+        const task = await webTaskService.createTask({ userId: USER, name: 'Brief', prompt: 'Review priorities', cron: '0 9 * * *' });
+        afterTaskRead(async row => {
+            await db.run("UPDATE automations SET nextRun = '2099-01-02 09:00:00', lastRun = '2099-01-01 09:00:00' WHERE id = @id", { id: row.id });
+        });
+        await webTaskService.updateAutomation({ userId: USER, automationId: task.id, name: 'Brief', prompt: 'Review blockers', cron: '0 9 * * *' });
+        const row = await db.get('SELECT nextRun, lastRun, promptText FROM automations WHERE id = @id', { id: task.id });
+        expect(row).toMatchObject({ nextRun: '2099-01-02 09:00:00', lastRun: '2099-01-01 09:00:00', promptText: 'Review blockers' });
+    });
+
+    test.each([false, true])('a schedule edit preserves a concurrent pause (archived: %s)', async archived => {
+        const task = await webTaskService.createTask({ userId: USER, name: 'Brief', prompt: 'Review priorities', cron: '0 9 * * *' });
+        afterTaskRead(async row => {
+            await db.run('UPDATE automations SET isEnabled = 0, nextRun = NULL, archivedAt = @archivedAt WHERE id = @id',
+                { id: row.id, archivedAt: archived ? '2026-11-11 10:00:00' : null });
+        });
+        await webTaskService.updateAutomation({ userId: USER, automationId: task.id, name: 'Brief', prompt: 'Review blockers', cron: '0 17 * * *' });
+        const row = await db.get('SELECT isEnabled, nextRun, archivedAt, schedule FROM automations WHERE id = @id', { id: task.id });
+        expect(row).toMatchObject({ isEnabled: 0, nextRun: null, archivedAt: archived ? '2026-11-11 10:00:00' : null, schedule: '0 17 * * *' });
+    });
+});
+
 describe('createTask', () => {
     test('creates a recurring DM-scope automation delivered to the inbox', async () => {
         const created = await webTaskService.createTask({

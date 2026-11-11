@@ -406,6 +406,7 @@ export const api = {
 
     tasks: () => request('/api/app/tasks'),
     createTask: (task: Record<string, unknown>) => request('/api/app/tasks', { method: 'POST', body: task }),
+    updateAutomation: (id: number, task: Record<string, unknown>) => request(`/api/app/tasks/automations/${id}/details`, { method: 'PATCH', body: task }),
     toggleAutomation: (id: number, enabled: boolean) =>
         request(`/api/app/tasks/automations/${id}`, { method: 'PATCH', body: { enabled } }),
     deleteAutomation: (id: number) => request(`/api/app/tasks/automations/${id}`, { method: 'DELETE' }),

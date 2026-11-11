@@ -13,6 +13,7 @@ const { inventory } = require('../features/catalog');
  * does not carry the module; its tools are then neither offered nor run.
  */
 const optionalTools = {
+    projects: requireOptional('./tools/projectAssets', { feature: 'projects' }),
     sandbox: requireOptional('./tools/sandbox', { feature: 'sandbox' }),
     observatory: requireOptional('./tools/observatory', { feature: 'observatory' }),
     economy: requireOptional('./tools/economy', { feature: 'economy' }),
@@ -34,6 +35,7 @@ const modelCallScope = require('./modelCallScope');
 const { surfaceActive, requireSurface, GateError, FEATURE_UNAVAILABLE } = require('../features/gate');
 
 const catalog = {
+    ...optionalTools.projects,
     ...optionalTools.sandbox,
     ...optionalTools.observatory,
     ...optionalTools.economy,
@@ -107,6 +109,7 @@ const TOOL_ORDER = [
     'readNotionPage',
     'launchCursorAgent',
     'createGithubIssue',
+    'projectAssets',
     'executePlan'
 ];
 
@@ -182,6 +185,9 @@ module.exports = {
         // sandbox/observatory enable switch and the web-only scope).
         let definitions = TOOL_ORDER.filter(name => tools[name] && featureAllows(name)).map(name => tools[name].definition);
         const trustedSurface = isWeb || isAutomation;
+        if (!optionalTools.projects || observatoryConfig.projectsEnabled === false || (observatoryConfig.scope === 'web' && !trustedSurface)) {
+            definitions = definitions.filter(def => def.name !== 'projectAssets');
+        }
         const sandboxService = optionalTools.sandbox && requireOptional('../services/sandboxService', { feature: 'sandbox' });
         const observatoryService = optionalTools.observatory && requireOptional('../services/observatoryService', { feature: 'projects' });
         const sandboxOffered = Boolean(sandboxService?.enabled)

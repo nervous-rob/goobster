@@ -111,7 +111,7 @@ the state, so a stale client cannot reach a disabled feature.
 | Music Lab | `/conservatory`, `/conservatory/<mode>` | unchanged |
 | Trading game | `/exchange` | unchanged |
 | Card decks | `/decks` | unchanged |
-| Usage & limits, Settings, Host | `/usage`, `/settings`, `/settings/:section`, `/host`, `/host/features`, `/host/connections`, `/host/defaults`, `/host/installation` | unchanged; the Host pages (operators only) are described in `host_operations.md`; `/host/installation` hosts the Reconfigure, Repair and Uninstall journeys of `setup_wizard.md` |
+| Usage & limits, Settings, Host | `/usage`, `/settings`, `/settings/:section`, `/host`, `/host/assistant`, `/host/features`, `/host/connections`, `/host/defaults`, `/host/installation` | unchanged; the Host pages (operators only) are described in `host_operations.md`; `/host/installation` hosts the Reconfigure, Repair and Uninstall journeys of `setup_wizard.md` |
 | Shared conversation | `/share/:token` | unchanged (public, renders inside the shell without a session) |
 | Documentation | `/docs` → `/docs/getting-started`, `/docs/:slug#section` | public, linked from the sidebar footer; generated from selected repository Markdown |
 | Shared project dashboard | `/app/observatory/share/:token` | **server-handled**, never a SPA route - the registry excludes it so a public share is never swallowed by the Projects route |
@@ -473,3 +473,10 @@ Validation: `tests/inboxAsk.test.js`, the instructions-slot regression in
 ### Follow a research source
 
 On a personal Knowledge note, use **Follow sources…**. In a Project's Knowledge view, expand **Follow sources for this project**. Follows are private to you. Add an RSS/Atom feed or public HTTPS page, then enable research Attention explicitly in Settings if it is off. The first check saves a quiet baseline. Later meaningful changes appear through Attention's normal policy; the source panel retains provenance and supports keeping a change, pausing, unfollowing, and preparing a private research draft. Review and explicitly start that draft in Knowledge → Research. See `attention.md` for detection, fetching and retention limits.
+
+
+### Responsibilities and assistant setup
+
+Home's **Responsibilities** button opens `/assistant`, the delegated-work page. It adds search and status filtering, summary counts, shortcuts to drafting and processes, and links to initiative settings, results, and Scheduled tasks. Existing grants, activation confirmations, run history and process controls stay in place.
+
+**Activity → Scheduled** keeps the `/activity/scheduled` address and `/tasks` alias, with search/filter, recurring-task editing and pause/resume, reminders and schedule starters. Commitments and watches remain in **Activity → Attention**. Operators use **Host → Delegated work** (`/host/assistant`) for delegated provider/model selection, output limits and the existing daily caps and pilot controls; see [Attention](attention.md#responsibilities-and-delegated-assistant-controls).

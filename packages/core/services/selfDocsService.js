@@ -767,8 +767,12 @@ class SelfDocsService {
     }
 
     _bm25(corpus, queryTerms) {
-        const { docs, df, avgLength } = corpus;
+        const { docs } = corpus;
         const N = docs.length;
+        // Kind/operator filters change the candidate population. Statistics
+        // must come from that same set; global df can exceed N and hide skills.
+        const avgLength = N ? docs.reduce((sum, doc) => sum + doc.length, 0) / N : 0;
+        const df = new Map(queryTerms.map(term => [term, docs.reduce((count, doc) => count + (doc.counts.has(term) ? 1 : 0), 0)]));
         const scored = [];
         for (const doc of docs) {
             let score = 0;

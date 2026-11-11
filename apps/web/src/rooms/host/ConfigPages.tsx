@@ -9,6 +9,9 @@ import { LifecyclePanel } from './LifecyclePanel';
 import { ManagerNotice, useManagerStatus } from './ManagerCard';
 import { DocLink, HOST_KEYS } from './shared';
 import { useChange } from './useChange';
+import { LimitsPanel } from '../../components/TokenLimits';
+import { Link } from '@tanstack/react-router';
+import { ModelPicker, useModelCatalog } from '../../components/ModelPicker';
 
 /** Provider and integration sections: the places a key or an address is kept. */
 const CONNECTION_SECTIONS = ['ai.providers', 'ollama', 'search', 'voice', 'music', 'integrations', 'mail', 'discord', 'push', 'activity', 'manager'];
@@ -197,7 +200,7 @@ export function DefaultsPage() {
                     <>
                         <h3 className="section-title">Enforced policy (not defaults)</h3>
                         <p className="hint" data-testid="limits-explainer">
-                            These are enforced for everyone. They are changed in the Host room&apos;s Limits panel on the Overview page, not here.
+                            These are enforced for everyone. Change them in Host → Delegated work or the Limits panel on Overview.
                         </p>
                         <Section section={limits} drafts={{}} setDraft={() => undefined} readOnlyFor={() => 'Enforced policy: change it in the Limits panel on the Overview page.'} probes={report.probes} />
                     </>
@@ -205,4 +208,60 @@ export function DefaultsPage() {
             </section>
         </>
     );
+}
+
+/** Operator policy uses the same revision-checked manager flow as other host settings. */
+export function AssistantModelPolicy() {
+    const { query, status, usable, supervising } = useConfig();
+    const state = useDrafts();
+    const change = useChange(state.clear);
+    const section = query.data?.sections.find((entry) => entry.id === 'ai.delegation');
+    const providerDraft = state.drafts['ai.delegation.provider'];
+    const provider = providerDraft?.action === 'set' ? String(providerDraft.value) : providerDraft?.action === 'remove' ? '' : String(section?.fields.find(f => f.id === 'ai.delegation.provider')?.value || '');
+    const modelDraft = state.drafts['ai.delegation.model'];
+    const modelValue = modelDraft?.action === 'set' ? String(modelDraft.value) : modelDraft?.action === 'remove' ? '' : String(section?.fields.find(f => f.id === 'ai.delegation.model')?.value || '');
+    const fields = new Map((section?.fields || []).map((field) => [field.id, field]));
+    const { changes, problem } = buildChanges(fields, state.drafts);
+    const reviewing = change.state.phase !== 'idle';
+    return <>
+        <section className="settings-section" aria-labelledby="assistants-title" id="assistant-model-policy" data-testid="host-assistants">
+            <div className="responsibility-kicker">Operator controls</div>
+            <h2 id="assistants-title">Model and output limit</h2>
+            <p className="hint">Choose how Goobster handles work on your behalf: delegated runs, scheduled tasks, watches, project jobs, expeditions and background text requests.</p>
+            <div className="responsibility-guide">
+                <div><strong>1. Connect a provider</strong><p>Use an existing host key. <Link to="/host/$page" params={{ page: 'connections' }}>Manage connections →</Link></p></div>
+                <div><strong>2. Choose a model & output cap</strong><p>Leave provider and model at their defaults to inherit routing. A pinned model uses the host connection, rather than a personal key.</p></div>
+                <div><strong>3. Set daily budgets</strong><p>Responsibility caps above and account limits below include input and output across requests. Multi-step work can make several requests.</p></div>
+            </div>
+            {status && !usable && <ManagerNotice status={status} />}
+            {query.isPending && <p role="status">Loading assistant policy…</p>}
+            {query.isError && <p role="alert">{query.error.message}</p>}
+            {section && query.data && <>
+                <ul className="list-card" style={{ listStyle: 'none', padding: 0 }}>
+                    {section.fields.map(field => <FieldControl key={field.id} field={field} draft={state.drafts[field.id]} setDraft={draft => {
+                        state.setDraft(field.id, draft?.action === 'set' && draft.value === '' ? { action: 'remove' } : draft);
+                        if (field.id === 'ai.delegation.provider') state.setDraft('ai.delegation.model', { action: 'remove' });
+                    }} readOnly={!usable ? 'Start or connect the installation manager to edit assistant policy.' : reviewing ? 'Finish or discard the current review first.' : field.envControlled ? ENV_READONLY(field) : !field.editable ? 'This setting is read-only.' : null} />)}
+                </ul>
+                {provider && <AssistantModelChoices provider={provider} disabled={!usable || reviewing} onSelect={model => state.setDraft('ai.delegation.model', model ? { action: 'set', value: model } : { action: 'remove' })} value={modelValue} />}
+                <p className="hint">The output cap includes reasoning tokens. It does not cap an entire run; responsibility and account budgets cover cumulative model text usage. Images, speech, embeddings and external Cursor agents have separate controls. Changes require a restart and apply to new work.</p>
+                {problem && <p role="alert" className="settings-danger">{problem}</p>}
+                <div className="modal-actions">
+                    {changes.length > 0 && !reviewing && <button className="btn" onClick={state.clear}>Discard changes</button>}
+                    <button className="btn primary" disabled={!usable || reviewing || !changes.length || Boolean(problem)}
+                        onClick={() => void change.preview('config.set', { expectedRevision: query.data!.revision, changes })}>Review assistant settings</button>
+                </div>
+                <ChangeReview change={change} label={(id) => id} supervising={supervising} testId="host-assistants-review" />
+            </>}
+        </section>
+        <LimitsPanel />
+        <LifecyclePanel enabled={usable} />
+    </>;
+}
+
+function AssistantModelChoices({ provider, disabled, value, onSelect }: { provider: string; disabled: boolean; value: string; onSelect: (model: string) => void }) {
+    const catalog = useModelCatalog(provider, 'chat');
+    return <fieldset disabled={disabled} style={{ border: 0, padding: '12px 0' }}><legend>Choose from the provider’s model catalog</legend>
+        <ModelPicker id="assistant-model-picker" label="Assistant model" value={value} onChange={onSelect} state={catalog} />
+    </fieldset>;
 }

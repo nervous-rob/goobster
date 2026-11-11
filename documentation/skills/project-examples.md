@@ -17,7 +17,8 @@ before proposing it.
 | The user wants | Use | Because |
 |---|---|---|
 | A quick answer that needs computation or a picture, once | `runCode` | Resource-limited sandbox run; files come back inline |
-| Something that should persist, iterate, or run longer than one call | `observatory` (a **project**) | Workspace + versioned assets + checkpointed background jobs + dashboard |
+| Save or update an app, script or note in a project | `projectAssets` | Versioned assets; no execution required; see *Project tool guide* |
+| Run, iterate or compute longer than one call inside a project | `observatory` | Durable workspace + checkpointed background jobs + dashboard |
 | The same work on a schedule ("every morning", "hourly") | `manageAutomations` | Durable cron automation; each run is a full agent turn with tools |
 | To know when an outcome happens ("tell me when it finishes") | `watchFor` | Fires one turn on a condition; never poll with an automation |
 | Autonomous research over a topic with sources and notes | Spitball **Expedition** (portal: Knowledge → Research) | Pipeline with source review, legalized notes, budgets |
@@ -43,7 +44,7 @@ Brief: "Run a 10⁶-step Lotka-Volterra sweep overnight and show me the phase
 portraits."
 
 1. `create-project` with a clear name; the reply restates the layout contract.
-2. `save_script` (language `python`) that follows the **checkpoint convention**:
+2. `projectAssets` action `save_script` (language `python`) that follows the **checkpoint convention**:
    load `$GOOBSTER_RUN_DIR/checkpoint.json` if present, work in segments, rewrite
    the checkpoint as it progresses, write frames to `$GOOBSTER_RUN_DIR/frames/`,
    exit 0 when done. A segment killed at the timeout only resumes if the
@@ -66,9 +67,9 @@ Brief: "Pull this CSV of monthly temperatures and build a little explorer."
 1. `fetch-data` with the https URL. Allowlisted hosts download at once; anything
    else becomes a pending request for the deployment's approvers - tell the user
    it is waiting rather than retrying.
-2. `save_script` that reads `$GOOBSTER_PROJECT_DIR/data/<file>` and writes tidy
+2. `projectAssets` action `save_script` that reads `$GOOBSTER_PROJECT_DIR/data/<file>` and writes tidy
    outputs; `run_script` foreground for small data.
-3. `save_app` (language `html`) for the explorer - it renders in the portal's
+3. `projectAssets` action `save_app` (language `html`) for the explorer - it renders in the portal's
    applet sandbox and may read the project's own files through the applet
    bridge (*Projects → Own-project reads*). An app that should also save,
    delete or run things uses `window.goobster` (`write`, `remove`, `run`,

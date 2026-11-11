@@ -106,6 +106,7 @@ export function HomeRoom() {
                             </div>
                         </header>
                         <div className="home-talk" data-tour="home-create">
+                            {featureActive(me, 'assistant') && <button type="button" className="btn" onClick={() => navigate({ to: '/assistant' })}>Responsibilities</button>}
                             <button type="button" className="btn primary big" data-tour="home-new-chat" onClick={() => navigate({ to: '/chat' })}>
                                 💬 New chat
                             </button>

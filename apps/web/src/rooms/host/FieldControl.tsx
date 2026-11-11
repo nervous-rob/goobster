@@ -100,7 +100,7 @@ export function FieldControl({ field, draft, setDraft, readOnly, probe }: {
         <li className="list-row" style={{ flexDirection: 'column', alignItems: 'stretch', gap: 6 }}
             data-testid="host-field" data-field={field.id} data-source={field.source} data-env={field.envControlled}>
             <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, flexWrap: 'wrap' }}>
-                <label htmlFor={inputId}><code>{field.id}</code></label>
+                <label htmlFor={inputId}>{({ 'ai.delegation.provider': 'Assistant provider', 'ai.delegation.model': 'Assistant model ID', 'ai.delegation.maxOutputTokens': 'Maximum output tokens per request' } as Record<string, string>)[field.id] || <code>{field.id}</code>}</label>
                 <span>
                     <SourceBadge source={field.source} />
                     <span className="badge" title={field.apply === 'hot' ? 'Read on every request' : 'Read when the process starts'}>

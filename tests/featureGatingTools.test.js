@@ -160,7 +160,8 @@ describe('no features.json: discovery equals the pre-gate baseline', () => {
         for (const [context, args] of Object.entries(CONTEXTS)) {
             const offered = names(await toolsRegistry.getDefinitions(undefined, args));
             const missing = context === 'automation' ? [...expectedMissing[context], ...DELEGATION_TOOLS] : expectedMissing[context];
-            const expected = toolsRegistry.TOOL_ORDER.filter(name => !missing.includes(name));
+            const expected = toolsRegistry.TOOL_ORDER.filter(name => !missing.includes(name)
+                && !(name === 'projectAssets' && context === 'plain' && observatoryConfig.scope === 'web'));
             expect(offered).toEqual(expected);
         }
     });
