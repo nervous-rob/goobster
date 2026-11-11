@@ -216,7 +216,7 @@ test.describe('assistant-first Home', () => {
         await seed(page, { seed: false });
         await login(page, { userId: USER, name: NAME });
         await page.getByTestId('assistant-none-delegated').getByRole('link', { name: 'Draft one →' }).click();
-        await expect(page.getByRole('heading', { name: 'Responsibilities' })).toBeVisible();
+        await expect(page.getByRole('heading', { name: 'Responsibilities', exact: true })).toBeVisible();
         await expect(page.getByTestId('responsibilities-empty')).toBeVisible();
         await page.getByTestId('responsibility-title').fill('Keep my garden notes current');
         await page.getByTestId('responsibility-save').click();
