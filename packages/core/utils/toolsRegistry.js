@@ -272,7 +272,20 @@ module.exports = {
         // Every caller of the registry is a model's tool call (chat, an
         // automation turn, voice, a plan step): human-only operations
         // refuse inside this scope (ADR 0023).
-        return modelCallScope.run(`registry:${name}`, () => tools[name].execute(args || {}));
+        const signal = args?.interactionContext?.abortSignal;
+        signal?.throwIfAborted();
+        if (!signal || name !== 'executePlan') return modelCallScope.run(`registry:${name}`, () => tools[name].execute(args || {}));
+        // Some integrations cannot cancel their underlying request. Stop must
+        // still settle a batch; retain rejection handlers on that request and
+        // prevent a cancelled plan from starting any subsequent operations.
+        return new Promise((resolve, reject) => {
+            const onAbort = () => reject(signal.reason || new Error('Tool execution cancelled'));
+            signal.addEventListener('abort', onAbort, { once: true });
+            Promise.resolve().then(() => {
+                signal.throwIfAborted();
+                return modelCallScope.run(`registry:${name}`, () => tools[name].execute(args || {}));
+            }).then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+        });
     },
 
     registerCommandAdapters

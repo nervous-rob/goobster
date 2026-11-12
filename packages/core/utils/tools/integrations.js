@@ -696,6 +696,7 @@ module.exports = {
             // Process the plan with support for dynamic expansion
             const processSteps = async (steps, startIdx = 0) => {
                 for (let i = 0; i < steps.length; i++) {
+                    interactionContext?.abortSignal?.throwIfAborted();
                     const step = steps[i];
                     const stepNum = startIdx + i + 1;
                     const { name, args, condition, forEach } = step;
@@ -789,6 +790,7 @@ module.exports = {
                             ...resolvedArgs,
                             interactionContext
                         });
+                        interactionContext?.abortSignal?.throwIfAborted();
                         // A card is for the portal, not for plan steps: keep the text.
                         if (result && typeof result === 'object' && typeof result._display === 'string' && '_card' in result) {
                             result = result._display;
@@ -833,6 +835,8 @@ module.exports = {
                         console.log(`Step ${stepNum} completed successfully`);
                     
                 } catch (err) {
+                        // Cancellation is terminal even when stopOnError is false.
+                        interactionContext?.abortSignal?.throwIfAborted();
                         const errorMsg = `❌ Step ${stepNum} (${name}): ${err.message}`;
                     results.push(errorMsg);
                     errors.push(errorMsg);
