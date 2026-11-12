@@ -625,6 +625,38 @@ describe('the web pseudo-interaction', () => {
         expect(await webChatService.stopTurn(USER)).toBe(false);
     });
 
+    test('Stop releases the chat lock while an executePlan child tool never resolves', async () => {
+        const tool = require('@goobster/core/utils/tools/projectAssets').projectAssets;
+        const registry = require('@goobster/core/utils/toolsRegistry');
+        let started;
+        const ready = new Promise(resolve => { started = resolve; });
+        const spy = jest.spyOn(tool, 'execute').mockImplementation(() => {
+            started();
+            return new Promise(() => {});
+        });
+        handleChatInteraction.mockImplementation(async interaction => {
+            try {
+                await registry.execute('executePlan', {
+                    interactionContext: interaction,
+                    plan: [{ name: 'projectAssets', args: { action: 'list_projects' } }]
+                });
+            } catch (error) {
+                expect(error.name).toBe('AbortError');
+            }
+        });
+        try {
+            const running = webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'hi' });
+            await ready;
+            expect(await webChatService.stopTurn(USER)).toBe(true);
+            await running;
+            expect(await webChatService.turnStatus(USER)).toEqual({ inFlight: false });
+            handleChatInteraction.mockResolvedValue(undefined);
+            await webChatService.runTurn({ client, userId: USER, userName: 'rob', message: 'next' });
+        } finally {
+            spy.mockRestore();
+        }
+    });
+
     test('the interaction carries the turn deadline and the abort reason for the agent loop', async () => {
         let seen;
         handleChatInteraction.mockImplementation(async (interaction) => {

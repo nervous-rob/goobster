@@ -13,6 +13,12 @@ Use the specific tool directly, read its result, then choose the next call.
 a project storage API nor a durable Project Mission. It cannot unlock a
 missing tool, bypass personal settings, or bypass approval.
 
+Stopping a chat cancels its `executePlan` batch and releases the chat even if
+the current tool does not respond to cancellation. No later steps or remaining
+`forEach` iterations start, regardless of `stopOnError`. An external operation
+already submitted may still finish; cancellation does not roll it back. Inspect
+the deployment or job status before retrying a partially completed batch.
+
 ## Choose the operation
 
 | Intent | Tool and action | Important arguments |

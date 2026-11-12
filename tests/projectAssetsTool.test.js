@@ -110,3 +110,40 @@ test('executePlan counts returned failures and stops dependent work even inside 
     expect(result).toContain('Execution stopped');
     expect((await call({ action: 'list_assets', project })).assets).toHaveLength(0);
 });
+
+
+test.each([false, true])('executePlan cancellation settles a hung step and prevents later steps (stopOnError=%s)', async (stopOnError) => {
+    const controller = new AbortController();
+    let finish;
+    let started;
+    const ready = new Promise(resolve => { started = resolve; });
+    const tool = require('@goobster/core/utils/tools/projectAssets').projectAssets;
+    const spy = jest.spyOn(tool, 'execute').mockImplementation(() => {
+        started();
+        return new Promise(resolve => { finish = resolve; });
+    });
+    try {
+        const result = registry.execute('executePlan', {
+            stopOnError,
+            interactionContext: { ...context, abortSignal: controller.signal },
+            plan: [
+                { name: 'projectAssets', args: { action: 'list_projects' } },
+                { name: 'projectAssets', args: { action: 'list_projects' } }
+            ]
+        });
+        const rejected = expect(result).rejects.toMatchObject({ name: 'AbortError' });
+        await ready;
+        controller.abort();
+        await rejected;
+        // Even a late completion must never resume the cancelled batch.
+        finish({ ok: true });
+        await new Promise(resolve => setImmediate(resolve));
+        expect(spy).toHaveBeenCalledTimes(1);
+        await expect(registry.execute('projectAssets', {
+            interactionContext: { ...context, abortSignal: controller.signal }
+        })).rejects.toMatchObject({ name: 'AbortError' });
+        expect(spy).toHaveBeenCalledTimes(1);
+    } finally {
+        spy.mockRestore();
+    }
+});
