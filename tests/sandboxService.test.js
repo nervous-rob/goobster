@@ -424,16 +424,18 @@ describe('conversation workspaces', () => {
         fs.writeFileSync(path.join(outside, 'config.json'), 'TOKEN');
         try {
             const sessionKey = key('web:u-session:symlinks');
-            const plant = await svc.run({
-                language: 'bash', sessionKey,
-                code: `rm -rf tmp && ln -s '${outside}' tmp && ln -s '${outside}/config.json' .goobster-run.py`
-            });
-            expect(plant.ok).toBe(true);
+            const init = await svc.run({ language: 'bash', sessionKey, code: 'true' });
+            expect(init.ok).toBe(true);
+            const dir = path.join(`${SANDBOX_ROOT}-sessions`, ...sessionKey.split('/'));
+            // Seed the stale workspace from the test host so the fixture also
+            // works when the sandbox mounts its temporary directory separately.
+            fs.rmSync(path.join(dir, 'tmp'), { recursive: true });
+            fs.symlinkSync(outside, path.join(dir, 'tmp'));
+            fs.symlinkSync(path.join(outside, 'config.json'), path.join(dir, '.goobster-run.py'));
             const next = await svc.run({ language: 'python', sessionKey, code: 'import os; print(os.listdir(os.environ["TMPDIR"]))' });
             expect(next.ok).toBe(true);
             expect(next.stdout).not.toContain('config.json');
             expect(fs.readFileSync(path.join(outside, 'config.json'), 'utf8')).toBe('TOKEN');
-            const dir = path.join(`${SANDBOX_ROOT}-sessions`, ...sessionKey.split('/'));
             expect(fs.lstatSync(path.join(dir, 'tmp')).isDirectory()).toBe(true);
 
             const projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'goobster-scratch-link-'));
