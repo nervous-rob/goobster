@@ -176,6 +176,7 @@ jobs:
       - name: The journey leaves nothing registered
         if: always()
         run: |
+          New-Item -ItemType Directory -Force -Path $env:REPORTS | Out-Null
           $query = & sc.exe query goobster 2>&1 | Out-String
           $code = $LASTEXITCODE
           $query | Tee-Object -FilePath "$env:REPORTS\service-after-$env:TARGET.txt"
