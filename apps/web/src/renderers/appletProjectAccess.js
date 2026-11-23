@@ -368,8 +368,8 @@ export function createProjectAccess({ project, owner = null, asset, source, titl
             if (!ASSET_SLUG_RE.test(asset)) return fail('BAD_REQUEST', 'Need an asset slug.');
             const version = Number.isInteger(req.version) ? req.version : undefined;
             const detail = await api.projectAsset(project, asset, version, owner);
-            const { slug, name, kind, language, source: text, version: v, currentVersion } = detail || {};
-            return { ok: true, content: { slug, name, kind, language, source: text, version: v, currentVersion } };
+            const { slug, name, kind, language, source: text, version: v, currentVersion, revision } = detail || {};
+            return { ok: true, content: { slug, name, kind, language, source: text, version: v, currentVersion, revision } };
         },
         'assets.write': async (req) => {
             const asset = String(req.asset || '').trim().toLowerCase();
@@ -378,7 +378,11 @@ export function createProjectAccess({ project, owner = null, asset, source, titl
             if (!kind) return fail('APP_PROTECTED', 'Apps can save notes and scripts, not apps.');
             const refused = await ensure('write');
             if (refused) return refused;
+            if (req.expectedRevision != null && (!Number.isSafeInteger(req.expectedRevision) || req.expectedRevision < 0)) {
+                return fail('BAD_REQUEST', 'Expected revision must be a non-negative integer.');
+            }
             const saved = await api.saveProjectAsset(project, {
+                expectedRevision: req.expectedRevision,
                 slug: asset,
                 name: typeof req.name === 'string' && req.name.trim() ? req.name.trim() : asset,
                 kind,

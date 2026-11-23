@@ -68,6 +68,21 @@ test('saves, reads, deduplicates and versions complete source directly', async (
     expect((await call({ action: 'list_assets', project, kind: 'app' })).assets).toHaveLength(1);
 });
 
+test('simultaneous edits based on one revision save only one new version', async () => {
+    const input = { action: 'save_note', project, name: 'Notes', code: 'Initial text' };
+    expect(await call({ ...input, expectedRevision: 0 })).toMatchObject({ revision: 1 });
+    expect(await call({ action: 'get_asset', project, slug: 'notes' })).toContain('revision 1');
+    const results = await Promise.all(['Editor one', 'Editor two'].map(code =>
+        call({ ...input, code, expectedRevision: 1 })
+    ));
+    expect(results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ ok: true, version: 2, revision: 2 }),
+        expect.objectContaining({ ok: false, code: 'EDIT_CONFLICT' })
+    ]));
+    const winner = results[0].ok ? 'Editor one' : 'Editor two';
+    expect(await call({ action: 'get_asset', project, slug: 'notes' })).toContain(winner);
+});
+
 test('files a pinned app exactly and rejects access to another user’s pin or project', async () => {
     const source = '<!doctype html><html><title>Original</title><script>const untouched = true;</script></html>';
     const pin = await applets.pin({ userId: USER, title: 'Original', language: 'html', source });

@@ -18,6 +18,7 @@
  * in a log or a ledger row.
  */
 
+const { randomUUID } = require('node:crypto');
 const db = require('../db');
 const registry = require('./assistant/connectors/registry');
 const integrations = require('./userIntegrationService');
@@ -26,8 +27,11 @@ const { features } = require('../features/featureState');
 
 /** Requests one responsibility may have waiting at once. */
 const MAX_OPEN = 5;
+// A pending row's resultCode holds the claim until the outside outcome is known.
+const APPROVAL_CLAIM = 'APPROVAL_CLAIMED:';
 const LIVE_STATUSES = new Set(['ACTIVE', 'PAUSED', 'NEEDS_REVIEW']);
 const identityKey = (id) => `connector_request:${id}`;
+const approvalClaimed = (row) => row.status === 'PENDING' && Boolean(row.resultCode?.startsWith(APPROVAL_CLAIM));
 
 class AssistantConnectorRequestError extends Error {
     constructor(code, message, status = 409) {
@@ -129,13 +133,14 @@ class AssistantConnectorRequestService {
         return { request, created: true };
     }
 
-    async _settle(row, status, resultCode = null) {
+    async _settle(row, status, resultCode = null, claim = null) {
         const result = await db.run(
             `UPDATE assistant_connector_requests SET status = @status, resultCode = @resultCode, decidedAt = @now
-             WHERE id = @id AND status = 'PENDING'`,
-            { id: row.id, status, resultCode, now: utcText() }
+             WHERE id = @id AND status = 'PENDING'
+               AND COALESCE(resultCode, '') = @claim`,
+            { id: row.id, status, resultCode, claim: claim || '', now: utcText() }
         );
-        await require('./assistantUpdateService').resolveGate({ audience: { userId: row.ownerUserId }, identityKey: identityKey(row.id) });
+        if (result.changes) await require('./assistantUpdateService').resolveGate({ audience: { userId: row.ownerUserId }, identityKey: identityKey(row.id) });
         return result.changes > 0;
     }
 
@@ -172,61 +177,89 @@ class AssistantConnectorRequestService {
         const row = await this.get(id);
         if (!row || row.ownerUserId !== String(userId)) throw new AssistantConnectorRequestError('NOT_FOUND', 'No such request.', 404);
         if (row.status !== 'PENDING') throw new AssistantConnectorRequestError('ALREADY_DECIDED', 'This request was already answered.');
+        const claimed = approvalClaimed(row);
+        const waiting = claimed ? 'The outcome is still unconfirmed.' : 'Nothing was changed; the request is still waiting.';
+        const claimId = claimed ? row.resultCode : APPROVAL_CLAIM + randomUUID();
+        const alreadyDecided = () => new AssistantConnectorRequestError('ALREADY_DECIDED', 'This request was already answered.');
+        const unknown = (connector) => new AssistantConnectorRequestError(
+            'OUTCOME_UNKNOWN', `${connector.name} did not confirm the change, so it may or may not have happened. Checking again only reads the current state.`, 502
+        );
         if (!approve) {
+            if (claimed) throw new AssistantConnectorRequestError('APPROVAL_CLAIMED', 'Approval has already started.');
             if (!(await this._settle(row, 'DECLINED'))) throw new AssistantConnectorRequestError('ALREADY_DECIDED', 'This request was already answered.');
             return { status: 'DECLINED', message: 'Nothing was changed.' };
         }
 
         const withdraw = async (code, message) => {
-            await this._settle(row, 'WITHDRAWN', code);
+            if (!(await this._settle(row, 'WITHDRAWN', code))) throw alreadyDecided();
             return new AssistantConnectorRequestError('REQUEST_WITHDRAWN', message);
         };
         if (!(await access.allows(String(userId), 'reach'))) {
             throw new AssistantConnectorRequestError(access.REFUSAL_CODE, 'Outside connectors are not open to your account on this installation.', 403);
         }
         if (await require('./assistantControlService').isPaused()) {
-            throw new AssistantConnectorRequestError('HOST_STOPPED', 'The host has stopped all delegated work. Nothing was changed; the request is still waiting.');
+            throw new AssistantConnectorRequestError('HOST_STOPPED', `The host has stopped all delegated work. ${waiting}`);
         }
         const connector = registry.get(row.connector);
         const ask = connector ? registry.operationOf(connector, 'ask', row.operation) : null;
         if (!connector || !ask) throw await withdraw('NO_SUCH_CONNECTOR', 'That connector is no longer installed. Nothing was changed.');
         if (connector.feature && features.enforcedOff(connector.feature)) {
-            throw new AssistantConnectorRequestError('FEATURE_UNAVAILABLE', 'That connector is switched off on this installation. Nothing was changed.');
+            throw new AssistantConnectorRequestError('FEATURE_UNAVAILABLE', `That connector is switched off on this installation. ${waiting}`);
         }
-        if (!(await this._granted(row))) {
+        if (!claimed && !(await this._granted(row))) {
             throw await withdraw('GRANT_GONE', 'The responsibility no longer grants writing there, so this request was withdrawn. Nothing was changed.');
         }
         const token = await integrations.getToken(String(userId), connector.credential.provider);
         if (!token) {
-            throw new AssistantConnectorRequestError('NO_CREDENTIAL', `Connect ${connector.name} in Settings first. Nothing was changed; the request is still waiting.`);
+            throw new AssistantConnectorRequestError('NO_CREDENTIAL', `Connect ${connector.name} in Settings first. ${waiting}`);
         }
 
         let barred = 'RESTRICTION_UNAVAILABLE';
         try { barred = connector.permits ? await connector.permits({ userId: String(userId), resource: row.resource }) : null; } catch { /* could not be read: not allowed */ }
         if (barred) {
-            throw new AssistantConnectorRequestError(barred, `Your own ${connector.name} settings do not allow that (${barred}). Nothing was changed; the request is still waiting.`, 403);
+            throw new AssistantConnectorRequestError(barred, `Your own ${connector.name} settings do not allow that (${barred}). ${waiting}`, 403);
         }
 
+        const params = { resource: row.resource, target: row.target, token };
+        const reconcile = async () => {
+            try { return await ask.reconcile?.(params); } catch { return null; }
+        };
+
         let detail;
-        try {
-            detail = await ask.run({ resource: row.resource, target: row.target, token });
-        } catch (error) {
-            const code = String(error?.code || 'ERROR').toUpperCase().replace(/[^A-Z0-9_]/g, '_').slice(0, 40);
-            // The manifest says which refusals mean the request can never be carried out.
-            if (error?.declined === true && ask.voids.includes(code)) {
-                throw await withdraw(code, `That is no longer something this request can be about (${code}), so it was withdrawn. Nothing was changed.`);
-            }
-            // The reason stays out of logs and ledgers; the person gets the code.
-            throw new AssistantConnectorRequestError(
-                error?.declined === true ? code : 'OUTCOME_UNKNOWN',
-                error?.declined === true
-                    ? `${connector.name} did not do it (${code}). Nothing was changed; the request is still waiting.`
-                    : `${connector.name} did not answer, so it may or may not have happened. Approving again is safe.`,
-                502
+        if (claimed) {
+            detail = await reconcile();
+            if (!detail) throw unknown(connector);
+        } else {
+            const claim = await db.run(
+                `UPDATE assistant_connector_requests SET resultCode = @claim
+                 WHERE id = @id AND status = 'PENDING' AND resultCode IS NULL`,
+                { id: row.id, claim: claimId }
             );
+            if (!claim.changes) throw alreadyDecided();
+            try {
+                detail = await ask.run(params);
+            } catch (error) {
+                if (error?.declined !== true) {
+                    detail = await reconcile();
+                    if (!detail) throw unknown(connector);
+                } else {
+                    const code = String(error.code || 'ERROR').toUpperCase().replace(/[^A-Z0-9_]/g, '_').slice(0, 40);
+                    if (ask.voids.includes(code)) {
+                        await this._settle(row, 'WITHDRAWN', code, claimId);
+                        throw new AssistantConnectorRequestError('REQUEST_WITHDRAWN',
+                            `That is no longer something this request can be about (${code}), so it was withdrawn. Nothing was changed.`);
+                    }
+                    await db.run(
+                        `UPDATE assistant_connector_requests SET resultCode = NULL
+                         WHERE id = @id AND status = 'PENDING' AND resultCode = @claim`,
+                        { id: row.id, claim: claimId }
+                    );
+                    throw new AssistantConnectorRequestError(code,
+                        `${connector.name} did not do it (${code}). Nothing was changed; the request is still waiting.`, 502);
+                }
+            }
         }
-        // Two clicks at once both ask for the same idempotent change; the first to finish records it.
-        await this._settle(row, 'APPROVED');
+        if (!(await this._settle(row, 'APPROVED', null, claimId))) throw alreadyDecided();
         const text = clip(detail, 200).replace(/[.\s]+$/, '');
         return { status: 'APPROVED', message: `${text ? `${text.charAt(0).toUpperCase()}${text.slice(1)}` : 'Done'}.` };
     }
@@ -270,3 +303,4 @@ module.exports = new AssistantConnectorRequestService();
 module.exports.AssistantConnectorRequestService = AssistantConnectorRequestService;
 module.exports.AssistantConnectorRequestError = AssistantConnectorRequestError;
 module.exports.identityKey = identityKey;
+module.exports.approvalClaimed = approvalClaimed;

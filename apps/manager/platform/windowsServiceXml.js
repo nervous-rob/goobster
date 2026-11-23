@@ -5,10 +5,10 @@
  * The service host is WinSW (a service wrapper that runs one program and
  * restarts it); this module renders the `goobster-service.xml` that sits next
  * to the host executable, and parses it back. Pure text in, text out: no file
- * is read or written here, nothing touches the manager's own modules, because
+ * is opened by the XML helpers. This module loads the signed payload's WinSW pin because
  * the privileged helper (../privileged/win32.js) runs this code elevated and
  * must not load anything the unprivileged manager tree could have changed
- * beyond its own few files. Node built-ins only.
+ * beyond the files covered by its manifest check.
  *
  * The definition is the installation's service, not a copy of the operator's
  * unrelated services: it carries an `X-Goobster-Installation:` marker comment
@@ -33,19 +33,9 @@ const ACCOUNT = `${ACCOUNT_DOMAIN}\\${ACCOUNT_NAME}`;
 const STOP_TIMEOUT = '120 sec';
 const RESTART_DELAY = '10 sec';
 
-/**
- * The service host: WinSW v2.12.0, the .NET Framework 4.x build (it runs on a
- * stock Windows 10/11 and Server 2016+ without installing a runtime).
- * `scripts/bootstrap-pins.json` (`winsw`) holds the same pin; a test keeps
- * the two equal. The helper compares the host executable against this hash
- * before it registers anything, so a replaced file is never made a service.
- */
-const WINSW = Object.freeze({
-    version: '2.12.0',
-    file: 'WinSW.NET4.exe',
-    url: 'https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET4.exe',
-    sha256: '923111c7142b3dc783a3c722b19b8a21bcb78222d7a136ac33f0ca8a29f4cb66'
-});
+// The helper verifies the executable against the same pin the installer uses.
+const { version, file, url, sha256 } = require('../../../scripts/bootstrap-pins.json').winsw;
+const WINSW = Object.freeze({ version, file, url, sha256 });
 
 const MAX_PATH_LENGTH = 200;
 // eslint-disable-next-line no-control-regex -- rejecting control characters is the point

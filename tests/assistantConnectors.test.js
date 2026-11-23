@@ -460,12 +460,12 @@ describe('the externalOperations budget', () => {
         expect(await runs._externalUsed(held.id, Number.MAX_SAFE_INTEGER)).toBe(2);
     }, 90_000);
 
-    test('honours the grant\'s own number, a zero allows none, and a write whose outcome is unknown uses one', async () => {
+    test('honours the grant\'s own number, a zero allows none, and a reconciled write uses one', async () => {
         await queued({ operations: [WRITE], budgets: { externalOperations: 1 } });
         double.state.mode = 'lost';
         script([append('lands but the answer is lost')], [append('second')], FINISH);
         await runner.tick({ wait: true });
-        expect((await connectorOps()).map(op => op.refusalCode || op.status)).toEqual(['FAILED', 'EXTERNAL_BUDGET']);
+        expect((await connectorOps()).map(op => op.refusalCode || op.status)).toEqual(['SUCCEEDED', 'EXTERNAL_BUDGET']);
         expect(writes()).toHaveLength(1);
 
         await db.run('DELETE FROM assistant_runs', {});

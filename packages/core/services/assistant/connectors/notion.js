@@ -20,7 +20,7 @@
  *    input. Reconciling looks for that line; found means it happened.
  *  - `updateBlock` and `updatePage` set a value. Setting it twice is the
  *    same as setting it once, so reconciling compares what is there with
- *    what was asked: equal is done, different is made (again).
+ *    what was asked: equal is done, different needs review.
  *
  * Archiving (Notion's API has no permanent delete) is an *ask*: a run can
  * only request it, and it happens when the person approves that one
@@ -93,8 +93,7 @@ async function before(work) {
         return await work();
     } catch (error) {
         if (error?.declined === true) throw error;
-        if (error?.name === 'NotionError') throw declined(error.code, error.message);
-        throw error;
+        throw declined(error?.code || 'ERROR', error?.message);
     }
 }
 
@@ -535,7 +534,8 @@ module.exports = {
                 const target = await pageTarget(token, root, input.parent, 'block');
                 const state = await findMarker(token, target.id, markerOf(operationId, resource, input));
                 if (state === 'found') return { state: 'done', result: `added text to ${same(target.id, resource) ? 'the page' : target.id}` };
-                return { state };
+                // A missing marker may have been removed after the append committed.
+                return { state: 'unknown' };
             }
         },
         {
@@ -565,23 +565,17 @@ module.exports = {
             async reconcile({ resource, input, token, operationId }) {
                 const root = await rootOf(token, resource);
                 const target = await databaseTarget(token, root, input.database);
-                const schema = target.object?.properties || {};
-                const titleName = Object.keys(schema).find(name => schema[name]?.type === 'title');
-                if (!titleName) return { state: 'unknown' };
                 const marker = markerOf(operationId, resource, input);
                 const batch = await notion.queryDatabase(token, target.id, {
-                    filter: { property: titleName, title: { equals: input.title.trim() } },
                     sorts: [{ timestamp: 'created_time', direction: 'descending' }],
                     limit: RECONCILE_CANDIDATES
                 });
                 for (const row of batch.results || []) {
-                    const children = await notion.listChildren(token, row.id);
-                    if ((children.results || []).some(block => plainOf(block).trim() === marker)) {
+                    if (await findMarker(token, row.id, marker) === 'found') {
                         return { state: 'done', result: `created the page "${clip(input.title, LABEL_CHARS)}" (${row.id})` };
                     }
                 }
-                // More pages with that title than were looked at: it cannot be said.
-                return { state: batch.has_more ? 'unknown' : 'absent' };
+                return { state: 'unknown' };
             }
         },
         {
@@ -608,7 +602,7 @@ module.exports = {
                 const block = await editableBlock({ resource, input, token });
                 const textSet = input.text === undefined || plainOf(block) === String(input.text);
                 const checkSet = input.checked === undefined || Boolean(block.to_do?.checked) === input.checked;
-                return textSet && checkSet ? { state: 'done', result: `changed a ${typeName(block.type)} block` } : { state: 'absent' };
+                return textSet && checkSet ? { state: 'done', result: `changed a ${typeName(block.type)} block` } : { state: 'unknown' };
             }
         },
         {
@@ -623,7 +617,7 @@ module.exports = {
             async reconcile({ resource, input, token }) {
                 const target = await pageToSet({ resource, input, token });
                 const set = Object.entries(target.expected).every(([name, text]) => propertyText(target.object.properties[name]) === text);
-                return set ? { state: 'done', result: `set ${Object.keys(target.built).map(name => `"${clip(name, 40)}"`).join(', ')}` } : { state: 'absent' };
+                return set ? { state: 'done', result: `set ${Object.keys(target.built).map(name => `"${clip(name, 40)}"`).join(', ')}` } : { state: 'unknown' };
             }
         }
     ],
@@ -642,6 +636,10 @@ module.exports = {
                     if (block.archived || block.in_trash) throw declined('ALREADY_ARCHIVED', 'that is already in the trash');
                     return { target: dashed(input.target), label: labelOfBlock(block) };
                 });
+            },
+            async reconcile({ resource, target, token }) {
+                const block = await archivable({ resource, target, token });
+                return block.archived || block.in_trash ? `${labelOfBlock(block)} is in the trash` : null;
             },
             async run({ resource, target, token }) {
                 // Checked again at the moment of approval: it may have been moved since it was asked.

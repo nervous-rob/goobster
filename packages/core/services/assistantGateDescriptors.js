@@ -511,6 +511,7 @@ const connectorRequest = {
         const connector = registry.get(request.connector);
         const ask = connector ? registry.operationOf(connector, 'ask', request.operation) : null;
         const open = request.status === 'PENDING';
+        const claimed = requests.approvalClaimed(request);
         // The confirmation is read on its own, so it names the thing as well as what happens to it.
         const named = `${request.label.charAt(0).toUpperCase()}${request.label.slice(1)}`;
         return {
@@ -519,7 +520,9 @@ const connectorRequest = {
             detail: `Goobster asked for this while working for you and cannot do it itself. ${ask?.consequence || ''}`.trim(),
             outcome: open ? null : (CONNECTOR_OUTCOME[request.status] || 'This request is no longer open.'),
             revision: request.createdAt,
-            options: [
+            options: claimed ? [
+                { id: 'approve', label: 'Check outcome', effect: 'Goobster checks whether the approved change happened.' }
+            ] : [
                 { id: 'approve', label: ask?.action || 'Approve', effect: `${named}. ${ask?.consequence || 'It is done as you, now.'}`, danger: true },
                 { id: 'decline', label: 'Leave it', effect: 'Nothing changes. Goobster is not asked to try again.' }
             ]

@@ -449,8 +449,8 @@ class AssistantRunService {
                 return prior.resultText || '';
             }
             if (prior?.status === 'REFUSED') return `Not allowed (${prior.refusalCode || 'REFUSED'}).`;
-            let reconciledAbsent = false;
-            if (prior && spec.effect === 'write' && !spec.atomic && typeof spec.reconcile === 'function') {
+            let reconciledAbsent = prior?.status === 'PREPARED' && spec.reconcileOnError;
+            if (prior && !reconciledAbsent && spec.effect === 'write' && !spec.atomic && typeof spec.reconcile === 'function') {
                 // In flight when the worker died. Ask the world, by the
                 // operation's own identity, whether it happened.
                 ctx.opId = prior.id;
@@ -460,7 +460,7 @@ class AssistantRunService {
                     await mark(prior.id, 'SUCCEEDED', verdict.result);
                     return verdict.result;
                 }
-                reconciledAbsent = verdict.state === 'absent';
+                reconciledAbsent = verdict.state === 'absent' && prior.status !== 'UNCERTAIN';
             }
             if (prior && spec.effect === 'write' && !spec.atomic && !reconciledAbsent) {
                 // It may or may not have happened. Never retried blindly.
@@ -552,10 +552,18 @@ class AssistantRunService {
                 }
                 result = clip(await spec.run(args, ctx), RESULT_CHARS);
             } catch (error) {
-                await mark(id, 'FAILED');
-                // The reason stays out of the ledger and the journal; the
-                // model gets a code it can act on.
-                return `That did not work (${error?.code || 'ERROR'}).`;
+                if (!spec.reconcileOnError) {
+                    await mark(id, 'FAILED');
+                    return `That did not work (${error?.code || 'ERROR'}).`;
+                }
+                let verdict;
+                try { verdict = await spec.reconcile(args, ctx); } catch { /* unknown */ }
+                if (verdict?.state !== 'done') {
+                    await mark(id, 'UNCERTAIN');
+                    ctx.halt('OPERATION_UNCERTAIN');
+                    return 'This task has been stopped for review.';
+                }
+                result = clip(verdict.result, RESULT_CHARS);
             }
             await mark(id, 'SUCCEEDED', result);
             if (spec.source === 'private') notePrivate(ctx, spec, base.resourceKind, base.resourceId);

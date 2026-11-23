@@ -85,7 +85,7 @@ const SERVER_WORKSPACES = [
 const SANDBOX_WORKSPACE = { name: '@goobster/sandbox', dir: 'apps/sandbox', mode: 'app' };
 const STATIC_TREES = ['documentation', 'campaigns', 'clients'];
 const STATIC_FILES = ['README.md', 'LICENSE', 'changelog.md'];
-const SMOKE_FILES = ['scripts/package-smoke.js', 'scripts/lib/nativeBinaryInfo.js', 'scripts/lib/payloadStage.js', 'scripts/lib/releaseIndex.js', 'scripts/release-keys.json'];
+const SUPPORT_FILES = ['scripts/package-smoke.js', 'scripts/lib/nativeBinaryInfo.js', 'scripts/lib/payloadStage.js', 'scripts/lib/releaseIndex.js', 'scripts/release-keys.json', 'scripts/bootstrap-pins.json'];
 const PROFILES = ['minimal', 'full'];
 const PERMISSIVE_LICENSE = /^(MIT|ISC|BSD-[23]-Clause|Apache-2\.0|0BSD|BlueOak-1\.0\.0|CC0-1\.0|CC-BY-4\.0|Unlicense|Python-2\.0|MIT-0|WTFPL|Zlib)$/i;
 
@@ -792,7 +792,7 @@ async function main() {
     if (!chunkMap) throw new Error('apps/web/dist has no feature-chunks.json: rebuild it with `npm run build:web`.');
     for (const tree of STATIC_TREES) excludedTracked.push(...copyTracked(tree, appDir).excluded);
     for (const file of STATIC_FILES) if (fs.existsSync(path.join(REPO_ROOT, file))) copyFile(path.join(REPO_ROOT, file), path.join(appDir, file));
-    for (const file of SMOKE_FILES) copyFile(path.join(REPO_ROOT, file), path.join(appDir, file));
+    for (const file of SUPPORT_FILES) copyFile(path.join(REPO_ROOT, file), path.join(appDir, file));
     const rootManifest = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'package.json'), 'utf8'));
     fs.writeFileSync(path.join(appDir, 'package.json'), `${JSON.stringify({
         name: 'goobster-runtime',

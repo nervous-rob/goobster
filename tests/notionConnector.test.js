@@ -312,7 +312,7 @@ describe('append', () => {
 
     test('a lost answer is told apart from a write that never happened', async () => {
         const input = { text: 'Ran 12 km' };
-        expect(await reconcile('append', input)).toEqual({ state: 'absent' });
+        expect(await reconcile('append', input)).toEqual({ state: 'unknown' });
 
         fake.fail('lost');
         const error = await caught(write('append', input));
@@ -320,7 +320,7 @@ describe('append', () => {
         expect(error.declined).not.toBe(true);
         expect(await reconcile('append', input)).toEqual({ state: 'done', result: expect.stringContaining('added text') });
         // Another operation's identical text is not mistaken for it.
-        expect(await reconcile('append', input, { operationId: '9:9' })).toEqual({ state: 'absent' });
+        expect(await reconcile('append', input, { operationId: '9:9' })).toEqual({ state: 'unknown' });
         expect(markers(PLAN)).toHaveLength(1);
     });
 
@@ -395,12 +395,12 @@ describe('createPage', () => {
     test('after a lost answer the row is found by its line, and a same-titled row is not mistaken for it', async () => {
         const input = { title: 'Buy shoes', text: 'A second pair', database: TASKS };
         // A row with that title already exists and was not made by this operation.
-        expect(await reconcile('createPage', input)).toEqual({ state: 'absent' });
+        expect(await reconcile('createPage', input)).toEqual({ state: 'unknown' });
         fake.fail('lost');
         expect((await caught(write('createPage', input))).declined).not.toBe(true);
         expect(fake.rows(TASKS)).toHaveLength(3);
         expect(await reconcile('createPage', input)).toMatchObject({ state: 'done', result: expect.stringContaining('created the page "Buy shoes"') });
-        expect(await reconcile('createPage', input, { operationId: '2:7' })).toEqual({ state: 'absent' });
+        expect(await reconcile('createPage', input, { operationId: '2:7' })).toEqual({ state: 'unknown' });
     });
 });
 
@@ -442,10 +442,10 @@ describe('editing what is there', () => {
         expect(registry.inputProblem(op('write', 'updatePage'), { properties: {} })).toBe('NO_PROPERTIES');
     });
 
-    test('an edit is reconciled by comparing: equal is done, different is made again, and twice is the same as once', async () => {
+    test('an edit is reconciled by comparing: equal is done and a different value needs review', async () => {
         const marathon = await blockId(PLAN, 'Run a marathon');
         const edit = { block: marathon, text: 'Run two marathons' };
-        expect(await reconcile('updateBlock', edit)).toEqual({ state: 'absent' });
+        expect(await reconcile('updateBlock', edit)).toEqual({ state: 'unknown' });
         fake.fail('lost');
         expect((await caught(write('updateBlock', edit))).declined).not.toBe(true);
         expect(await reconcile('updateBlock', edit)).toMatchObject({ state: 'done' });
@@ -454,7 +454,7 @@ describe('editing what is there', () => {
 
         const shoes = fake.rows(TASKS).find(row => JSON.stringify(row).includes('Buy shoes')).id;
         const set = { page: shoes, properties: { Status: 'Done', Tags: ['a', 'b'], Count: 2, Due: '2027-01-02' } };
-        expect(await reconcile('updatePage', set)).toEqual({ state: 'absent' });
+        expect(await reconcile('updatePage', set)).toEqual({ state: 'unknown' });
         fake.fail('lost');
         expect((await caught(write('updatePage', set))).declined).not.toBe(true);
         expect(await reconcile('updatePage', set)).toMatchObject({ state: 'done' });
@@ -626,8 +626,86 @@ describe('in a delegated run', () => {
         expect((await operations()).find(row => row.id === dead.opId)).toMatchObject({ status: 'SUCCEEDED', resultText: expect.stringContaining('Wrote to Notion') });
     }, 60_000);
 
-    test('a write that never reached Notion is made once when the run resumes', async () => {
+    test('a timeout after an append commits is reconciled in the running task', async () => {
+        await queued();
+        fake.fail('lost');
+        script([tool('writeConnector', 'append', { text: 'Weekly review done.' })], FINISH);
+        await runner.tick({ wait: true });
+        expect(fake.writes()).toHaveLength(1);
+        expect(reviews()).toHaveLength(1);
+        expect((await connectorOps())[0]).toMatchObject({ status: 'SUCCEEDED' });
+    }, 60_000);
+
+    test('a human edit after a lost replacement response survives reconciliation', async () => {
+        await queued();
+        const update = notionService.updatePage.bind(notionService);
+        jest.spyOn(notionService, 'updatePage').mockImplementationOnce(async (...args) => {
+            await update(...args);
+            await update(TOKEN, YEAR, { title: { title: [{ type: 'text', text: { content: 'Human title' } }] } });
+            throw new Error('response lost');
+        });
+        script([tool('writeConnector', 'updatePage', { page: YEAR, properties: { title: 'Agent title' } })], FINISH);
+        await runner.tick({ wait: true });
+        expect((await connectorOps())[0]).toMatchObject({ status: 'UNCERTAIN' });
+        expect(notionService.titleOf(fake.get(YEAR))).toBe('Human title');
+        expect(fake.writes()).toHaveLength(2);
+    }, 60_000);
+
+    test('a durable approval claim defeats decline while a timed-out archive is reconciled', async () => {
+        await queued();
+        script([tool('askConnector', 'archive', { target: YEAR })], FINISH);
+        await runner.tick({ wait: true });
+        const [request] = await db.all('SELECT * FROM assistant_connector_requests', {});
+        const decide = approve => requests.decide({ userId: A, id: request.id, approve });
+        let release;
+        let started;
+        const ready = new Promise(resolve => { started = resolve; });
+        const blocked = new Promise(resolve => { release = resolve; });
+        const archive = notionService.archivePage.bind(notionService);
+        jest.spyOn(notionService, 'archivePage').mockImplementationOnce(async (...args) => {
+            started();
+            await blocked;
+            return archive(...args);
+        });
+        fake.fail('lost');
+        const approving = decide(true);
+        await ready;
+        try {
+            expect(await caught(decide(false))).toMatchObject({ code: 'APPROVAL_CLAIMED' });
+            expect(await caught(decide(true))).toMatchObject({ code: 'OUTCOME_UNKNOWN' });
+        } finally {
+            release();
+        }
+        await expect(approving).resolves.toMatchObject({ status: 'APPROVED' });
+        expect(await requests.get(request.id)).toMatchObject({ status: 'APPROVED' });
+        expect(fake.writes()).toHaveLength(1);
+    }, 60_000);
+
+    test('a claim survives an inconclusive check and a later approval only reconciles', async () => {
+        await queued();
+        script([tool('askConnector', 'archive', { target: YEAR })], FINISH);
+        await runner.tick({ wait: true });
+        const [request] = await db.all('SELECT * FROM assistant_connector_requests', {});
+        const args = { userId: A, id: request.id, approve: true };
+        fake.fail('lost');
+        const archive = notionService.archivePage.bind(notionService);
+        jest.spyOn(notionService, 'archivePage').mockImplementationOnce(async (...params) => {
+            try {
+                return await archive(...params);
+            } finally {
+                fake.fail('unavailable', call => !call.write);
+            }
+        });
+        expect(await caught(requests.decide(args))).toMatchObject({ code: 'OUTCOME_UNKNOWN' });
+        expect(await requests.get(request.id)).toMatchObject({ status: 'PENDING', resultCode: expect.stringMatching(/^APPROVAL_CLAIMED:/) });
+        const restarted = new requests.AssistantConnectorRequestService();
+        await expect(restarted.decide(args)).resolves.toMatchObject({ status: 'APPROVED' });
+        expect(fake.writes()).toHaveLength(1);
+    }, 60_000);
+
+    test('a write journaled before dispatch is sent once when the run resumes', async () => {
         const dead = await died();
+        await db.run("UPDATE assistant_run_operations SET status = 'PREPARED' WHERE id = @id", { id: dead.opId });
         await dead.resume();
         expect(fake.writes()).toHaveLength(1);
         expect(reviews()).toHaveLength(1);

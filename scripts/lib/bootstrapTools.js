@@ -389,7 +389,14 @@ async function refresh({ pins, github, workDir, doDownload = download, verifySig
         const updated = [];
         for (const { variant, pin } of variantsOf(group)) {
             const id = variant ? `${tool}.${variant}` : tool;
-            const name = fileName(pin.url);
+            // WinSW renamed its redistributable .NET Framework release build
+            // when it moved to GitHub Actions. Core, debug and NuGet builds are different artifacts.
+            const migratedWinSW = tool === 'winsw' && repo === 'winsw/winsw'
+                && versionOf(tag)?.[0] === 2 && compareVersions(versionOf(tag), [2, 13, 0]) >= 0;
+            const name = migratedWinSW
+                ? (tag === 'v2.13.0' ? 'WinSW.NET462.exe_Release' : 'WinSW.NET462.exe')
+                : fileName(pin.url);
+            const expectedUploader = migratedWinSW ? 'github-actions[bot]' : upstream.uploader;
             const asset = (release.assets || []).find(item => item && item.name === name);
             if (!asset) throw refuse('UPSTREAM_ASSET_MISSING', `${id}: release ${tag} of ${repo} has no file ${name}`);
             const digest = /^sha256:[0-9a-f]{64}$/.test(String(asset.digest || '')) ? asset.digest.slice(7) : null;
@@ -405,12 +412,14 @@ async function refresh({ pins, github, workDir, doDownload = download, verifySig
             }
             log(`${id}: upstream ${repo}@${tag} now serves ${sha256}`);
             evidence.push(digest ? `\`${name}\`: the download equals the digest GitHub records for the release file.` : `\`${name}\`: GitHub records no digest for this release file; the hash was computed from the download.`);
-            if (upstream.uploader !== undefined) {
+            if (expectedUploader !== undefined) {
                 const uploader = asset.uploader && asset.uploader.login;
-                if (uploader !== upstream.uploader) throw refuse('UPSTREAM_UPLOADER_CHANGED', `${id}: ${name} was uploaded by ${uploader || 'an unknown account'}, not ${upstream.uploader}`);
+                if (uploader !== expectedUploader) throw refuse('UPSTREAM_UPLOADER_CHANGED', `${id}: ${name} was uploaded by ${uploader || 'an unknown account'}, not ${expectedUploader}`);
                 evidence.push(`\`${name}\`: uploaded by \`${uploader}\` at ${asset.created_at}.`);
             }
             const proposed = { ...pin, url, sha256 };
+            if (pin.file !== undefined) proposed.file = name;
+            if (migratedWinSW) upstream.uploader = expectedUploader;
             if (upstream.signingKey !== undefined) {
                 const key = next.keys[upstream.signingKey];
                 const sigAsset = (release.assets || []).find(item => item && item.name === `${name}.sig`);

@@ -555,7 +555,7 @@ describe('the platform module surface', () => {
                 expect(target.startsWith('.')).toBe(true);
                 if (path.basename(file) === 'helper.js' && /^\.\/(linux|darwin)$/.test(target)) continue;
                 let resolved = path.resolve(path.dirname(file), target);
-                if (!resolved.endsWith('.js')) resolved += '.js';
+                if (!path.extname(resolved)) resolved += '.js';
                 queue.push(resolved);
             }
         }
