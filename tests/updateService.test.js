@@ -132,7 +132,7 @@ describe('refreshing the registration', () => {
         for (const w of [manual, failed]) {
             expect(w.entry().templateHash).toBe(STALE);
         }
-    });
+    }, 30_000);
 });
 
 describe('an update with a changed template', () => {

@@ -121,15 +121,15 @@ about you or the text. You can delete the line once the work is done.
 If Goobster stops between sending a write and recording it, the resumed
 run asks Notion before doing anything again:
 
-- for `append` and `createPage` it looks for the grey line. Found: the
-  write is reported as done and is not repeated. Absent: it is made once.
-  If there is too much under that parent to look through (more than 2,000
-  blocks), the work stops for your review;
-- for `updateBlock` and `updatePage` it compares what is there with what
-  was asked. Equal: done. Different: it is set, which is safe to do twice.
+- For `append` and `createPage`, Goobster looks for the grey reference line.
+  A matching line confirms the write. If the line is missing or the search
+  is incomplete, the write needs review.
+- For `updateBlock` and `updatePage`, Goobster compares the current values
+  with the requested values. Matching values confirm the result. Different
+  values need review because someone may have edited the content since the write.
 
-A write Notion did not answer (a timeout, a server error) may have
-happened; it takes the same path.
+A timeout or server error triggers the same check immediately. A resumed run
+can send a write that the journal shows had yet to be dispatched.
 
 ## Moving something to the trash: asked, never done for you
 
@@ -159,8 +159,10 @@ Never possible from here: moving the granted page or database itself to
 the trash, moving a database to the trash, and deleting anything
 permanently (Notion's API cannot).
 
-If Notion does not answer when you approve, the card says it may or may
-not have happened and stays open; approving again is safe.
+When approval starts, the request records the decision before sending the
+change. If Notion does not answer, Goobster checks the trash state. If the
+check is inconclusive, the card stays open so you can check again. Subsequent
+checks only read from Notion.
 
 ## Revoking
 

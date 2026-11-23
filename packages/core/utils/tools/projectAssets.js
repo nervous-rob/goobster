@@ -22,6 +22,7 @@ module.exports = {
                     code: { type: 'string', description: 'save_*: complete source, without Markdown fences. Not a filename, URL or description. save_app must be a complete self-contained document.' },
                     note: { type: 'string', description: 'Optional version note for save_* or file_app.' },
                     kind: { type: 'string', enum: ['app', 'script', 'note'], description: 'Optional list_assets filter.' },
+                    expectedRevision: { type: 'integer', description: 'For save_* or file_app, pass the revision from get_asset or list_assets when editing. Use 0 when creating a new asset.' },
                     version: { type: 'integer', description: 'get_asset version; omit for current head.' },
                     offset: { type: 'integer', description: 'get_asset: first line, 1-based.' },
                     limit: { type: 'integer', description: 'get_asset: line count (default 400, maximum 800).' },
@@ -31,7 +32,7 @@ module.exports = {
                 required: ['action']
             }
         },
-        execute: async ({ action, project, owner, name, slug, language, code, note, kind, version, offset, limit, appletId, contentHash, interactionContext }) => {
+        execute: async ({ action, project, owner, name, slug, language, code, note, kind, version, expectedRevision, offset, limit, appletId, contentHash, interactionContext }) => {
             const userId = interactionContext?.user?.id;
             const trusted = interactionContext?.channelId?.startsWith('web:') || interactionContext?.isAutomation === true;
             if (config.scope === 'web' && !trusted) return { ok: false, code: 'WEB_ONLY', message: 'Project tools are only available in the web app on this installation.' };
@@ -49,7 +50,7 @@ module.exports = {
                 if (action === 'list_assets') return { assets: await assets.list({ userId, project, owner, kind }) };
                 if (action === 'get_asset') {
                     const app = await assets.get({ userId, project, owner, asset: slug, version });
-                    return formatTextWindow({ label: `${app.kind} ${app.slug} v${app.version} · ${app.language}`, size: app.source.length, window: windowLines(app.source, { offset, limit }), fence: app.language || fenceLanguage(app.slug) });
+                    return formatTextWindow({ label: `${app.kind} ${app.slug} v${app.version} · revision ${app.revision} · ${app.language}`, size: app.source.length, window: windowLines(app.source, { offset, limit }), fence: app.language || fenceLanguage(app.slug) });
                 }
                 let source = code;
                 let savedLanguage = language;
@@ -65,9 +66,9 @@ module.exports = {
                     provenance = { conversationId: app.conversationId, messageId: app.messageId };
                 } else if (!['save_app', 'save_script', 'save_note'].includes(action)) throw new Error(`Unknown projectAssets action: ${action}`);
                 const saved = await assets.save({ userId, project, owner, name: savedName, slug, language: savedLanguage,
-                    kind: action === 'file_app' ? 'app' : action.slice(5), source, note, origin: 'agent', ...provenance });
+                    kind: action === 'file_app' ? 'app' : action.slice(5), source, note, expectedRevision, origin: 'agent', ...provenance });
                 // Return metadata only; avoid echoing large app source back into the model context.
-                return { ok: true, project: saved.project, slug: saved.slug, name: saved.name, kind: saved.kind, version: saved.version, deduped: saved.deduped === true };
+                return { ok: true, project: saved.project, slug: saved.slug, name: saved.name, kind: saved.kind, version: saved.version, revision: saved.revision, deduped: saved.deduped === true };
             } catch (error) {
                 return { ok: false, code: error.code || 'PROJECT_ASSET_ERROR', message: error.message };
             }

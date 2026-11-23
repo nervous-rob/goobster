@@ -48,7 +48,8 @@ const HELPER_FILES = Object.freeze([
     'app/apps/manager/privileged/protocol.js',
     'app/apps/manager/privileged/win32.js',
     'app/apps/manager/platform/windowsServiceXml.js',
-    'app/apps/manager/platform/systemdUnit.js'
+    'app/apps/manager/platform/systemdUnit.js',
+    'app/scripts/bootstrap-pins.json'
 ]);
 
 const COMMAND_TIMEOUT_MS = 90_000;

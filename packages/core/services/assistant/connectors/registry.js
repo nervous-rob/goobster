@@ -27,7 +27,7 @@
  *   reads        [{ operation, describe, validate?, run }]
  *   writes       [{ operation, describe, validate?, run, reconcile? }]
  *   asks         [{ operation, describe, action, consequence, validate?,
- *                prepare, run }]: what a run may never do, only ask the
+ *                prepare, run, reconcile? }]: what a run may never do, only ask the
  *                person to approve, one request per action (ADR 0030)
  *
  * `run({ resource, input, token, operationId })` returns the text the model
@@ -87,8 +87,8 @@ function operationList(list, kind, field) {
         if (typeof entry.describe !== 'string' || !entry.describe.trim()) throw bad(`${where}.describe must say what it does.`);
         if (typeof entry.run !== 'function') throw bad(`${where}.run must be a function.`);
         if (entry.validate !== undefined && typeof entry.validate !== 'function') throw bad(`${where}.validate must be a function.`);
-        if (entry.reconcile !== undefined && (kind !== 'write' || typeof entry.reconcile !== 'function')) {
-            throw bad(`${where}.reconcile is for writes, and must be a function.`);
+        if (entry.reconcile !== undefined && (kind === 'read' || typeof entry.reconcile !== 'function')) {
+            throw bad(`${where}.reconcile is for writes and asks, and must be a function.`);
         }
         if (kind === 'ask') {
             if (typeof entry.prepare !== 'function') throw bad(`${where}.prepare must be a function.`);
@@ -102,7 +102,7 @@ function operationList(list, kind, field) {
             return Object.freeze({
                 operation: entry.operation, describe: entry.describe.trim(), run: entry.run, prepare: entry.prepare,
                 validate: entry.validate || null, action: entry.action.trim(), consequence: entry.consequence.trim(),
-                voids: Object.freeze([...voids])
+                voids: Object.freeze([...voids]), reconcile: entry.reconcile || null
             });
         }
         return Object.freeze({

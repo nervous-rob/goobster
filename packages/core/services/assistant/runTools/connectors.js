@@ -181,6 +181,7 @@ module.exports = {
     },
     writeConnector: {
         effect: 'write',
+        reconcileOnError: true,
         budget: 'externalOperations',
         component: 'responsibilities',
         publishes: 'external',

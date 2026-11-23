@@ -192,6 +192,27 @@ function upstreamRoutes() {
     };
 }
 
+test.each([
+    ['v2.13.0', 'WinSW.NET462.exe_Release', 'WinSW.NET462.exe_Debug'],
+    ['v2.14.0', 'WinSW.NET462.exe', 'WinSW.NET462.Debug.exe']
+])('refresh selects the WinSW Framework release executable for %s', async (tag, name, debug) => {
+    const pins = { version: PINS.version, mirror: PINS.mirror, keys: {}, winsw: PINS.winsw };
+    const repo = '/repos/winsw/winsw';
+    const url = `https://github.com/winsw/winsw/releases/download/${tag}/${name}`;
+    const github = fakeGithub({
+        [`${repo}/releases?per_page=100`]: [{ tag_name: tag }, { tag_name: 'v3.0.0-alpha.11', prerelease: true }],
+        [`${repo}/releases/tags/${tag}`]: { tag_name: tag, assets: [asset(debug, HOST), asset('WinSW-x64.exe', HOST), asset(name, HOST)] },
+        [`${repo}/git/ref/tags/${tag}`]: { object: { type: 'commit', sha: HOST_COMMIT } }
+    });
+    const { calls, doDownload } = network({ [url]: HOST });
+    const result = await tools.refresh({ pins, github, doDownload, workDir: scratch('winsw') });
+    expect(calls).toEqual([url]);
+    expect(result.pins.winsw).toMatchObject({
+        version: tag.slice(1), file: name, url, sha256: sha(HOST),
+        upstream: { tag, uploader: 'github-actions[bot]' }
+    });
+});
+
 /** The same, after upstream rebuilt its rolling runtime release from NEW_COMMIT. */
 function rebuiltRoutes(overrides = {}) {
     const routes = upstreamRoutes();

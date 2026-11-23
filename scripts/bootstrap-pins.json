@@ -60,7 +60,7 @@
     "winsw": {
         "version": "2.12.0",
         "source": "https://github.com/winsw/winsw/releases/tag/v2.12.0",
-        "note": "The Windows service host (WinSW, .NET Framework 4.x build: runs on a stock Windows 10/11 and Server 2016+). Upstream publishes no checksum or signature for this release; the hash was computed from the release asset and cross-checked against independent Scoop package manifests that pin the same file. The helper (apps/manager/privileged/win32.js) compares the executable against windowsServiceXml.WINSW before it registers anything; tests/windowsService.test.js keeps the two equal, so a pull request that changes this pin must change that constant too.",
+        "note": "The Windows service host (WinSW, .NET Framework 4.x build: runs on a stock Windows 10/11 and Server 2016+). The Windows helper uses this pin to verify the executable before registration.",
         "upstream": {
             "repository": "winsw/winsw",
             "track": "versions",

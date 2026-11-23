@@ -35,6 +35,10 @@ the deployment or job status before retrying a partially completed batch.
 | Durable outcome with human decisions | `observatory` → `mission` | Follow the action schema; approval/start/completion remain human-only |
 | Schedule repeated project execution | `observatory` → `set_trigger` | Script/render/fetch/agent action; distinct from a personal reminder |
 
+Use the asset's `revision` from `get_asset` or `list_assets` as
+`expectedRevision` when saving edits, or pass `0` for a new asset.
+If the save returns `EDIT_CONFLICT`, reload and compare before saving again.
+
 Both tools use `owner` to disambiguate accessible projects with the same slug.
 Copy identities from results; never invent owner IDs. `projectAssets` works
 when Projects is active even if Sandbox and Observatory execution are off.

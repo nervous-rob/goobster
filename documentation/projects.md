@@ -829,9 +829,13 @@ notebook that keeps its pages as project notes.
 | `goobster.job(jobId, since)` | a run's live output and status (poll a background run) | `run` |
 | `goobster.watch(jobId, onUpdate)` | live output pushed to the app: `onUpdate({ status, running, stdout, stderr, done })` about every second until the run ends; returns `{ stop(), done }` (`done` resolves with the last update). At most 4 at once; a reload of the app ends them | `run` |
 | `goobster.assets.list(kind)` / `.read(slug, version)` | the project's assets and their source | — |
-| `goobster.assets.write(slug, source, { kind, name, language, note })` | save a new version of a **note** (default) or **script** | `write` |
+| `goobster.assets.write(slug, source, { kind, name, language, note, expectedRevision })` | save a new version of a **note** (default) or **script** | `write` |
 | `goobster.assets.remove(slug)` / `.run(slug, { background })` | delete a note or script; run a script asset | `delete` / `run` |
 | `goobster.context` / `await goobster.ready()` | `{ project, owner, access }` once connected | — |
+
+When editing an asset, pass the `revision` returned by `goobster.assets.read`
+as `expectedRevision`. Use `0` for a new asset. A stale revision returns
+`EDIT_CONFLICT`, which lets the app reload the asset before saving again.
 
 Every call returns a promise; a refusal rejects with an `Error` whose
 `code` says why (`ACCESS_DENIED`, `UNDECLARED_CAPABILITY`,

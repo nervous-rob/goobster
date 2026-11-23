@@ -306,6 +306,7 @@ module.exports = {
                     template: { type: 'string', enum: ['data-table', 'run-console', 'chart'], description: 'save_app: build the app from a ready template instead of code (name = its title, path = the file it works on): data-table edits a JSON/CSV file, run-console runs a .py/.js/.sh with live output (template_args = default arguments), chart plots a JSON/CSV file' },
                     template_args: { type: 'string', description: 'save_app template=run-console: the default arguments, e.g. "--days 30"' },
                     version: { type: 'integer', description: 'Asset version number (get_asset / rollback_asset)' },
+                    expectedRevision: { type: 'integer', description: 'Asset revision from get_asset or list_assets for saves and rollback. Use 0 when creating a new asset.' },
                     note: { type: 'string', description: 'One-line note for save_* versions and commit snapshots; the commit message for repo_commit' },
                     kind: { type: 'string', enum: ['app', 'script', 'note', 'cron', 'event'], description: 'list_assets: optional kind filter; set_trigger: cron or event' },
                     stdin: { type: 'string', description: 'Optional stdin for foreground runs' },
@@ -378,7 +379,7 @@ module.exports = {
          */
         execute: async ({
             action, project, name, language, code, stdin, background, jobId, fps, url, saveAs, reason,
-            slug, version, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
+            slug, version, expectedRevision, note, kind, triggerAction, schedule, eventTopic, prompt, enabled,
             allowSelfChain, maxChainDepth, sourceAsset, sourceTrigger, requiredOutputs,
             owner, inviteeId, label, content, tags, query, related,
             relation, path: workspacePath, offset, limit, rev, to, repo, branch, base, mode, requireGreenCi, missionAction, title, objective,
@@ -896,14 +897,15 @@ module.exports = {
                             language: built ? 'html' : language,
                             source: built ? built.source : code,
                             note: note || (built ? `From the ${template} template` : note),
+                            expectedRevision,
                             origin: 'agent'
                         });
                         if (saved.deduped) {
                             return `📦 "${saved.name}" (${saved.slug}) in "${saved.project}" is already at `
-                                + `v${saved.version} — identical source, no new version.`;
+                                + `v${saved.version} (revision ${saved.revision}) — identical source, no new version.`;
                         }
                         return `📦 Saved ${saved.kind} "${saved.name}" (${saved.slug}) in "${saved.project}" `
-                            + `as v${saved.version} (${saved.language}, ${saved.source.length} chars).`;
+                            + `as v${saved.version} (revision ${saved.revision}, ${saved.language}, ${saved.source.length} chars).`;
                     }
                     case 'list_assets': {
                         const assets = await projectAssetService.list({
@@ -914,7 +916,7 @@ module.exports = {
                         }
                         return `📦 Assets in "${project}":\n` + assets.map(a =>
                             `- ${a.slug} ("${a.name}") · ${a.kind}`
-                            + `${a.currentVersion ? ` · v${a.currentVersion}` : ''}`
+                            + `${a.currentVersion ? ` · v${a.currentVersion}` : ''} · revision ${a.revision}`
                             + `${a.language ? ` · ${a.language}` : ''}`
                             + `${a.note ? ` · ${a.note}` : ''}`
                         ).join('\n');
@@ -928,7 +930,7 @@ module.exports = {
                             : ` (head is v${got.currentVersion})`;
                         const win = windowLines(got.source, { offset, limit });
                         const body = formatTextWindow({
-                            label: `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote}`
+                            label: `📦 ${got.kind} "${got.name}" (${got.slug}) v${got.version}${headNote} · revision ${got.revision}`
                                 + ` · ${got.language}`
                                 + `${got.note ? ` · ${got.note}` : ''}`
                                 + ` · ${got.origin}`,
@@ -940,7 +942,7 @@ module.exports = {
                     }
                     case 'rollback_asset': {
                         const rolled = await projectAssetService.rollback({
-                            userId, project, owner, asset: slug || name, version
+                            userId, project, owner, asset: slug || name, version, expectedRevision
                         });
                         return `↩️ Rolled "${rolled.name}" (${rolled.slug}) in "${rolled.project}" `
                             + `back to v${rolled.version}.`;
