@@ -58,18 +58,18 @@
         }
     },
     "winsw": {
-        "version": "2.12.0",
-        "source": "https://github.com/winsw/winsw/releases/tag/v2.12.0",
+        "version": "2.14.0",
+        "source": "https://github.com/winsw/winsw/releases/tag/v2.14.0",
         "note": "The Windows service host (WinSW, .NET Framework 4.x build: runs on a stock Windows 10/11 and Server 2016+). The Windows helper uses this pin to verify the executable before registration.",
         "upstream": {
             "repository": "winsw/winsw",
             "track": "versions",
-            "tag": "v2.12.0",
-            "commit": "eef5bade59fca0254e387ac73ed7625ba6aa7147",
-            "uploader": "nxtn"
+            "tag": "v2.14.0",
+            "commit": "7ffdb4f5e5c23a75cebc517d31e517757b333645",
+            "uploader": "github-actions[bot]"
         },
-        "file": "WinSW.NET4.exe",
-        "url": "https://github.com/winsw/winsw/releases/download/v2.12.0/WinSW.NET4.exe",
-        "sha256": "923111c7142b3dc783a3c722b19b8a21bcb78222d7a136ac33f0ca8a29f4cb66"
+        "file": "WinSW.NET462.exe",
+        "url": "https://github.com/winsw/winsw/releases/download/v2.14.0/WinSW.NET462.exe",
+        "sha256": "5099b87c7b2d8ec6441adc477aa9d82aa3cee132b6dd69f95682212ac3b61654"
     }
 }
